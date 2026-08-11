@@ -1,0 +1,24 @@
+# Secrets
+.env
+
+# Dependencies
+node_modules/
+
+# Playwright persistent browser profile (session/cookies)
+chrome-profile/
+
+# Runtime logs and state
+logs/
+exit.log
+daily_quests_piraty.state.json
+
+# PvP stats exports (large binary, personal data)
+pvp_statistika*.xlsx
+
+# Misc debug/scratch artifacts
+page.html
+page_text.txt
+Логи боев*.txt
+
+# OS
+Thumbs.db
