@@ -654,6 +654,11 @@ function getRandomCycleDelayMs() {
   return minutes * 60 * 1000;
 }
 
+function isNetworkError(e) {
+  const msg = String(e?.message || '');
+  return /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_(REFUSED|RESET|CLOSED|TIMED_OUT)|ERR_NETWORK_CHANGED|ERR_ADDRESS_UNREACHABLE|net::ERR_/.test(msg);
+}
+
 function setNextCycleDelayOverrideMinutes(minMinutes, maxMinutes) {
   const minutes = randomInt(minMinutes, maxMinutes);
   nextCycleDelayOverrideMs = minutes * 60 * 1000;
@@ -713,13 +718,12 @@ function scheduleQuestFollowup(reason) {
 }
 
 // Планирование сна после фарма, когда цикл остановился на локации фарма.
-// Если кулдаун ушёл в минус (ресурсы для боя исчерпаны), спим ровно до его восстановления
-// (|кулдаун| + 1 мин), чтобы следующий цикл сразу бился, а не будился рано и простаивал.
+// Если кулдаун ушёл в минус (ресурсы для боя исчерпаны), спим случайные 17-20 минут.
 // Иначе (кулдаун ещё есть, но бой не пошёл) — обычный короткий follow-up, если был бой.
 function scheduleFarmNextCycle(stats, didFight) {
   const cd = typeof stats?.cooldown === 'number' ? stats.cooldown : stats?.reserveMinutes;
   if (typeof cd === 'number' && cd < 0) {
-    scheduleLongRestMinutes(Math.abs(cd) + 1, 'farm_cooldown_recovery');
+    scheduleLongRestMinutes(randomInt(17, 20), 'farm_cooldown_recovery');
   } else if (didFight) {
     scheduleQuestFollowup('farm');
   }
@@ -2430,6 +2434,13 @@ async function waitForReserveAtLeast(page, threshold, { waitMs = 7 * 60 * 1000, 
   };
 
   for (let attempt = 0; attempt <= maxWaits; attempt++) {
+    // Re-reading the same page's DOM without reloading it returns the same stale
+    // reserve value forever (the header is server-rendered, not live-updating).
+    // Reload so the header actually reflects current server state before checking.
+    if (attempt > 0) {
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    }
+
     // While waiting, an incoming attack can appear. Handle it as soon as possible.
     try {
       const text = await getBodyText(page);
@@ -2472,6 +2483,12 @@ async function waitForReserveAtLeast(page, threshold, { waitMs = 7 * 60 * 1000, 
 
 async function waitForHpAbove(page, threshold, { waitMs = 5 * 60 * 1000, maxWaits = 24 } = {}) {
   for (let attempt = 0; attempt <= maxWaits; attempt++) {
+    // Same staleness issue as the reserve gate: without a reload the DOM keeps
+    // showing the HP value from whenever the page was last loaded.
+    if (attempt > 0) {
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    }
+
     const hp = await getHpCurrentSafe(page);
     if (hp !== null) {
       console.log(`HP check: ${hp} (need > ${threshold})`);
@@ -3296,6 +3313,18 @@ function detectIncomingAttack(text) {
   return attacker;
 }
 
+// Fight screens show "VS.\n<Opponent> [level] (hp/max)..." right after the header. Player
+// nicknames on lbast.ru are Latin-only (see ATTACK_LINE_RE above); farm NPCs (Блейк, goblins)
+// have Cyrillic names. Used to tell a genuine incoming PvP attack apart from our own farm fight
+// surfacing the same round-based block/hit zone-select UI.
+const VS_OPPONENT_RE = /VS\.\s*\r?\n\s*([A-Za-zА-Яа-яЁё_]+)/i;
+const LATIN_NICK_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function getFightOpponentName(text) {
+  const match = VS_OPPONENT_RE.exec(String(text || ''));
+  return match ? match[1] : null;
+}
+
 function emitAttackAlert(payload) {
   try {
     const json = JSON.stringify(payload || {});
@@ -3506,6 +3535,27 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   await pause(page, 700, 1400);
 
   const afterText = await getBodyText(page);
+
+  // "В бой" also covers our own farm fight surfacing this same round-based block/hit zone-select
+  // UI (Blake/goblins can present the identical PvP-style multi-round format). Player nicknames on
+  // lbast.ru are Latin-only (see ATTACK_LINE_RE); a Cyrillic "VS." opponent (e.g. "Блейк") means
+  // this is NOT a hostile attack -> don't alert or log it as one, and let the cycle continue
+  // normally afterward (farm accounting) instead of ending the cycle like a real attack does.
+  const opponentName = getFightOpponentName(afterText);
+  const isRealAttacker = opponentName ? LATIN_NICK_RE.test(opponentName) : true;
+
+  if (!isRealAttacker) {
+    console.log(`"В бой" -> противник "${opponentName}" (не игрок) -> это бой с ${FARM_LABEL}, не атака`);
+    await runIncomingAttackPvpLoop(page).catch(() => {});
+    try {
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 800, 1600);
+    } catch (e) {
+      // ignore — best-effort return to a normal page, downstream retry logic will recover.
+    }
+    return false;
+  }
+
   if (!isBattleScreenText(afterText)) {
     const attackerAfter = detectIncomingAttack(afterText);
     if (attackerAfter) {
@@ -3523,8 +3573,11 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   // If the incoming attack leads to a PvP-like fight UI, do random block+hit turns.
   await runIncomingAttackPvpLoop(page).catch(() => {});
 
-  // After handling an incoming attack, immediately check for "huge negative HP" and recover in the
-  // same cycle via Последний дом (stations + fishing), not the old blind Chaos+90min wait.
+  // After handling an incoming attack, immediately check HP and recover in the same cycle instead
+  // of silently ending the cycle and leaving the character at negative HP for a full random sleep
+  // (up to ~21 min) until the next cycle's top-of-doScenario check would catch it. Same two-tier
+  // logic as the top of doScenario: deep negative -> Последний дом (stations + fishing), moderate
+  // negative -> quick Кулак хаоса heal.
   try {
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await pause(page, 800, 1600);
@@ -3534,9 +3587,17 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
     if (Number.isFinite(hpVal) && shouldGoLastHouseByStats({ hpCurrent: hpVal })) {
       console.log(`Post-attack: HP < ${LAST_HOUSE_HP_THRESHOLD} (${hpVal}) -> recover at Последний дом`);
       await runLastHouseRecovery(page);
+    } else if (Number.isFinite(hpVal) && shouldGoChaosByStats({ hpCurrent: hpVal })) {
+      console.log(`Post-attack: HP below zero (${hpVal}) -> quick heal via Кулак хаоса`);
+      await goToChaosByAmulet(page);
     }
   } catch (e) {
-    // ignore — best-effort post-attack recovery, don't fail the whole cycle over it.
+    // Recovery itself failed (e.g. "Форпост" not found from a transient page-load race) — don't
+    // fail the whole cycle over it, but don't silently sit on it either: at this point HP can be
+    // deeply critical, so a full default ~21 min sleep before the next attempt is too long. Log it
+    // and retry soon instead of relying on the caller's default cycle delay.
+    console.log(`Post-attack recovery failed (${e.message}) -> retry soon`);
+    scheduleLongRestMinutes(2, 'post_attack_recovery_failed');
   }
 
   return true;
@@ -4323,6 +4384,7 @@ async function fightLoop(page) {
     '\u0432\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f',
   ];
   const RESET_PAIRS_TEXTS = ['\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0430\u0440\u044b', '\u0441\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0430\u0440\u044b'];
+  const RECEPTION_TEXTS = ['\u041f\u0440\u0438\u0435\u043c', '\u043f\u0440\u0438\u0435\u043c', '\u041f\u0440\u0438\u0451\u043c', '\u043f\u0440\u0438\u0451\u043c'];
 
   // Если несколько итераций подряд на странице нет ничего боевого (ни "Бой завершен"/"Вернуться",
   // ни "В бой"/"Сбросить пары", ни "Ударить") — значит мы не на боевом экране (маршрут не довёл до
@@ -4366,6 +4428,23 @@ async function fightLoop(page) {
       continue;
     }
 
+    // "Прием" is an optional pre-hit action, available in most bot fights (quests, farm, etc.)
+    // but not always shown - in paired-bot fights it can appear on only one of the two bots.
+    // Use it whenever HP drops below 75% max, then proceed to the normal hit.
+    const stats = parseStats(text);
+    if (
+      typeof stats.hpCurrent === 'number' &&
+      typeof stats.hpMax === 'number' &&
+      stats.hpMax > 0 &&
+      stats.hpCurrent < stats.hpMax * 0.75 &&
+      await existsAnyText(page, RECEPTION_TEXTS)
+    ) {
+      const receptionOk = await clickByTexts(page, RECEPTION_TEXTS, 'Прием');
+      if (receptionOk) {
+        await pause(page, 500, 1200);
+      }
+    }
+
     const ok = await clickByTexts(page, [UDAR, UDAR.toLowerCase()], UDAR);
     if (!ok) {
       stuck += 1;
@@ -4394,7 +4473,15 @@ async function goToChaosByAmulet(page) {
   const AMULET = '\u0410\u043c\u0443\u043b\u0435\u0442';
   const CHAOS = '\u041a\u0443\u043b\u0430\u043a \u0445\u0430\u043e\u0441\u0430';
 
-  const amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
+  // "\u0410\u043c\u0443\u043b\u0435\u0442" is the persistent top-nav link, so a miss here is almost always a transient page-load
+  // race, not a real absence \u2014 retry once after a short reload instead of silently stranding the
+  // caller wherever fishing/etc. left the page (observed: this cascaded into "\u0424\u043e\u0440\u043f\u043e\u0441\u0442" not found
+  // and the whole \u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 \u0434\u043e\u043c recovery throwing).
+  let amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
+  if (!amuletOk) {
+    await pause(page, 1000, 2000);
+    amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
+  }
   if (amuletOk) await pause(page, 800, 2000);
 
   const chaosOk = await clickByTexts(page, [CHAOS, CHAOS.toLowerCase()], CHAOS);
@@ -4460,6 +4547,28 @@ async function runLastHouseRecovery(page) {
     'Исп. набор травника',
   ];
 
+  // Station cooldowns are long (20-25 min) but fishing's own cooldown is only 2 min. Sleeping the
+  // full station wait in one blocking call would starve fishing of almost all its opportunities
+  // during a long recovery (observed: ~5 casts across ~110 min instead of ~50) since the loop only
+  // re-checks canRunFishingNow() once per iteration. Sleep in short chunks and bail out early the
+  // moment fishing becomes available again, so the loop returns to it promptly instead of waiting
+  // out the whole station cooldown first.
+  async function waitStationCooldown(waitMinutes, reason) {
+    console.log(`Последний дом: ${reason}, жду ${waitMinutes} мин (проверяю рыбалку каждые ~2 мин)`);
+    const totalMs = waitMinutes * 60 * 1000;
+    const chunkMs = 2 * 60 * 1000;
+    let waited = 0;
+    while (waited < totalMs) {
+      const step = Math.min(chunkMs, totalMs - waited);
+      await fixedPause(page, step);
+      waited += step;
+      if (canRunFishingNow()) {
+        console.log('Последний дом: рыбалка снова доступна -> прерываю ожидание кулдауна станции');
+        return;
+      }
+    }
+  }
+
   async function enterLastHouse() {
     await performStep(page, {
       stepName: OUTPOST,
@@ -4521,14 +4630,12 @@ async function runLastHouseRecovery(page) {
       // The cooldown value itself isn't a reliable minutes-to-wait figure (it doesn't regen
       // 1:1 per minute) — just wait a fixed 20-25 min, same as the "unparseable" fallback below.
       const waitMinutes = 20 + Math.floor(Math.random() * 6);
-      console.log(`Последний дом: кулдаун ушёл в минус (${cooldown}), жду ${waitMinutes} мин`);
-      await fixedPause(page, waitMinutes * 60 * 1000);
+      await waitStationCooldown(waitMinutes, `кулдаун ушёл в минус (${cooldown})`);
     } else if (typeof cooldown !== 'number') {
       // Couldn't read the cooldown at all (e.g. header format didn't match) — rather than hammer
       // the loop with instant retries, back off a fixed 20-25 min like a normal cooldown wait.
       const waitMinutes = 20 + Math.floor(Math.random() * 6);
-      console.log(`Последний дом: не удалось прочитать кулдаун, жду ${waitMinutes} мин на всякий случай`);
-      await fixedPause(page, waitMinutes * 60 * 1000);
+      await waitStationCooldown(waitMinutes, 'не удалось прочитать кулдаун');
     }
   }
 
@@ -5380,6 +5487,10 @@ async function doScenario(page) {
     } catch (e) {
       console.log(`Farm fight flow error: ${e.message}`);
       await recoverToCity(page, `${FARM_TARGET}: ${e.message}`);
+      // Usually a one-off page-load glitch (empty page, route link not found yet) rather than a
+      // real problem -> retry almost immediately instead of sleeping the full default cycle.
+      nextCycleDelayOverrideMs = 10 * 1000;
+      console.log('Retry in 10 sec (farm_fight_flow_error)');
       return;
     }
 
@@ -5447,10 +5558,20 @@ async function doScenario(page) {
     page = await context.newPage();
   }
 
-  await page.goto('http://lbast.ru/location.php', {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000,
-  });
+  while (true) {
+    try {
+      await page.goto('http://lbast.ru/location.php', {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+      });
+      break;
+    } catch (e) {
+      console.log('Initial goto failed:', e.message);
+      const waitMs = isNetworkError(e) ? 60 * 1000 : 5 * 60 * 1000;
+      console.log('Retry in ' + Math.round(waitMs / 60000) + ' min.');
+      await fixedPause(page, waitMs);
+    }
+  }
 
   console.log('Browser opened. Start loop.');
 
@@ -5489,7 +5610,7 @@ async function doScenario(page) {
         scheduleLongRestMinutes(2, 'ui_stuck_recovery');
       }
 
-      const delayMs = nextCycleDelayOverrideMs ?? getRandomCycleDelayMs();
+      const delayMs = nextCycleDelayOverrideMs ?? (isNetworkError(e) ? 60 * 1000 : getRandomCycleDelayMs());
       nextCycleDelayOverrideMs = null;
       const delayMinutes = Math.round(delayMs / 60000);
       console.log('Retry after ' + delayMinutes + ' min.');
