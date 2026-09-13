@@ -6,6 +6,11 @@ node_modules/
 
 # Playwright persistent browser profile (session/cookies)
 chrome-profile/
+chrome-profile-*/
+
+# Scratch tooling for one-off character automation (not part of the bot)
+_ai_module.js
+_ai_char_driver*.js
 
 # Runtime logs and state
 logs/
