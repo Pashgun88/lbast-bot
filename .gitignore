@@ -14,6 +14,8 @@ _ai_char_driver*.js
 _ai_dialogue.js
 _ai_fight.js
 _ai_recover.js
+_ai_respec.js
+_ai_equip.js
 _ai_continue_sacrifice.js
 
 # Runtime logs and state
