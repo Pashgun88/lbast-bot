@@ -151,6 +151,11 @@ let fishingDayKey = '';
 let fishingCatchesToday = 0;
 let lastFishingAttemptAt = 0;
 
+// Утренний скриншот для Telegram: раз в день, как можно раньше в первом же цикле после смены дня.
+// Маршрут: Стоунгард (Fastway) -> Центральная площадь -> Уличный зазывала.
+let morningScreenshotDayKey = '';
+let morningScreenshotDoneToday = false;
+
 // Порог HP, при котором можно продолжать обычные действия (квесты) или биться с Блейком —
 // используется и как условие выхода из критического восстановления в Последнем доме.
 const BLAKE_MIN_HP = 1800;
@@ -183,6 +188,19 @@ let fisherFoodDayKey = '';
 let fisherFoodDoneToday = false;
 let caravanRobberyDayKey = '';
 let caravanRobberyDoneToday = false;
+let allowanceDayKey = '';
+let allowanceDoneToday = false;
+let elkHuntDayKey = '';
+let elkHuntDoneToday = false;
+let extraDailyDayKey = '';
+let extraDailyDoneToday = false;
+// Thursday's 3 hunts each hit a real in-game per-target attack cooldown ("Вы слишком устали,
+// приходите через N мин"), same as regular farm cooldown -- so unlike Tuesday/Wednesday's dailies,
+// Thursday's progress is tracked per-fight and can span multiple cycles instead of finishing in one go.
+let thursdayDayKey = '';
+let thursdayGravediggerDoneToday = false;
+let thursdayButcherFightsToday = 0;
+let thursdayWitchFightsToday = 0;
 
 // Restore "already done today" markers from disk so a restart mid-day doesn't redo completed dailies.
 // Each quest's own dayKey check (getDayKeyNow() comparison) already discards stale data once the day rolls over.
@@ -222,8 +240,25 @@ function restoreDailyQuestState() {
   if (typeof s.caravanRobberyDayKey === 'string') caravanRobberyDayKey = s.caravanRobberyDayKey;
   if (typeof s.caravanRobberyDoneToday === 'boolean') caravanRobberyDoneToday = s.caravanRobberyDoneToday;
 
+  if (typeof s.allowanceDayKey === 'string') allowanceDayKey = s.allowanceDayKey;
+  if (typeof s.allowanceDoneToday === 'boolean') allowanceDoneToday = s.allowanceDoneToday;
+
+  if (typeof s.elkHuntDayKey === 'string') elkHuntDayKey = s.elkHuntDayKey;
+  if (typeof s.elkHuntDoneToday === 'boolean') elkHuntDoneToday = s.elkHuntDoneToday;
+
+  if (typeof s.extraDailyDayKey === 'string') extraDailyDayKey = s.extraDailyDayKey;
+  if (typeof s.extraDailyDoneToday === 'boolean') extraDailyDoneToday = s.extraDailyDoneToday;
+
+  if (typeof s.thursdayDayKey === 'string') thursdayDayKey = s.thursdayDayKey;
+  if (typeof s.thursdayGravediggerDoneToday === 'boolean') thursdayGravediggerDoneToday = s.thursdayGravediggerDoneToday;
+  if (Number.isFinite(s.thursdayButcherFightsToday)) thursdayButcherFightsToday = s.thursdayButcherFightsToday;
+  if (Number.isFinite(s.thursdayWitchFightsToday)) thursdayWitchFightsToday = s.thursdayWitchFightsToday;
+
   if (typeof s.fishingDayKey === 'string') fishingDayKey = s.fishingDayKey;
   if (Number.isFinite(s.fishingCatchesToday)) fishingCatchesToday = s.fishingCatchesToday;
+
+  if (typeof s.morningScreenshotDayKey === 'string') morningScreenshotDayKey = s.morningScreenshotDayKey;
+  if (typeof s.morningScreenshotDoneToday === 'boolean') morningScreenshotDoneToday = s.morningScreenshotDoneToday;
 }
 
 restoreDailyQuestState();
@@ -240,7 +275,12 @@ function persistDailyQuestState() {
     rumaForgeDayKey, rumaForgeDoneToday,
     fisherFoodDayKey, fisherFoodDoneToday,
     caravanRobberyDayKey, caravanRobberyDoneToday,
+    allowanceDayKey, allowanceDoneToday,
+    elkHuntDayKey, elkHuntDoneToday,
+    extraDailyDayKey, extraDailyDoneToday,
+    thursdayDayKey, thursdayGravediggerDoneToday, thursdayButcherFightsToday, thursdayWitchFightsToday,
     fishingDayKey, fishingCatchesToday,
+    morningScreenshotDayKey, morningScreenshotDoneToday,
   });
   saveStateToDisk(persistedState);
 }
@@ -1531,6 +1571,34 @@ async function runDailyQuests(page, stats) {
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
   }
 
+  // Искать травы: список доступных трав виден прямо в тексте меню квестов, отдельный кулдаун-таймер
+  // не нужен -- игра сама не покажет траву, если та ещё не выросла. Пробуем в этом же цикле ВСЕ
+  // травы, которые окажутся доступны одновременно (не только первую), чтобы не растягивать сбор на
+  // несколько циклов, если игра предложила сразу несколько разом.
+  if (exclusiveInProgress.length === 0) {
+    let herbMenuText = menuText;
+    for (const herbName of HERB_QUEST_NAMES) {
+      if (!herbMenuText.includes(herbName)) continue;
+      const herbOk = await runQuestStepSafe(page, herbName, () => progressHerbQuest(page, herbName, { questCount }));
+      if (herbOk) {
+        didAnything = true;
+      }
+
+      // Семя винограда нужно посадить сразу же, а не ждать своего 8-часового таймера полива --
+      // иначе оно просто пролежит в инвентаре до следующего захода на виноградник.
+      if (herbOk && herbName === 'Семя винограда') {
+        console.log('Виноград: только что собрали семя, сразу иду сажать');
+        await runVinogradTask(page);
+        lastVinogradRunAt = Date.now();
+        persistDailyQuestState();
+      }
+
+      await resetToQuestMenu(page, questCount);
+      herbMenuText = await getBodyText(page);
+      listedQuests = parseQuestNamesFromQMenuText(herbMenuText);
+    }
+  }
+
   if (!shtolniSuppressed && isQQuestAllowed('Штольни') && isQuestInMenu(listedQuests, 'Штольни') && !(tavernTakenToday && !tavernDoneToday)) {
     const shtolniInProgress = shtolniTakenToday && !shtolniDoneToday;
     if (!shtolniInProgress && (typeof reserveMinutes !== 'number' || reserveMinutes < 20)) {
@@ -1684,6 +1752,50 @@ function canRunFishEyeRewardNow() {
   return fishEyeFightsToday >= FISH_EYE_DAILY_FIGHT_LIMIT && !fishEyeRewardClaimedToday;
 }
 
+// Утренний скриншот: раз в день, отправляется в самом начале первого цикла после смены дня
+// (см. вызов в doScenario) — при неудаче флаг не выставляется, и следующий цикл пробует снова.
+function canRunMorningScreenshotNow() {
+  const key = getDayKeyNow();
+  if (morningScreenshotDayKey !== key) {
+    morningScreenshotDayKey = key;
+    morningScreenshotDoneToday = false;
+  }
+  return !morningScreenshotDoneToday;
+}
+
+function canRunAllowanceNow() {
+  const key = getDayKeyNow();
+  if (allowanceDayKey !== key) {
+    allowanceDayKey = key;
+    allowanceDoneToday = false;
+  }
+  return !allowanceDoneToday;
+}
+
+// Elk hunting spot ("бот" killable once/day server-wide) can simply be absent when we arrive —
+// that's normal, not an error. Either outcome (fought it, or found it already gone) means today
+// is done; only tomorrow's dayKey re-opens the attempt.
+function canRunElkHuntNow() {
+  const key = getDayKeyNow();
+  if (elkHuntDayKey !== key) {
+    elkHuntDayKey = key;
+    elkHuntDoneToday = false;
+  }
+  return !elkHuntDoneToday;
+}
+
+// Extra daily ("дейлик"): a bonus task for extra reward whose route changes by day of week.
+// Only days present in EXTRA_DAILY_TASKS below have a known route; other days are simply skipped
+// (not marked done) until their route is added. getDay(): 0=Вс, 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб.
+function canRunExtraDailyNow() {
+  const key = getDayKeyNow();
+  if (extraDailyDayKey !== key) {
+    extraDailyDayKey = key;
+    extraDailyDoneToday = false;
+  }
+  return !extraDailyDoneToday;
+}
+
 async function ensureLifeTreeJuiceCollected(page) {
   const QUEST_NAME = '\u0414\u0435\u0440\u0435\u0432\u043e \u0436\u0438\u0437\u043d\u0438';
 
@@ -1775,6 +1887,298 @@ async function progressLifeTreeQuest(page, { questCount } = {}) {
     return await ensureLifeTreeJuiceCollected(page);
   } catch (e) {
     console.log(`Life Tree quest failed: ${e.message}`);
+    return false;
+  }
+}
+
+// Искать травы ("Заросли"): мини-игра-сапёр 4x4 внутри квеста сбора трав (Дикий пустолист,
+// Трава арайя, Кустарник травии, Семя винограда). Клетки -- ссылки .../loc.php?r=X&obj=5134&gamekl=N
+// (N=1..16, построчно слева направо сверху вниз). Клик по безопасной клетке открывает цифру
+// (число шипов среди 8 соседей, как в обычном сапёре); клик по шипу -- "Вы укололись о ядовитый
+// шип и ничего не нашли!" (провал, игровой кулдаун ~4ч); клик по треве (зелёная #) -- успех
+// (кулдаун ~12ч). Если ПЕРВЫЙ клик в свежей попытке попадает на шип/траву, это бесплатный
+// "мираж" ("То было наваждение. Рвите снова." + ссылка "Далее") -- поле просто перегенерируется
+// без потери попытки. Доступность конкретной травы отражается прямо в списке квестов (Q), так что
+// отдельный кулдаун-таймер в состоянии бота не нужен -- as-is: пробуем, если трава видна в меню.
+const HERB_BOARD_COLS = 4;
+const HERB_BOARD_ROWS = 4;
+// Диапазон общего числа шипов на поле, по факту 3 и 4 уже наблюдались на разных досках -- используется
+// решателем как мягкое ограничение (наравне с открытыми цифрами), чтобы правильно оценивать
+// клетки, ещё не соседствующие ни с одной открытой цифрой.
+const HERB_MINE_COUNT_RANGE = [3, 4];
+const HERB_QUEST_NAMES = [
+  'Дикий пустолист',
+  'Трава арайя',
+  'Кустарник травии',
+  'Семя винограда',
+];
+
+function herbCellRowCol(gamekl) {
+  const idx = gamekl - 1;
+  return { row: Math.floor(idx / HERB_BOARD_COLS), col: idx % HERB_BOARD_COLS };
+}
+
+function herbCellNeighbors(gamekl) {
+  const { row, col } = herbCellRowCol(gamekl);
+  const result = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const r = row + dr;
+      const c = col + dc;
+      if (r >= 0 && r < HERB_BOARD_ROWS && c >= 0 && c < HERB_BOARD_COLS) {
+        result.push(r * HERB_BOARD_COLS + c + 1);
+      }
+    }
+  }
+  return result;
+}
+
+// Перебирает все комбинации шипов среди ещё не открытых клеток, отсекает несовместимые с уже
+// открытыми цифрами и с ожидаемым общим числом шипов (HERB_MINE_COUNT_RANGE), затем выбирает
+// клетку с наименьшей долей "плохих" комбинаций. Поле маленькое (максимум 15 неоткрытых клеток
+// после первого хода), так что полный перебор (2^15 = 32768) занимает миллисекунды.
+function solveHerbBoard(openedNumbers, unopenedCells) {
+  const n = unopenedCells.length;
+  if (n === 0) return null;
+
+  const indexOf = new Map(unopenedCells.map((v, i) => [v, i]));
+  const constraints = [];
+  for (const [cellStr, digit] of Object.entries(openedNumbers)) {
+    const cell = Number(cellStr);
+    const relevant = herbCellNeighbors(cell)
+      .filter((nb) => indexOf.has(nb))
+      .map((nb) => indexOf.get(nb));
+    constraints.push({ relevant, digit });
+  }
+
+  const mineCounts = new Array(n).fill(0);
+  let validCombos = 0;
+  const totalCombos = 1 << n;
+
+  for (let mask = 0; mask < totalCombos; mask++) {
+    let ok = true;
+    for (const c of constraints) {
+      let cnt = 0;
+      for (const idx of c.relevant) {
+        if (mask & (1 << idx)) cnt++;
+      }
+      if (cnt !== c.digit) { ok = false; break; }
+    }
+    if (!ok) continue;
+
+    let popcount = 0;
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) popcount++;
+    if (popcount < HERB_MINE_COUNT_RANGE[0] || popcount > HERB_MINE_COUNT_RANGE[1]) continue;
+
+    validCombos++;
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) mineCounts[i]++;
+  }
+
+  if (validCombos === 0) {
+    console.log('Искать травы: решатель не нашёл согласованных комбинаций (диапазон шипов не подошёл), кликаю наугад');
+    return unopenedCells[Math.floor(Math.random() * unopenedCells.length)];
+  }
+
+  let bestCell = unopenedCells[0];
+  let bestProb = Infinity;
+  for (let i = 0; i < n; i++) {
+    const prob = mineCounts[i] / validCombos;
+    if (prob < bestProb) {
+      bestProb = prob;
+      bestCell = unopenedCells[i];
+    }
+  }
+
+  console.log(`Искать травы: решатель выбрал клетку ${bestCell} (P(шип)~${Math.round(bestProb * 100)}%, вариантов=${validCombos}, осталось клеток=${n})`);
+  return bestCell;
+}
+
+async function parseHerbBoard(page) {
+  return await page.evaluate(() => {
+    const table = document.querySelector('table');
+    if (!table) {
+      return { hasGrid: false, unopenedCells: [], openedNumbers: {} };
+    }
+
+    const cells = Array.from(table.querySelectorAll('td'));
+    const unopenedCells = [];
+    const openedNumbers = {};
+
+    cells.forEach((td, i) => {
+      const gamekl = i + 1;
+      const link = td.querySelector('a[href*="gamekl="]');
+      if (link) {
+        unopenedCells.push(gamekl);
+        return;
+      }
+      const txt = (td.textContent || '').replace(/ /g, ' ').trim();
+      if (/^\d+$/.test(txt)) {
+        openedNumbers[gamekl] = Number(txt);
+      }
+    });
+
+    return { hasGrid: cells.length > 0, unopenedCells, openedNumbers };
+  }).catch(() => ({ hasGrid: false, unopenedCells: [], openedNumbers: {} }));
+}
+
+async function clickHerbCell(page, gamekl) {
+  const locator = page.locator(`a[href$="gamekl=${gamekl}"]`).first();
+  const count = await locator.count().catch(() => 0);
+  if (count === 0) {
+    console.log(`Искать травы: не нашёл ссылку для клетки ${gamekl}`);
+    return false;
+  }
+
+  try {
+    await locator.click({ timeout: 8000 });
+    await pause(page, 800, 1600);
+    return true;
+  } catch (e) {
+    console.log(`Искать травы: не смог кликнуть клетку ${gamekl}: ${e.message}`);
+    return false;
+  }
+}
+
+const HERB_BOARD_MAX_ROUNDS = 20;
+const HERB_BOARD_MAX_REROLLS = 5;
+
+// Играет один заход в "Заросли" от текущей страницы (уже после клика по "Искать травы") до
+// терминального состояния: 'thorn' (провал, шип), 'cooldown' (растение ещё не выросло -- не
+// должно случиться сразу после успешного захода на шаг, но страхуемся), 'done' (любое другое
+// финальное сообщение -- в т.ч. успешный сбор травы, текст которого мы заранее не знаем) или
+// 'error' (не смогли разобрать страницу / кончились попытки).
+async function playHerbBoard(page) {
+  let rerollsLeft = HERB_BOARD_MAX_REROLLS;
+
+  for (let round = 0; round < HERB_BOARD_MAX_ROUNDS; round++) {
+    const text = await getBodyText(page);
+
+    if (/еще не успело вырасти|ещё не успело вырасти/i.test(text)) {
+      console.log('Искать травы: растение ещё не выросло (кулдаун) -> пропускаю');
+      return { outcome: 'cooldown' };
+    }
+
+    if (/То было наваждение/i.test(text)) {
+      if (rerollsLeft <= 0) {
+        console.log('Искать травы: слишком много "наваждений" подряд, прекращаю');
+        return { outcome: 'error' };
+      }
+      rerollsLeft--;
+      const ok = await clickByTexts(page, ['Далее', 'далее'], 'Далее (наваждение)');
+      if (!ok) {
+        console.log('Искать травы: не нашёл "Далее" после наваждения');
+        return { outcome: 'error' };
+      }
+      await pause(page, 800, 1600);
+      continue;
+    }
+
+    if (/укололись о ядовитый шип/i.test(text)) {
+      console.log('Искать травы: наступили на шип, попытка окончена (игровой кулдаун)');
+      return { outcome: 'thorn' };
+    }
+
+    const board = await parseHerbBoard(page);
+
+    if (!board.hasGrid) {
+      // Сетки нет -- скорее всего терминальное сообщение, которое мы не распознали текстом выше
+      // (например успешный сбор травы). Считаем раунд завершённым и логируем текст для диагностики.
+      console.log(`Искать травы: сетки нет на странице, считаю раунд завершённым (текст: ${text.slice(0, 200)})`);
+      return { outcome: 'done', text };
+    }
+
+    if (board.unopenedCells.length === 0) {
+      // Ни "укололись", ни "наваждение" не совпали, но свободных клеток не осталось -- скорее всего
+      // это и есть успешный сбор травы (в т.ч. через цепную реакцию открытия пустых клеток, которая
+      // задевает и саму траву). Текст здесь ещё точно не подтверждён -- логируем целиком для проверки.
+      console.log(`Искать травы: все клетки открыты без шипа -- считаю успехом. Текст: ${text.slice(0, 500)}`);
+      return { outcome: 'done', text };
+    }
+
+    const pick = solveHerbBoard(board.openedNumbers, board.unopenedCells);
+    if (pick === null) {
+      console.log('Искать травы: решатель не смог выбрать клетку');
+      return { outcome: 'error' };
+    }
+
+    const clicked = await clickHerbCell(page, pick);
+    if (!clicked) {
+      return { outcome: 'error' };
+    }
+  }
+
+  console.log('Искать травы: превышен лимит раундов, прекращаю');
+  return { outcome: 'error' };
+}
+
+// В меню квестов травы перечислены обычным форматом "• Травы: <название> [инфо]", как и
+// остальные Q-квесты (Харчевня, Дерево жизни и т.д.) -- открываются через [инфо] рядом со строкой.
+function herbMenuLabel(herbName) {
+  return `Травы: ${herbName}`;
+}
+
+async function openHerbQuestFromMenu(page, questCount, herbName) {
+  if (!await resetToQuestMenu(page, questCount)) {
+    return false;
+  }
+
+  const menuLabel = herbMenuLabel(herbName);
+  let opened = await clickInfoForQuest(page, menuLabel);
+
+  if (!opened) {
+    // На случай, если на повторных заходах трава видна только под "Все квесты".
+    const allOk = await clickByTexts(page, ['Все квесты', 'все квесты'], 'Все квесты');
+    if (allOk) {
+      opened = await clickInfoForQuest(page, menuLabel);
+    }
+  }
+
+  return opened;
+}
+
+async function progressHerbQuest(page, herbName, { questCount } = {}) {
+  console.log(`Искать травы: пробую собрать "${herbName}"`);
+
+  try {
+    const opened = await openHerbQuestFromMenu(page, questCount, herbName);
+    if (!opened) {
+      const menuSnapshot = (await getBodyText(page)).replace(/\s+/g, ' ').trim().slice(0, 1500);
+      console.log(`Искать травы: не нашёл "${herbName}" в меню квестов. Текст страницы: ${menuSnapshot}`);
+      return false;
+    }
+
+    await performStep(page, {
+      stepName: 'К месту выполнения',
+      currentTexts: ['К месту выполнения', 'к месту выполнения'],
+      waitAfterClickMs: 7000,
+      retries: 3,
+    });
+
+    if (await existsAnyText(page, ['В пути', 'в пути', 'В пути еще', 'в пути еще'])) {
+      await clickByTexts(page, ['В пути еще', 'в пути еще', 'В пути', 'в пути'], 'В пути');
+      await pause(page, 800, 1600);
+    }
+
+    const searchOk = await performStep(page, {
+      stepName: 'Искать травы',
+      currentTexts: ['Искать травы', 'искать травы'],
+      retries: 4,
+    });
+
+    if (!searchOk) {
+      console.log('Искать травы: шаг "Искать травы" недоступен');
+      return false;
+    }
+
+    const result = await playHerbBoard(page);
+    console.log(`Искать травы: "${herbName}" -> ${result.outcome}`);
+
+    await clickByTexts(page, ['В игру', 'в игру'], 'В игру (после трав)').catch(() => {});
+
+    return result.outcome === 'done';
+  } catch (e) {
+    console.log(`Искать травы: ошибка (${herbName}): ${e.message}`);
     return false;
   }
 }
@@ -3390,6 +3794,29 @@ async function emitAttackAlertWithScreenshot(page, attackerNick, text, meta = {}
   attackAlertCooldownUntil = now + 60 * 1000;
 }
 
+function emitMorningScreenshotAlert(payload) {
+  try {
+    const json = JSON.stringify(payload || {});
+    const encoded = Buffer.from(json, 'utf8').toString('base64');
+    console.log(`MORNING_SCREENSHOT:${encoded}`);
+  } catch (e) {
+    console.log(`Не удалось сериализовать утренний скриншот: ${e.message}`);
+  }
+}
+
+async function takeMorningScreenshot(page) {
+  try {
+    fs.mkdirSync(ATTACK_SCREENSHOT_DIR, { recursive: true });
+    const ts = formatTimestampForFilename(new Date());
+    const filePath = path.join(ATTACK_SCREENSHOT_DIR, `${ts}__morning_zazyvala.png`);
+    await page.screenshot({ path: filePath, fullPage: true });
+    return filePath;
+  } catch (e) {
+    console.log(`Не удалось сделать утренний скриншот: ${e.message}`);
+    return null;
+  }
+}
+
 function randInt(min, max) {
   const a = Math.ceil(min);
   const b = Math.floor(max);
@@ -3746,6 +4173,38 @@ async function clickByTextsForced(page, texts, stepName) {
     }
   }
 
+  return false;
+}
+
+// Exact (whole-text) match, unlike clickByTexts' :has-text() substring match. Needed when the
+// target text is itself a prefix/substring of another button on the same page (e.g. "Охотиться"
+// vs "Охотиться на лосей") — a substring match would ambiguously hit the wrong one.
+async function clickByTextsExact(page, texts, stepName) {
+  for (const text of texts) {
+    const selectors = [
+      `a:text-is("${text}")`,
+      `button:text-is("${text}")`,
+      `input[value="${text}"]`,
+    ];
+
+    for (const selector of selectors) {
+      const locator = page.locator(selector).first();
+      const count = await locator.count().catch(() => 0);
+
+      if (count > 0) {
+        try {
+          await locator.click({ timeout: 8000, noWaitAfter: true });
+          console.log(`OK: ${stepName} -> ${text} (exact)`);
+          uiStuckState = { stepName: '', count: 0, firstAt: 0 };
+          return true;
+        } catch (e) {
+          console.log(`Не смог кликнуть ${stepName} -> ${text} (exact): ${e.message}`);
+        }
+      }
+    }
+  }
+
+  console.log(`Не найдено точное совпадение для шага "${stepName}": ${texts.join(', ')}`);
   return false;
 }
 
@@ -4402,6 +4861,15 @@ async function fightLoop(page) {
       return true;
     }
 
+    // Some targets (e.g. Thursday's Могильщик/Мясник/Ведьма) have a real in-game per-target
+    // cooldown, same as regular farm fights: "Вы слишком устали, приходите через N мин." Detect it
+    // and abort immediately with a distinguishable error instead of burning through MAX_STUCK
+    // iterations trying to find a fight that isn't there right now.
+    const tiredMatch = text.match(/Вы\s+слишком\s+устали.{0,40}?через\s+(\d+)\s*мин/i);
+    if (tiredMatch) {
+      throw new Error(`fight_target_cooldown:${Number(tiredMatch[1]) || 1}`);
+    }
+
     // Sometimes we are on a pre-fight page and must click "В бой" first.
     if (!/Ударить/i.test(text)) {
       const startOk = await clickByTexts(page, START_FIGHT_TEXTS, '\u0412 \u0431\u043e\u0439');
@@ -4467,6 +4935,19 @@ async function useRecovery(page) {
   if (!success) {
     console.log('Не удалось попасть в Стоунгард через Fastway, вернусь на главную страницу.');
   }
+}
+
+// Unlike Blake (paid boat passage, so staying put avoids paying twice), goblins reach their farm
+// spot via a free Fastway portal — no reason to idle there once the cooldown is spent. Rest in
+// Стоунгард (safe from PvP) whenever HP is positive; by the time doScenario reaches this point,
+// negative-HP cases have already been routed to Кулак хаоса / Последний дом.
+async function maybeRestGoblinAtStoneguard(page, stats) {
+  if (FARM_TARGET !== 'goblins') return false;
+  if (typeof stats?.hpCurrent !== 'number' || stats.hpCurrent < 0) return false;
+
+  console.log(`Goblins farm: HP positive (${stats.hpCurrent}) -> rest at Стоунгард`);
+  await useRecovery(page);
+  return true;
 }
 
 async function goToChaosByAmulet(page) {
@@ -4861,9 +5342,58 @@ async function runVinogradTask(page) {
     });
   }
 
+  const vineyardText = await getBodyText(page);
+
+  const HARVEST = 'Собрать урожай';
+
+  async function tryPlantVineyardSeed() {
+    const planted = await clickByTexts(
+      page,
+      ['Посадить семя винограда', 'посадить семя винограда', 'Посадить', 'посадить'],
+      'Посадить',
+    );
+    if (planted) {
+      console.log('Виноград: посадили новое семя');
+      await pause(page, 800, 1600);
+    } else {
+      // Нет семени винограда в инвентаре -- это нормально, не ошибка. Семя добывается отдельно
+      // через "Искать травы" (Семя винограда); просто продолжаем обычный сценарий дальше.
+      console.log('Виноград: нет семени винограда для посадки -- пропускаю, продолжаю обычный сценарий');
+    }
+    return planted;
+  }
+
+  // Цикл виноградника: полив -> (когда созрело) "Собрать урожай" вместо полива -> после сбора
+  // появляется "Посадить" (нужно семя винограда, добываемое через "Искать травы") -> и снова полив.
+  if (new RegExp(HARVEST, 'i').test(vineyardText)) {
+    console.log('Виноград: урожай созрел, собираю');
+    await performStep(page, {
+      stepName: HARVEST,
+      currentTexts: [HARVEST, HARVEST.toLowerCase()],
+      retries: 3,
+      skipIfNextVisible: false,
+    });
+    await pause(page, 800, 1600);
+
+    const afterHarvestText = await getBodyText(page);
+    if (/Посадить/i.test(afterHarvestText)) {
+      await tryPlantVineyardSeed();
+    }
+
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    return;
+  }
+
+  // Виноградник уже собран раньше (в прошлый заход семени не было), сейчас просто ждёт посадки.
+  if (/Посадить/i.test(vineyardText)) {
+    console.log('Виноград: урожай уже собран ранее, пробую посадить семя');
+    await tryPlantVineyardSeed();
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    return;
+  }
+
   // Watering can be unavailable (e.g. "Сделать вино (квестзапрет 6ч)" shown instead) —
   // that's a normal state, not an error. Just bail out; VINOGRAD_INTERVAL_MS handles retiming.
-  const vineyardText = await getBodyText(page);
   if (!/Полить виноград/i.test(vineyardText)) {
     console.log('Виноград: полить сейчас нельзя (не готово/квестзапрет) — это нормально, следующая попытка через 8 часов');
     await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
@@ -4884,6 +5414,1129 @@ async function runVinogradTask(page) {
     nextTexts: [],
     retries: 3,
   });
+}
+
+// Довольствие: простой ежедневный маршрут без боя.
+// Амулет -> Дорожный крест -> Казначейство Тригмагистрата -> Получить довольствие -> В игру.
+async function runAllowanceTask(page) {
+  console.log('Довольствие: маршрут Амулет -> Дорожный крест -> Казначейство Тригмагистрата -> Получить довольствие -> В игру');
+
+  const AMULET     = 'Амулет';
+  const ROAD_CROSS = 'Дорожный крест';
+  const TREASURY   = 'Казначейство Тригмагистрата';
+  const GET_ALLOWANCE = 'Получить довольствие';
+  const V_IGRU     = 'В игру';
+
+  await performStep(page, {
+    stepName: AMULET,
+    currentTexts: [AMULET, AMULET.toLowerCase()],
+    nextTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ROAD_CROSS,
+    currentTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    nextTexts: [TREASURY, TREASURY.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: TREASURY,
+    currentTexts: [TREASURY, TREASURY.toLowerCase()],
+    nextTexts: [GET_ALLOWANCE, GET_ALLOWANCE.toLowerCase()],
+    retries: 3,
+  });
+
+  // Довольствие может быть уже получено сегодня (в игре свой кулдаун) — это нормально, не ошибка.
+  const treasuryText = await getBodyText(page);
+  if (!/Получить довольствие/i.test(treasuryText)) {
+    console.log('Довольствие: получить нельзя (уже получено сегодня) — это нормально');
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    return;
+  }
+
+  await performStep(page, {
+    stepName: GET_ALLOWANCE,
+    currentTexts: [GET_ALLOWANCE, GET_ALLOWANCE.toLowerCase()],
+    nextTexts: [V_IGRU, V_IGRU.toLowerCase()],
+    retries: 3,
+    skipIfNextVisible: false,
+  });
+
+  await performStep(page, {
+    stepName: V_IGRU,
+    currentTexts: [V_IGRU, V_IGRU.toLowerCase()],
+    nextTexts: [],
+    retries: 3,
+  });
+}
+
+// Утренний скриншот для Telegram: Стоунгард (Fastway) -> Центральная площадь -> Уличный зазывала.
+// Возвращает true только если скриншот реально сделан и отправлен на алерт-канал (stdout);
+// при false вызывающий код не помечает день выполненным, и следующий цикл пробует снова.
+async function runMorningScreenshotTask(page) {
+  console.log('Утренний скриншот: маршрут Стоунгард -> Центральная площадь -> Уличный зазывала');
+
+  const CENTRAL_SQUARE = 'Центральная площадь';
+  const STREET_TOUT = 'Уличный зазывала';
+  const V_IGRU = 'В игру';
+
+  const stoneguardOk = await goToStoneguardViaFastway(page, 'Стоунгард (утренний скриншот)');
+  if (!stoneguardOk) {
+    console.log('Утренний скриншот: не удалось попасть в Стоунгард, попробую в следующем цикле');
+    return false;
+  }
+
+  const squareOk = await performStep(page, {
+    stepName: CENTRAL_SQUARE,
+    currentTexts: [CENTRAL_SQUARE, CENTRAL_SQUARE.toLowerCase()],
+    nextTexts: [STREET_TOUT, STREET_TOUT.toLowerCase()],
+    retries: 3,
+  });
+  if (!squareOk) {
+    console.log('Утренний скриншот: не удалось попасть на Центральную площадь, попробую в следующем цикле');
+    return false;
+  }
+
+  const toutOk = await clickByTexts(page, [STREET_TOUT, STREET_TOUT.toLowerCase()], STREET_TOUT);
+  if (!toutOk) {
+    console.log('Утренний скриншот: не нашёл "Уличный зазывала" на площади, попробую в следующем цикле');
+    return false;
+  }
+  await pause(page, 800, 1800);
+
+  const screenshotPath = await takeMorningScreenshot(page);
+  if (!screenshotPath) {
+    console.log('Утренний скриншот: скриншот не удался, попробую в следующем цикле');
+    return false;
+  }
+
+  emitMorningScreenshotAlert({
+    screenshotPath,
+    occurredAt: new Date().toISOString(),
+  });
+
+  await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+  return true;
+}
+
+// Охота на лосей: раз в день, ходовая точка убивается кем-то на сервере, поэтому "бота" (цели
+// охоты) может уже не быть на месте — это нормальное состояние, а не ошибка маршрута.
+// Конь -> Леса Эльсены -> (ожидание 7с/подтверждение поездки) -> Запад x2 -> Север ->
+// если есть "Охотиться на лосей" -> обычный бой (fightLoop) -> после боя: Амулет -> Стоунгард ->
+// Северные ворота -> Идти на север -> Магистратура Империи -> Ратуша -> В игру.
+// Если бота нет - дальше идти не нужно, день считается пройденным (canRunElkHuntNow до завтра).
+async function runElkHuntTask(page) {
+  console.log('Охота на лосей: маршрут Конь -> Леса Эльсены -> Запад x2 -> Север -> проверка бота');
+
+  const HORSE   = 'Конь';
+  const ELSENA  = 'Леса Эльсены';
+  const V_PUTI   = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const WEST  = 'Запад';
+  const NORTH = 'Север';
+  const HUNT  = 'Охотиться на лосей';
+  const HUNT_GO = 'Охотиться';
+  const AMULET      = 'Амулет';
+  const STONEGUARD  = 'Стоунгард';
+  const NORTH_GATE  = 'Северные ворота';
+  const GO_NORTH    = 'Идти на север';
+  const MAGISTRATE  = 'Магистратура Империи';
+  const TOWN_HALL   = 'Ратуша';
+  const V_IGRU2     = 'В игру';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [ELSENA, ELSENA.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ELSENA,
+    currentTexts: [ELSENA, ELSENA.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      WEST, WEST.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  async function stepMany(text, count) {
+    for (let i = 0; i < count; i++) {
+      const ok = await tryPerformStepOptional(page, {
+        stepName: `${text} (${i + 1}/${count})`,
+        currentTexts: [text, text.toLowerCase()],
+      });
+      if (!ok) break;
+    }
+  }
+
+  await stepMany(WEST, 2);
+  await stepMany(NORTH, 1);
+  await pause(page, 800, 1600);
+
+  const spotText = await getBodyText(page);
+  if (!new RegExp(HUNT, 'i').test(spotText)) {
+    console.log('Охота на лосей: бота нет на месте сегодня — это нормально, дальше не иду');
+    return;
+  }
+
+  console.log('Охота на лосей: бот есть, начинаю бой');
+  // "Охотиться" (следующий шаг) is a substring of "Охотиться на лосей" (this step's own button),
+  // so a has-text-based nextTexts check would false-positive on the not-yet-clicked HUNT button
+  // itself and skip this click entirely. Don't pass nextTexts here — just click unconditionally.
+  await performStep(page, {
+    stepName: HUNT,
+    currentTexts: [HUNT, HUNT.toLowerCase()],
+    retries: 3,
+  });
+
+  // Промежуточный экран "Вы замечаете рога, торчащие из кустов." с кнопками
+  // "Охотиться"/"Уйти". Exact-match click, not clickByTexts' substring match, so it can't hit
+  // a lingering "Охотиться на лосей" button by mistake.
+  await pause(page, 800, 1600);
+
+  // Сервер может вместо экрана с рогами показать "Вы уже выполняли задание сегодня" (квест уже
+  // засчитан на сегодня, например если он был выполнен вручную или ботом раньше в этом же дне,
+  // а бот на месте всё равно ещё отображался). Это не ошибка, а нормальный "уже сделано" исход,
+  // как и отсутствие бота на месте (см. проверку spotText выше) -- просто возвращаемся.
+  const afterHuntClickText = await getBodyText(page);
+  if (/уже\s+выполняли\s+задание/i.test(afterHuntClickText)) {
+    console.log('Охота на лосей: "уже выполняли задание сегодня" — квест уже засчитан, возвращаюсь');
+    await clickByTexts(page, ['Вернуться', 'вернуться'], 'Вернуться').catch(() => {});
+    await pause(page, 800, 1600);
+    return;
+  }
+
+  const huntGoOk = await clickByTextsExact(page, [HUNT_GO, HUNT_GO.toLowerCase()], HUNT_GO);
+  if (!huntGoOk) {
+    throw new Error('elk_hunt_confirm_not_found');
+  }
+  await pause(page, 800, 1800);
+
+  await fightLoop(page);
+
+  console.log('Охота на лосей: после боя иду обратно Амулет -> Стоунгард -> Северные ворота -> Идти на север -> Магистратура Империи -> Ратуша -> В игру');
+
+  await performStep(page, {
+    stepName: AMULET,
+    currentTexts: [AMULET, AMULET.toLowerCase()],
+    nextTexts: [STONEGUARD, STONEGUARD.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: STONEGUARD,
+    currentTexts: [STONEGUARD, STONEGUARD.toLowerCase()],
+    nextTexts: [NORTH_GATE, NORTH_GATE.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: NORTH_GATE,
+    currentTexts: [NORTH_GATE, NORTH_GATE.toLowerCase()],
+    nextTexts: [GO_NORTH, GO_NORTH.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: GO_NORTH,
+    currentTexts: [GO_NORTH, GO_NORTH.toLowerCase()],
+    nextTexts: [MAGISTRATE, MAGISTRATE.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: MAGISTRATE,
+    currentTexts: [MAGISTRATE, MAGISTRATE.toLowerCase()],
+    nextTexts: [TOWN_HALL, TOWN_HALL.toLowerCase()],
+    retries: 3,
+  });
+
+  // "В игру" is always in the top nav (present even before this click), so skipIfNextVisible's
+  // "next step already visible" check would false-positive and skip clicking "Ратуша" entirely.
+  await performStep(page, {
+    stepName: TOWN_HALL,
+    currentTexts: [TOWN_HALL, TOWN_HALL.toLowerCase()],
+    nextTexts: [V_IGRU2, V_IGRU2.toLowerCase()],
+    retries: 3,
+    skipIfNextVisible: false,
+  });
+
+  await performStep(page, {
+    stepName: V_IGRU2,
+    currentTexts: [V_IGRU2, V_IGRU2.toLowerCase()],
+    nextTexts: [],
+    retries: 3,
+  });
+}
+
+// Дейлик вторника: Гнёзда гарпий. Конь -> Горы Дарии -> (ожидание 7с/подтверждение поездки) ->
+// Идти на запад -> Гнёзда гарпий (обычный бой, ровно 3 раза подряд на том же месте).
+async function runTuesdayHarpyExtraDaily(page) {
+  console.log('Дейлик (вторник): маршрут Конь -> Горы Дарии -> Идти на запад -> Гнёзда гарпий x3');
+
+  const HORSE    = 'Конь';
+  const DARIA    = 'Горы Дарии';
+  const V_PUTI   = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const GO_WEST  = 'Идти на запад';
+  const HARPY_NESTS   = 'Гнёзда гарпий';
+  const HARPY_NESTS_E = 'Гнезда гарпий';
+  const V_IGRU   = 'В игру';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [DARIA, DARIA.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: DARIA,
+    currentTexts: [DARIA, DARIA.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      GO_WEST, GO_WEST.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [GO_WEST, GO_WEST.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  await performStep(page, {
+    stepName: GO_WEST,
+    currentTexts: [GO_WEST, GO_WEST.toLowerCase()],
+    nextTexts: [HARPY_NESTS, HARPY_NESTS.toLowerCase(), HARPY_NESTS_E, HARPY_NESTS_E.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = 0; i < 3; i++) {
+    console.log(`Дейлик (вторник): бой с гарпиями ${i + 1}/3`);
+    await performStep(page, {
+      stepName: `${HARPY_NESTS} (${i + 1}/3)`,
+      currentTexts: [HARPY_NESTS, HARPY_NESTS.toLowerCase(), HARPY_NESTS_E, HARPY_NESTS_E.toLowerCase()],
+      retries: 3,
+    });
+    await fightLoop(page);
+  }
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+// Дейлик среды: 5 независимых охот подряд, каждая начинается заново с Амулет/Конь и
+// заканчивается своим необязательным "В игру". Если какая-то охота упадёт с ошибкой, весь
+// runWednesdayExtraDaily бросит исключение и день не будет отмечен пройденным (см. вызов
+// runExtraDailyQuest ниже) -> при следующем цикле дейлик среды начнётся заново с первой охоты.
+
+async function runWednesdayMountainSpirit(page) {
+  console.log('Дейлик (среда, 1/5): Дух гор — Конь -> Горы Дарии -> запад/юг/запад/запад/север/север -> пещера -> тоннель -> бой');
+
+  const HORSE  = 'Конь';
+  const DARIA  = 'Горы Дарии';
+  const V_PUTI   = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const WEST  = 'Запад';
+  const SOUTH = 'Юг';
+  const NORTH = 'Север';
+  const LOOK_CAVE = 'Осмотреть пещеру';
+  const DESCEND   = 'Спуститься в тоннель';
+  const V_IGRU = 'В игру';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [DARIA, DARIA.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: DARIA,
+    currentTexts: [DARIA, DARIA.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      WEST, WEST.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  async function clickDir(text, stepLabel) {
+    await performStep(page, {
+      stepName: stepLabel,
+      currentTexts: [text, text.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  await clickDir(WEST, 'Запад (1/6)');
+  await clickDir(SOUTH, 'Юг (2/6)');
+  await clickDir(WEST, 'Запад (3/6)');
+  await clickDir(WEST, 'Запад (4/6)');
+  await clickDir(NORTH, 'Север (5/6)');
+  await clickDir(NORTH, 'Север (6/6)');
+
+  await performStep(page, {
+    stepName: LOOK_CAVE,
+    currentTexts: [LOOK_CAVE, LOOK_CAVE.toLowerCase()],
+    nextTexts: [DESCEND, DESCEND.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: DESCEND,
+    currentTexts: [DESCEND, DESCEND.toLowerCase()],
+    retries: 3,
+  });
+
+  await fightLoop(page);
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+async function runWednesdayHyenaHunt(page) {
+  console.log('Дейлик (среда, 2/5): Охота на гиен — Амулет -> Таверна -> юг -> запад -> Выслеживать гиен x2');
+
+  const AMULET = 'Амулет';
+  const TAVERN = 'Таверна';
+  const SOUTH  = 'Юг';
+  const WEST   = 'Запад';
+  const TRACK_HYENAS = 'Выслеживать гиен';
+  const V_IGRU = 'В игру';
+
+  await performStep(page, {
+    stepName: AMULET,
+    currentTexts: [AMULET, AMULET.toLowerCase()],
+    nextTexts: [TAVERN, TAVERN.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: TAVERN,
+    currentTexts: [TAVERN, TAVERN.toLowerCase()],
+    nextTexts: [SOUTH, SOUTH.toLowerCase()],
+    retries: 3,
+  });
+
+  // Тот же класс проблемы, что и в runBoarHunt: следующее направление может быть уже видно на
+  // хабе ДО реального перехода (несколько направлений на одной странице) -- форсируем клик.
+  await performStep(page, {
+    stepName: SOUTH,
+    currentTexts: [SOUTH, SOUTH.toLowerCase()],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    retries: 3,
+    skipIfNextVisible: false,
+  });
+
+  await performStep(page, {
+    stepName: WEST,
+    currentTexts: [WEST, WEST.toLowerCase()],
+    nextTexts: [TRACK_HYENAS, TRACK_HYENAS.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = 0; i < 2; i++) {
+    console.log(`Дейлик (среда, 2/5): бой с гиенами ${i + 1}/2`);
+    await performStep(page, {
+      stepName: `${TRACK_HYENAS} (${i + 1}/2)`,
+      currentTexts: [TRACK_HYENAS, TRACK_HYENAS.toLowerCase()],
+      retries: 3,
+    });
+    await fightLoop(page);
+  }
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+// Общий маршрут охоты на кабана: Конь -> Леса Эльсены -> запад -> юг -> Напасть на кабана xN.
+// Используется в среду (3/5, x2), пятницу (1/2, x2) и воскресенье (1/2, x3) — маршрут в игре
+// идентичен, отличаются только dayLabel в логах и число боёв.
+async function runBoarHunt(page, dayLabel, count = 2) {
+  console.log(`Дейлик (${dayLabel}): Кабан — Конь -> Леса Эльсены -> запад -> юг -> Напасть на кабана x${count}`);
+
+  const HORSE  = 'Конь';
+  const ELSENA = 'Леса Эльсены';
+  const V_PUTI   = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const WEST  = 'Запад';
+  const SOUTH = 'Юг';
+  const ATTACK_BOAR = 'Напасть на кабана';
+  const V_IGRU = 'В игру';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [ELSENA, ELSENA.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ELSENA,
+    currentTexts: [ELSENA, ELSENA.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      WEST, WEST.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  // "Юг" ведёт к волчьей поляне прямо с этого хаба (см. volki_v_lesu.js), т.е. виден на странице
+  // ещё ДО клика по "Запад" -- skipIfNextVisible здесь ложно решил бы, что "Запад" уже пройден,
+  // и увёл бы прямиком к волкам вместо кабана. Форсируем реальный клик.
+  await performStep(page, {
+    stepName: WEST,
+    currentTexts: [WEST, WEST.toLowerCase()],
+    nextTexts: [SOUTH, SOUTH.toLowerCase()],
+    retries: 3,
+    skipIfNextVisible: false,
+  });
+
+  await performStep(page, {
+    stepName: SOUTH,
+    currentTexts: [SOUTH, SOUTH.toLowerCase()],
+    nextTexts: [ATTACK_BOAR, ATTACK_BOAR.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = 0; i < count; i++) {
+    console.log(`Дейлик (${dayLabel}): бой с кабаном ${i + 1}/${count}`);
+    await performStep(page, {
+      stepName: `${ATTACK_BOAR} (${i + 1}/${count})`,
+      currentTexts: [ATTACK_BOAR, ATTACK_BOAR.toLowerCase()],
+      retries: 3,
+    });
+    await fightLoop(page);
+  }
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+// Общий маршрут охоты на бизона: Амулет -> Дорожный крест -> восток x2 -> Охотиться xN.
+// Используется в среду (4/5, x2) и воскресенье (2/2, x3) — маршрут в игре идентичен, отличаются
+// только dayLabel в логах и число боёв. Шаг "восток x2" — навигация до места охоты, не связана
+// со счётчиком боёв.
+async function runBisonHunt(page, dayLabel, count = 2) {
+  console.log(`Дейлик (${dayLabel}): Бизон — Амулет -> Дорожный крест -> восток x2 -> Охотиться x${count}`);
+
+  const AMULET     = 'Амулет';
+  const ROAD_CROSS = 'Дорожный крест';
+  const EAST = 'Восток';
+  const HUNT = 'Охотиться';
+  const V_IGRU = 'В игру';
+
+  await performStep(page, {
+    stepName: AMULET,
+    currentTexts: [AMULET, AMULET.toLowerCase()],
+    nextTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ROAD_CROSS,
+    currentTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    nextTexts: [EAST, EAST.toLowerCase()],
+    retries: 3,
+  });
+
+  async function stepMany(text, count) {
+    for (let i = 0; i < count; i++) {
+      const ok = await tryPerformStepOptional(page, {
+        stepName: `${text} (${i + 1}/${count})`,
+        currentTexts: [text, text.toLowerCase()],
+      });
+      if (!ok) break;
+    }
+  }
+
+  await stepMany(EAST, 2);
+  await pause(page, 800, 1600);
+
+  for (let i = 0; i < count; i++) {
+    console.log(`Дейлик (${dayLabel}): бой с бизоном ${i + 1}/${count}`);
+    // "Охотиться" -- то же слово, что и confirm-кнопка охоты на лосей (см. clickByTextsExact) --
+    // кликаем точным совпадением, а не has-text, чтобы не задеть похожую по тексту кнопку.
+    const ok = await clickByTextsExact(page, [HUNT, HUNT.toLowerCase()], `${HUNT} (${i + 1}/${count})`);
+    if (!ok) throw new Error('bison_hunt_button_not_found');
+    await pause(page, 800, 1600);
+    await fightLoop(page);
+  }
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+// Общий маршрут охоты на варана: Амулет -> Дорожный крест -> юг -> Устроиться на привал x2.
+// Используется и в среду (5/5), и в пятницу (2/2) — маршрут в игре идентичен, отличается
+// только dayLabel в логах.
+async function runVaranHunt(page, dayLabel) {
+  console.log(`Дейлик (${dayLabel}): Варан — Амулет -> Дорожный крест -> юг -> Устроиться на привал x2`);
+
+  const AMULET     = 'Амулет';
+  const ROAD_CROSS = 'Дорожный крест';
+  const SOUTH = 'Юг';
+  const CAMP  = 'Устроиться на привал';
+  const V_IGRU = 'В игру';
+
+  await performStep(page, {
+    stepName: AMULET,
+    currentTexts: [AMULET, AMULET.toLowerCase()],
+    nextTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ROAD_CROSS,
+    currentTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    nextTexts: [SOUTH, SOUTH.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: SOUTH,
+    currentTexts: [SOUTH, SOUTH.toLowerCase()],
+    nextTexts: [CAMP, CAMP.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = 0; i < 2; i++) {
+    console.log(`Дейлик (${dayLabel}): бой с вараном ${i + 1}/2`);
+    await performStep(page, {
+      stepName: `${CAMP} (${i + 1}/2)`,
+      currentTexts: [CAMP, CAMP.toLowerCase()],
+      retries: 3,
+    });
+    await fightLoop(page);
+  }
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+async function runWednesdayExtraDaily(page) {
+  await runWednesdayMountainSpirit(page);
+  await runWednesdayHyenaHunt(page);
+  await runBoarHunt(page, 'среда, 3/5');
+  await runBisonHunt(page, 'среда, 4/5');
+  await runVaranHunt(page, 'среда, 5/5');
+}
+
+// Дейлик пятницы: 2 охоты, обе используют маршруты, уже описанные для среды (кабан и варан).
+async function runFridayExtraDaily(page) {
+  await runBoarHunt(page, 'пятница, 1/2');
+  await runVaranHunt(page, 'пятница, 2/2');
+}
+
+// Дейлик воскресенья: 2 охоты (кабан x3, бизон x3), маршруты те же, что и в среду/пятницу,
+// отличается только число боёв.
+async function runSundayExtraDaily(page) {
+  await runBoarHunt(page, 'воскресенье, 1/2', 3);
+  await runBisonHunt(page, 'воскресенье, 2/2', 3);
+}
+
+// Дейлик четверга: 3 охоты в Мисттоуне. Все три начинаются одинаково (Конь -> Мисттоун ->
+// ожидание 7с -> Идти в город), дальше расходятся по разным домам/переулкам.
+//
+// Каждая цель (могильщик/мясник/ведьма) имеет реальный игровой кулдаун на атаку ("Вы слишком
+// устали, приходите через N мин"), как и обычные фарм-цели (Блейк/гоблины) -- fightLoop бросает
+// Error('fight_target_cooldown:N') при обнаружении этого сообщения (см. fightLoop). Прогресс
+// (thursdayGravediggerDoneToday / thursdayButcherFightsToday / thursdayWitchFightsToday)
+// сохраняется между циклами, чтобы при кулдауне бот не начинал охоту заново, а просто откладывал
+// оставшиеся бои до следующего цикла.
+function parseCooldownError(e) {
+  const m = /^fight_target_cooldown:(\d+)$/.exec(e.message || '');
+  return m ? Number(m[1]) : null;
+}
+
+function resetThursdayStateIfNewDay() {
+  const key = getDayKeyNow();
+  if (thursdayDayKey !== key) {
+    thursdayDayKey = key;
+    thursdayGravediggerDoneToday = false;
+    thursdayButcherFightsToday = 0;
+    thursdayWitchFightsToday = 0;
+  }
+}
+
+async function runThursdayGravedigger(page) {
+  resetThursdayStateIfNewDay();
+  if (thursdayGravediggerDoneToday) {
+    console.log('Дейлик (четверг, 1/3): могильщик уже сделан сегодня, пропускаю');
+    return;
+  }
+
+  console.log('Дейлик (четверг, 1/3): Могильщик — Конь -> Мисттоун -> Идти в город -> запад -> дом могильщика -> левая дверь -> Вниз -> Атаковать');
+
+  const HORSE     = 'Конь';
+  const MISTTOWN  = 'Мисттоун';
+  const V_PUTI    = 'В пути';
+  const V_PUTI_E  = 'В пути еще';
+  const V_PUTI_Y  = 'В пути ещё';
+  const GO_CITY   = 'Идти в город';
+  const WEST      = 'Запад';
+  const GRAVEDIGGER_HOUSE = 'Дом могильщика';
+  const LEFT_DOOR = 'Идти в левую дверь';
+  const DOWN      = 'Вниз';
+  const ATTACK    = 'Атаковать';
+  const V_IGRU    = 'В игру';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: MISTTOWN,
+    currentTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      GO_CITY, GO_CITY.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  await performStep(page, {
+    stepName: GO_CITY,
+    currentTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: WEST,
+    currentTexts: [WEST, WEST.toLowerCase()],
+    nextTexts: [GRAVEDIGGER_HOUSE, GRAVEDIGGER_HOUSE.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: GRAVEDIGGER_HOUSE,
+    currentTexts: [GRAVEDIGGER_HOUSE, GRAVEDIGGER_HOUSE.toLowerCase()],
+    nextTexts: [LEFT_DOOR, LEFT_DOOR.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: LEFT_DOOR,
+    currentTexts: [LEFT_DOOR, LEFT_DOOR.toLowerCase()],
+    nextTexts: [DOWN, DOWN.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: DOWN,
+    currentTexts: [DOWN, DOWN.toLowerCase()],
+    nextTexts: [ATTACK, ATTACK.toLowerCase()],
+    retries: 3,
+  });
+
+  console.log('Дейлик (четверг, 1/3): бой с могильщиком');
+  await performStep(page, {
+    stepName: ATTACK,
+    currentTexts: [ATTACK, ATTACK.toLowerCase()],
+    retries: 3,
+  });
+
+  try {
+    await fightLoop(page);
+  } catch (e) {
+    const waitMinutes = parseCooldownError(e);
+    if (waitMinutes !== null) {
+      console.log(`Дейлик (четверг, 1/3): могильщик ещё на кулдауне (${waitMinutes} мин) -> отложу до следующего цикла`);
+      await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+      return;
+    }
+    throw e;
+  }
+
+  thursdayGravediggerDoneToday = true;
+  persistDailyQuestState();
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+async function runThursdayButcher(page) {
+  resetThursdayStateIfNewDay();
+  if (thursdayButcherFightsToday >= 4) {
+    console.log('Дейлик (четверг, 2/3): мясник уже сделан сегодня, пропускаю');
+    return;
+  }
+
+  console.log('Дейлик (четверг, 2/3): Мясник — Конь -> Мисттоун -> Идти в город -> запад -> дом мясника -> желтая дверь -> Атаковать x4');
+
+  const HORSE     = 'Конь';
+  const MISTTOWN  = 'Мисттоун';
+  const V_PUTI    = 'В пути';
+  const V_PUTI_E  = 'В пути еще';
+  const V_PUTI_Y  = 'В пути ещё';
+  const GO_CITY   = 'Идти в город';
+  const WEST      = 'Запад';
+  const BUTCHER_HOUSE = 'Дом мясника';
+  const YELLOW_DOOR   = 'Желтую дверь';
+  const ATTACK    = 'Атаковать';
+  const V_IGRU    = 'В игру';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: MISTTOWN,
+    currentTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      GO_CITY, GO_CITY.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  await performStep(page, {
+    stepName: GO_CITY,
+    currentTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: WEST,
+    currentTexts: [WEST, WEST.toLowerCase()],
+    nextTexts: [BUTCHER_HOUSE, BUTCHER_HOUSE.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: BUTCHER_HOUSE,
+    currentTexts: [BUTCHER_HOUSE, BUTCHER_HOUSE.toLowerCase()],
+    nextTexts: [YELLOW_DOOR, YELLOW_DOOR.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: YELLOW_DOOR,
+    currentTexts: [YELLOW_DOOR, YELLOW_DOOR.toLowerCase()],
+    nextTexts: [ATTACK, ATTACK.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = thursdayButcherFightsToday; i < 4; i++) {
+    console.log(`Дейлик (четверг, 2/3): бой с мясником ${i + 1}/4`);
+    await performStep(page, {
+      stepName: `${ATTACK} (${i + 1}/4)`,
+      currentTexts: [ATTACK, ATTACK.toLowerCase()],
+      retries: 3,
+    });
+
+    try {
+      await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (четверг, 2/3): мясник ещё на кулдауне (${waitMinutes} мин, сделано ${i}/4) -> отложу оставшиеся бои до следующего цикла`);
+        thursdayButcherFightsToday = i;
+        persistDailyQuestState();
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        return;
+      }
+      throw e;
+    }
+
+    thursdayButcherFightsToday = i + 1;
+    persistDailyQuestState();
+  }
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+async function runThursdayWitch(page) {
+  resetThursdayStateIfNewDay();
+  if (thursdayWitchFightsToday >= 4) {
+    console.log('Дейлик (четверг, 3/3): ведьма уже сделана сегодня, пропускаю');
+    return;
+  }
+
+  console.log('Дейлик (четверг, 3/3): Ведьма — Конь -> Мисттоун -> Идти в город -> запад x3 -> переулок -> дом -> комната -> Атаковать x4');
+
+  const HORSE      = 'Конь';
+  const MISTTOWN   = 'Мисттоун';
+  const V_PUTI     = 'В пути';
+  const V_PUTI_E   = 'В пути еще';
+  const V_PUTI_Y   = 'В пути ещё';
+  const GO_CITY    = 'Идти в город';
+  const WEST       = 'Запад';
+  const TURN_ALLEY = 'Свернуть в переулок';
+  const GO_HOUSE   = 'Идти к дому';
+  const ENTER_HOUSE = 'Войти в дом';
+  const ENTER_DOOR  = 'Войти в дверь';
+  const ENTER_ROOM  = 'Войти в комнату';
+  const GO_DEEP     = 'Идти в глубь комнаты';
+  const ATTACK      = 'Атаковать';
+  const V_IGRU      = 'В игру';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: MISTTOWN,
+    currentTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      GO_CITY, GO_CITY.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  await performStep(page, {
+    stepName: GO_CITY,
+    currentTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    retries: 3,
+  });
+
+  async function stepMany(text, count) {
+    for (let i = 0; i < count; i++) {
+      const ok = await tryPerformStepOptional(page, {
+        stepName: `${text} (${i + 1}/${count})`,
+        currentTexts: [text, text.toLowerCase()],
+      });
+      if (!ok) break;
+    }
+  }
+
+  await stepMany(WEST, 3);
+  await pause(page, 800, 1600);
+
+  await performStep(page, {
+    stepName: TURN_ALLEY,
+    currentTexts: [TURN_ALLEY, TURN_ALLEY.toLowerCase()],
+    nextTexts: [GO_HOUSE, GO_HOUSE.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: GO_HOUSE,
+    currentTexts: [GO_HOUSE, GO_HOUSE.toLowerCase()],
+    nextTexts: [ENTER_HOUSE, ENTER_HOUSE.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ENTER_HOUSE,
+    currentTexts: [ENTER_HOUSE, ENTER_HOUSE.toLowerCase()],
+    nextTexts: [ENTER_DOOR, ENTER_DOOR.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ENTER_DOOR,
+    currentTexts: [ENTER_DOOR, ENTER_DOOR.toLowerCase()],
+    nextTexts: [ENTER_ROOM, ENTER_ROOM.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ENTER_ROOM,
+    currentTexts: [ENTER_ROOM, ENTER_ROOM.toLowerCase()],
+    nextTexts: [GO_DEEP, GO_DEEP.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: GO_DEEP,
+    currentTexts: [GO_DEEP, GO_DEEP.toLowerCase()],
+    nextTexts: [ATTACK, ATTACK.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = thursdayWitchFightsToday; i < 4; i++) {
+    console.log(`Дейлик (четверг, 3/3): бой с ведьмой ${i + 1}/4`);
+    await performStep(page, {
+      stepName: `${ATTACK} (${i + 1}/4)`,
+      currentTexts: [ATTACK, ATTACK.toLowerCase()],
+      retries: 3,
+    });
+
+    try {
+      await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (четверг, 3/3): ведьма ещё на кулдауне (${waitMinutes} мин, сделано ${i}/4) -> отложу оставшиеся бои до следующего цикла`);
+        thursdayWitchFightsToday = i;
+        persistDailyQuestState();
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        return;
+      }
+      throw e;
+    }
+
+    thursdayWitchFightsToday = i + 1;
+    persistDailyQuestState();
+  }
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+async function runThursdayExtraDaily(page) {
+  resetThursdayStateIfNewDay();
+  await runThursdayGravedigger(page);
+  await runThursdayButcher(page);
+  await runThursdayWitch(page);
+  return thursdayGravediggerDoneToday && thursdayButcherFightsToday >= 4 && thursdayWitchFightsToday >= 4;
+}
+
+// Registry: day-of-week (Date.getDay(): 0=Вс..6=Сб) -> task function. Add new days here as their
+// routes are supplied; days not listed are simply skipped by canRunExtraDailyNow's caller.
+const EXTRA_DAILY_TASKS = {
+  0: runSundayExtraDaily,       // Воскресенье
+  2: runTuesdayHarpyExtraDaily, // Вторник
+  3: runWednesdayExtraDaily,    // Среда
+  4: runThursdayExtraDaily,     // Четверг
+  5: runFridayExtraDaily,       // Пятница
+};
+
+// Returns whether today's дейлик is now fully complete. Most days' task functions always finish
+// in one run (return undefined -> treated as complete); Thursday's can return false when a
+// per-target cooldown left some fights for a later cycle (see runThursdayExtraDaily).
+async function runExtraDailyQuest(page) {
+  const weekday = new Date().getDay();
+  const task = EXTRA_DAILY_TASKS[weekday];
+  if (!task) return true;
+  const result = await task(page);
+  return result !== false;
 }
 
 function isStatueOfGloryDue() {
@@ -5072,11 +6725,25 @@ async function castFishingRodAndDetectCatch(page) {
     retries: 3,
   });
 
+  // Если бот был перезапущен посреди уже закинутой (в прошлом запуске) удочки, вместо
+  // "Забросить удочку" здесь показывается "Подождем еще N сек, авось клюнет" с кнопкой "Ждать" --
+  // дожидаемся результата этого старого заброса, прежде чем продолжать как обычно.
+  let afterRodText = await getBodyText(page);
+  for (let i = 0; i < 3; i++) {
+    const pendingBiteMatch = afterRodText.match(/Подожд[её]м\s+еще\s+(\d+)\s*сек/i);
+    if (!pendingBiteMatch) break;
+    const waitSec = Number(pendingBiteMatch[1]) || 5;
+    console.log(`Рыбалка: старый заброс ещё не завершился, жду ~${waitSec} сек и жму "Ждать" (${i + 1}/3)`);
+    await fixedPause(page, (waitSec + 2) * 1000);
+    await clickByTexts(page, ['Ждать', 'ждать'], 'Ждать (старый заброс)').catch(() => {});
+    await pause(page, 800, 1600);
+    afterRodText = await getBodyText(page);
+  }
+
   // Дневной лимит рыбы кончился: после "Рыбачить" игра показывает "Похоже, вы выловили всю рыбу,
   // приходите завтра" вместо кнопки "Забросить удочку". Наш счётчик может ещё показывать <6 (лимит
   // считается на сервере), поэтому выставляем его в лимит, чтобы canRunFishingNow больше не гонял
   // на рыбалку, и выходим чисто — без ошибки и общего бэкоффа "Retry after N min".
-  const afterRodText = await getBodyText(page);
   if (/выловили\s+всю\s+рыбу/i.test(afterRodText)) {
     console.log('Рыбалка: на сегодня рыба закончилась ("выловили всю рыбу") -> отмечаю лимит и выхожу');
     syncFishingDayState();
@@ -5198,12 +6865,59 @@ async function doScenario(page) {
     return;
   }
 
+  // Утренний скриншот: раз в день, максимально рано (первый же цикл после смены дня) —
+  // выполняется раньше остальных подзадач, чтобы не зависеть от их таймингов.
+  if (canRunMorningScreenshotNow()) {
+    console.log('Утренний скриншот: ещё не отправлен сегодня, выполняю маршрут');
+    try {
+      const done = await runMorningScreenshotTask(page);
+      if (done) {
+        morningScreenshotDoneToday = true;
+        persistDailyQuestState();
+      }
+    } catch (e) {
+      console.log(`Утренний скриншот: не удалось (${e.message}) -> попробую в следующем цикле`);
+      try {
+        await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await pause(page, 800, 1600);
+      } catch (e2) { /* ignore */ }
+    }
+  }
+
   // Water the vineyard: when "Виноград" task marker is visible OR the 8-hour interval has elapsed.
   const vinogradDue = Date.now() - lastVinogradRunAt >= VINOGRAD_INTERVAL_MS;
   if (/Виноград/i.test(read.text || '') || vinogradDue) {
     console.log(`Виноград: ${vinogradDue ? 'прошло 8 часов' : 'обнаружено задание'}, выполняю маршрут`);
     await runVinogradTask(page);
     lastVinogradRunAt = Date.now();
+    persistDailyQuestState();
+  }
+
+  // Довольствие: раз в день, простой маршрут без боя.
+  if (canRunAllowanceNow()) {
+    console.log('Довольствие: ещё не получено сегодня, выполняю маршрут');
+    await runAllowanceTask(page);
+    allowanceDoneToday = true;
+    persistDailyQuestState();
+  }
+
+  // Охота на лосей: раз в день. Бота на месте может не быть (кто-то уже убил сегодня) —
+  // runElkHuntTask сама решает, что делать в этом случае; в обоих исходах день считается пройденным.
+  if (canRunElkHuntNow()) {
+    console.log('Охота на лосей: ещё не пробовал сегодня, иду проверять');
+    await runElkHuntTask(page);
+    elkHuntDoneToday = true;
+    persistDailyQuestState();
+  }
+
+  // Дейлик (доп. задание дня, меняется по дням недели): раз в день, только для дней,
+  // у которых уже есть маршрут в EXTRA_DAILY_TASKS. Остальные дни просто пропускаются.
+  if (canRunExtraDailyNow() && EXTRA_DAILY_TASKS[new Date().getDay()]) {
+    console.log('Дейлик: ещё не выполнен сегодня, выполняю маршрут');
+    const extraDailyFullyDone = await runExtraDailyQuest(page);
+    if (extraDailyFullyDone) {
+      extraDailyDoneToday = true;
+    }
     persistDailyQuestState();
   }
 
@@ -5533,13 +7247,17 @@ async function doScenario(page) {
 
     // Stay at the farm location instead of returning to the city — leaving only happens above for
     // negative HP (Последний дом / Кулак хаоса) or (outside this loop) when a quest needs attention.
-    // A depleted cooldown alone is not a reason to travel back; staying put means ensureFarmFightScreen
-    // can resume next cycle via the Последний портал shortcut instead of re-running the whole route.
-    console.log('no condition matched -> stay at farm location, stop cycle');
+    // A depleted cooldown alone is not a reason to travel back for Blake (avoids paying the boat fee
+    // twice); for goblins, maybeRestGoblinAtStoneguard sends the character to rest instead.
+    const restedGoblins = await maybeRestGoblinAtStoneguard(page, stats);
+    console.log(restedGoblins
+      ? 'no condition matched -> resting at Стоунгард, stop cycle'
+      : 'no condition matched -> stay at farm location, stop cycle');
     scheduleFarmNextCycle(stats, didAnyFarmFight);
     return;
   }
 
+  await maybeRestGoblinAtStoneguard(page, stats);
   console.log('nothing to do this cycle');
   scheduleFarmNextCycle(stats, didAnyFarmFight);
 }
@@ -5547,11 +7265,24 @@ async function doScenario(page) {
 (async () => {
   const userDataDir = path.join(__dirname, 'chrome-profile');
 
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false,
-    viewport: null,
-    slowMo: 50,
-  });
+  let context;
+  while (true) {
+    try {
+      context = await chromium.launchPersistentContext(userDataDir, {
+        headless: false,
+        viewport: null,
+        slowMo: 50,
+      });
+      break;
+    } catch (e) {
+      // A transient launch failure (network hiccup, leftover profile lock, OS killing the
+      // browser right after start) must not crash the whole process — without this retry an
+      // uncaught rejection here kills node and nothing farms until someone restarts it manually.
+      console.log('Browser launch failed:', e.message);
+      console.log('Retry launch in 1 min.');
+      await new Promise((resolve) => setTimeout(resolve, 60 * 1000));
+    }
+  }
 
   let page = context.pages()[0];
   if (!page) {

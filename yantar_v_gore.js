@@ -448,6 +448,11 @@ async function fixedPause(page, ms) {
   await page.waitForTimeout(ms);
 }
 
+function isNetworkError(e) {
+  const msg = String(e?.message || '');
+  return /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_(REFUSED|RESET|CLOSED|TIMED_OUT)|ERR_NETWORK_CHANGED|ERR_ADDRESS_UNREACHABLE|net::ERR_/.test(msg);
+}
+
 function getRandomCycleDelayMs() {
   const minutes = randomInt(10, 14);
   return minutes * 60 * 1000;
@@ -1403,21 +1408,44 @@ async function doScenario(page) {
 (async () => {
   const userDataDir = path.join(__dirname, 'chrome-profile');
 
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false,
-    viewport: null,
-    slowMo: 50,
-  });
+  let context;
+  while (true) {
+    try {
+      context = await chromium.launchPersistentContext(userDataDir, {
+        headless: false,
+        viewport: null,
+        slowMo: 50,
+      });
+      break;
+    } catch (e) {
+      // A transient launch failure (network hiccup, leftover profile lock, OS killing the
+      // browser right after start) must not crash the whole process — without this retry an
+      // uncaught rejection here kills node and nothing farms until someone restarts it manually.
+      console.log('Browser launch failed:', e.message);
+      console.log('Retry launch in 1 min.');
+      await new Promise((resolve) => setTimeout(resolve, 60 * 1000));
+    }
+  }
 
   let page = context.pages()[0];
   if (!page) {
     page = await context.newPage();
   }
 
-  await page.goto('http://lbast.ru/location.php', {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000,
-  });
+  while (true) {
+    try {
+      await page.goto('http://lbast.ru/location.php', {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+      });
+      break;
+    } catch (e) {
+      console.log('Initial goto failed:', e.message);
+      const waitMs = isNetworkError(e) ? 60 * 1000 : 5 * 60 * 1000;
+      console.log('Retry in ' + Math.round(waitMs / 60000) + ' min.');
+      await fixedPause(page, waitMs);
+    }
+  }
 
   console.log('Browser opened. Start loop.');
 

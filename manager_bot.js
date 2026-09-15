@@ -117,62 +117,86 @@ async function socks5Connect({ proxyHost, proxyPort, targetHost, targetPort, tim
   });
 }
 
+function isTransientNetworkError(e) {
+  const msg = String(e?.message || e);
+  const code = String(e?.code || '');
+  return (
+    /ETIMEDOUT|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ECONNREFUSED|EPIPE|timeout|socket hang up|before secure TLS connection was established/i.test(
+      msg
+    ) || /ETIMEDOUT|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ECONNREFUSED|EPIPE/i.test(code)
+  );
+}
+
+async function tgRequestViaProxyOnce(method, jsonBody, proxy) {
+  const plain = await socks5Connect({
+    proxyHost: proxy.host,
+    proxyPort: proxy.port,
+    targetHost: 'api.telegram.org',
+    targetPort: 443,
+    timeoutMs: 60000,
+  });
+
+  const tlsSocket = tls.connect({
+    socket: plain,
+    servername: 'api.telegram.org',
+    rejectUnauthorized: true,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        method: 'POST',
+        host: 'api.telegram.org',
+        path: `/bot${BOT_TOKEN}/${method}`,
+        headers: {
+          Host: 'api.telegram.org',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': Buffer.byteLength(jsonBody, 'utf8'),
+          Connection: 'close',
+        },
+        createConnection: () => tlsSocket,
+        timeout: 60000,
+      },
+      (res) => {
+        let raw = '';
+        res.setEncoding('utf8');
+        res.on('data', (c) => (raw += c));
+        res.on('end', () => {
+          const trimmed = String(raw || '').trim();
+          if (!trimmed) return reject(new Error('Пустой ответ от Telegram'));
+          try {
+            resolve(JSON.parse(trimmed));
+          } catch (e) {
+            reject(new Error(`Неверный JSON от Telegram: ${trimmed}`));
+          }
+        });
+      }
+    );
+    req.on('timeout', () => {
+      try { req.destroy(new Error('timeout')); } catch (e) { /* ignore */ }
+    });
+    req.on('error', reject);
+    req.write(jsonBody);
+    req.end();
+  });
+}
+
 async function tgRequestRawJson(method, payload = {}) {
   const jsonBody = JSON.stringify(payload || {});
 
   const proxy = parseHostPort(TELEGRAM_SOCKS_PROXY);
   if (proxy) {
-    const plain = await socks5Connect({
-      proxyHost: proxy.host,
-      proxyPort: proxy.port,
-      targetHost: 'api.telegram.org',
-      targetPort: 443,
-      timeoutMs: 60000,
-    });
-
-    const tlsSocket = tls.connect({
-      socket: plain,
-      servername: 'api.telegram.org',
-      rejectUnauthorized: true,
-    });
-
-    return new Promise((resolve, reject) => {
-      const req = https.request(
-        {
-          method: 'POST',
-          host: 'api.telegram.org',
-          path: `/bot${BOT_TOKEN}/${method}`,
-          headers: {
-            Host: 'api.telegram.org',
-            'Content-Type': 'application/json; charset=utf-8',
-            'Content-Length': Buffer.byteLength(jsonBody, 'utf8'),
-            Connection: 'close',
-          },
-          createConnection: () => tlsSocket,
-          timeout: 60000,
-        },
-        (res) => {
-          let raw = '';
-          res.setEncoding('utf8');
-          res.on('data', (c) => (raw += c));
-          res.on('end', () => {
-            const trimmed = String(raw || '').trim();
-            if (!trimmed) return reject(new Error('Пустой ответ от Telegram'));
-            try {
-              resolve(JSON.parse(trimmed));
-            } catch (e) {
-              reject(new Error(`Неверный JSON от Telegram: ${trimmed}`));
-            }
-          });
+    const maxAttempts = 4;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await tgRequestViaProxyOnce(method, jsonBody, proxy);
+      } catch (e) {
+        if (attempt === maxAttempts || !isTransientNetworkError(e)) {
+          throw e;
         }
-      );
-      req.on('timeout', () => {
-        try { req.destroy(new Error('timeout')); } catch (e) { /* ignore */ }
-      });
-      req.on('error', reject);
-      req.write(jsonBody);
-      req.end();
-    });
+        await sleep(Math.min(15000, 800 * attempt));
+      }
+    }
   }
 
   // Fallback: direct (no proxy) with multi-IP retries (existing logic in tgRequest).
@@ -429,9 +453,7 @@ function tgRequest(method, payload = {}) {
 
           return parsed;
         } catch (e) {
-          const msg = String(e?.message || e);
-          const transient = /ETIMEDOUT|ECONNRESET|EHOSTUNREACH|ENETUNREACH|timeout/i.test(msg);
-          if (!transient) {
+          if (!isTransientNetworkError(e)) {
             throw e;
           }
           // small backoff
@@ -724,6 +746,32 @@ async function maybeSendAttackAlert(lineText) {
   }
 }
 
+async function maybeSendMorningScreenshot(lineText) {
+  const text = String(lineText || '').trim();
+  const match = text.match(/^MORNING_SCREENSHOT:([A-Za-z0-9+/=]+)$/);
+  if (!match) return;
+
+  try {
+    const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+    const payload = JSON.parse(decoded);
+
+    const occurredAt = String(payload.occurredAt || '');
+    const screenshotPath = String(payload.screenshotPath || '').trim();
+
+    const caption =
+      'Доброе утро! Уличный зазывала (Стоунгард -> Центральная площадь).' +
+      (occurredAt ? `\nВремя: ${occurredAt}` : '');
+
+    if (screenshotPath) {
+      await sendPhotoToAllowedChat(screenshotPath, caption);
+    } else {
+      await sendToAllowedChat(caption);
+    }
+  } catch (error) {
+    console.error('maybeSendMorningScreenshot parse error:', error.message);
+  }
+}
+
 async function runSelectedScript(reason = 'вручную') {
   if (!selectedScriptPath || !selectedScriptName) {
     await sendToAllowedChat('Сценарий не выбран. Выберите сценарий перед запуском.');
@@ -785,6 +833,7 @@ async function runSelectedScript(reason = 'вручную') {
       await maybeSendExplicitPvpAlert(line).catch(() => {});
       await maybeSendMailMessage(line).catch(() => {});
       await maybeSendAttackAlert(line).catch(() => {});
+      await maybeSendMorningScreenshot(line).catch(() => {});
     }
   });
 
@@ -803,6 +852,7 @@ async function runSelectedScript(reason = 'вручную') {
       await maybeSendExplicitPvpAlert(line).catch(() => {});
       await maybeSendMailMessage(line).catch(() => {});
       await maybeSendAttackAlert(line).catch(() => {});
+      await maybeSendMorningScreenshot(line).catch(() => {});
     }
   });
 
@@ -989,7 +1039,17 @@ async function pollOnce() {
     pollDelayMs = 200;
   } catch (error) {
     console.error('polling_error:', error.message);
-    pollDelayMs = /истекло/i.test(String(error.message || '')) ? 10000 : 2000;
+    const msg = String(error.message || '');
+    // 409 Conflict happens when Telegram still has our previous long-poll request in flight
+    // (e.g. after a brief network drop) — it self-clears once that request times out server-side.
+    // Retrying every 2s just spams identical 409s until then, so back off longer for it.
+    if (/истекло/i.test(msg)) {
+      pollDelayMs = 10000;
+    } else if (/"error_code":409/.test(msg)) {
+      pollDelayMs = 15000;
+    } else {
+      pollDelayMs = 2000;
+    }
   } finally {
     pollBusy = false;
   }
