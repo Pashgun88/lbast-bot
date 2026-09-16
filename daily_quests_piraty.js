@@ -195,12 +195,23 @@ let elkHuntDoneToday = false;
 let extraDailyDayKey = '';
 let extraDailyDoneToday = false;
 // Thursday's 3 hunts each hit a real in-game per-target attack cooldown ("Вы слишком устали,
-// приходите через N мин"), same as regular farm cooldown -- so unlike Tuesday/Wednesday's dailies,
-// Thursday's progress is tracked per-fight and can span multiple cycles instead of finishing in one go.
+// приходите через N мин"), same as regular farm cooldown. Turns out Wednesday's (and the boar/
+// bison/varan routes shared with Friday/Sunday) hit the exact same cooldown -- see huntStateDayKey
+// below -- so progress there is tracked per-fight too and can span multiple cycles.
 let thursdayDayKey = '';
 let thursdayGravediggerDoneToday = false;
 let thursdayButcherFightsToday = 0;
 let thursdayWitchFightsToday = 0;
+// Shared per-fight progress for the boar/bison/varan hunts (used by Wednesday/Friday/Sunday) and
+// Wednesday's mountain-spirit/hyena hunts. Only one weekday's extra daily runs on any given real
+// day, so a single day-keyed reset is enough -- no separate state needed per weekday.
+let huntStateDayKey = '';
+let wednesdayMountainSpiritDoneToday = false;
+let wednesdayHyenaFightsToday = 0;
+let boarHuntFightsToday = 0;
+let bisonHuntFightsToday = 0;
+let varanHuntFightsToday = 0;
+let harpyHuntFightsToday = 0;
 
 // Restore "already done today" markers from disk so a restart mid-day doesn't redo completed dailies.
 // Each quest's own dayKey check (getDayKeyNow() comparison) already discards stale data once the day rolls over.
@@ -254,6 +265,14 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.thursdayButcherFightsToday)) thursdayButcherFightsToday = s.thursdayButcherFightsToday;
   if (Number.isFinite(s.thursdayWitchFightsToday)) thursdayWitchFightsToday = s.thursdayWitchFightsToday;
 
+  if (typeof s.huntStateDayKey === 'string') huntStateDayKey = s.huntStateDayKey;
+  if (typeof s.wednesdayMountainSpiritDoneToday === 'boolean') wednesdayMountainSpiritDoneToday = s.wednesdayMountainSpiritDoneToday;
+  if (Number.isFinite(s.wednesdayHyenaFightsToday)) wednesdayHyenaFightsToday = s.wednesdayHyenaFightsToday;
+  if (Number.isFinite(s.boarHuntFightsToday)) boarHuntFightsToday = s.boarHuntFightsToday;
+  if (Number.isFinite(s.bisonHuntFightsToday)) bisonHuntFightsToday = s.bisonHuntFightsToday;
+  if (Number.isFinite(s.varanHuntFightsToday)) varanHuntFightsToday = s.varanHuntFightsToday;
+  if (Number.isFinite(s.harpyHuntFightsToday)) harpyHuntFightsToday = s.harpyHuntFightsToday;
+
   if (typeof s.fishingDayKey === 'string') fishingDayKey = s.fishingDayKey;
   if (Number.isFinite(s.fishingCatchesToday)) fishingCatchesToday = s.fishingCatchesToday;
 
@@ -279,6 +298,8 @@ function persistDailyQuestState() {
     elkHuntDayKey, elkHuntDoneToday,
     extraDailyDayKey, extraDailyDoneToday,
     thursdayDayKey, thursdayGravediggerDoneToday, thursdayButcherFightsToday, thursdayWitchFightsToday,
+    huntStateDayKey, wednesdayMountainSpiritDoneToday, wednesdayHyenaFightsToday,
+    boarHuntFightsToday, bisonHuntFightsToday, varanHuntFightsToday, harpyHuntFightsToday,
     fishingDayKey, fishingCatchesToday,
     morningScreenshotDayKey, morningScreenshotDoneToday,
   });
@@ -5689,8 +5710,16 @@ async function runElkHuntTask(page) {
 }
 
 // Дейлик вторника: Гнёзда гарпий. Конь -> Горы Дарии -> (ожидание 7с/подтверждение поездки) ->
-// Идти на запад -> Гнёзда гарпий (обычный бой, ровно 3 раза подряд на том же месте).
+// Идти на запад -> Гнёзда гарпий (обычный бой, ровно 3 раза подряд на том же месте). Как и
+// остальные охоты (см. resetHuntStateIfNewDay), цель имеет реальный кулдаун атаки -- прогресс
+// (harpyHuntFightsToday) сохраняется между циклами вместо перезапуска всех 3 боёв заново.
 async function runTuesdayHarpyExtraDaily(page) {
+  resetHuntStateIfNewDay();
+  if (harpyHuntFightsToday >= 3) {
+    console.log('Дейлик (вторник): гарпии уже сделаны сегодня, пропускаю');
+    return true;
+  }
+
   console.log('Дейлик (вторник): маршрут Конь -> Горы Дарии -> Идти на запад -> Гнёзда гарпий x3');
 
   const HORSE    = 'Конь';
@@ -5741,28 +5770,54 @@ async function runTuesdayHarpyExtraDaily(page) {
     retries: 3,
   });
 
-  for (let i = 0; i < 3; i++) {
+  for (let i = harpyHuntFightsToday; i < 3; i++) {
     console.log(`Дейлик (вторник): бой с гарпиями ${i + 1}/3`);
     await performStep(page, {
       stepName: `${HARPY_NESTS} (${i + 1}/3)`,
       currentTexts: [HARPY_NESTS, HARPY_NESTS.toLowerCase(), HARPY_NESTS_E, HARPY_NESTS_E.toLowerCase()],
       retries: 3,
     });
-    await fightLoop(page);
+
+    try {
+      await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (вторник): гарпии ещё на кулдауне (${waitMinutes} мин, сделано ${i}/3) -> отложу оставшиеся бои до следующего цикла`);
+        harpyHuntFightsToday = i;
+        persistDailyQuestState();
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        return false;
+      }
+      throw e;
+    }
+
+    harpyHuntFightsToday = i + 1;
+    persistDailyQuestState();
   }
 
   if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
     await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
     await pause(page, 800, 1600);
   }
+
+  return harpyHuntFightsToday >= 3;
 }
 
 // Дейлик среды: 5 независимых охот подряд, каждая начинается заново с Амулет/Конь и
-// заканчивается своим необязательным "В игру". Если какая-то охота упадёт с ошибкой, весь
-// runWednesdayExtraDaily бросит исключение и день не будет отмечен пройденным (см. вызов
-// runExtraDailyQuest ниже) -> при следующем цикле дейлик среды начнётся заново с первой охоты.
+// заканчивается своим необязательным "В игру". Каждая цель имеет реальный игровой кулдаун на
+// атаку -- прогресс (wednesdayMountainSpiritDoneToday / wednesdayHyenaFightsToday /
+// boarHuntFightsToday / bisonHuntFightsToday / varanHuntFightsToday, см. resetHuntStateIfNewDay)
+// сохраняется между циклами, поэтому кулдаун на одной охоте откладывает только её остаток, а не
+// перезапускает уже пройденные охоты заново.
 
 async function runWednesdayMountainSpirit(page) {
+  resetHuntStateIfNewDay();
+  if (wednesdayMountainSpiritDoneToday) {
+    console.log('Дейлик (среда, 1/5): дух гор уже сделан сегодня, пропускаю');
+    return;
+  }
+
   console.log('Дейлик (среда, 1/5): Дух гор — Конь -> Горы Дарии -> запад/юг/запад/запад/север/север -> пещера -> тоннель -> бой');
 
   const HORSE  = 'Конь';
@@ -5836,7 +5891,20 @@ async function runWednesdayMountainSpirit(page) {
     retries: 3,
   });
 
-  await fightLoop(page);
+  try {
+    await fightLoop(page);
+  } catch (e) {
+    const waitMinutes = parseCooldownError(e);
+    if (waitMinutes !== null) {
+      console.log(`Дейлик (среда, 1/5): дух гор ещё на кулдауне (${waitMinutes} мин) -> отложу до следующего цикла`);
+      await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+      return;
+    }
+    throw e;
+  }
+
+  wednesdayMountainSpiritDoneToday = true;
+  persistDailyQuestState();
 
   if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
     await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
@@ -5845,6 +5913,12 @@ async function runWednesdayMountainSpirit(page) {
 }
 
 async function runWednesdayHyenaHunt(page) {
+  resetHuntStateIfNewDay();
+  if (wednesdayHyenaFightsToday >= 2) {
+    console.log('Дейлик (среда, 2/5): гиены уже сделаны сегодня, пропускаю');
+    return;
+  }
+
   console.log('Дейлик (среда, 2/5): Охота на гиен — Амулет -> Таверна -> юг -> запад -> Выслеживать гиен x2');
 
   const AMULET = 'Амулет';
@@ -5885,14 +5959,30 @@ async function runWednesdayHyenaHunt(page) {
     retries: 3,
   });
 
-  for (let i = 0; i < 2; i++) {
+  for (let i = wednesdayHyenaFightsToday; i < 2; i++) {
     console.log(`Дейлик (среда, 2/5): бой с гиенами ${i + 1}/2`);
     await performStep(page, {
       stepName: `${TRACK_HYENAS} (${i + 1}/2)`,
       currentTexts: [TRACK_HYENAS, TRACK_HYENAS.toLowerCase()],
       retries: 3,
     });
-    await fightLoop(page);
+
+    try {
+      await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (среда, 2/5): гиены ещё на кулдауне (${waitMinutes} мин, сделано ${i}/2) -> отложу оставшиеся бои до следующего цикла`);
+        wednesdayHyenaFightsToday = i;
+        persistDailyQuestState();
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        return;
+      }
+      throw e;
+    }
+
+    wednesdayHyenaFightsToday = i + 1;
+    persistDailyQuestState();
   }
 
   if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
@@ -5905,6 +5995,12 @@ async function runWednesdayHyenaHunt(page) {
 // Используется в среду (3/5, x2), пятницу (1/2, x2) и воскресенье (1/2, x3) — маршрут в игре
 // идентичен, отличаются только dayLabel в логах и число боёв.
 async function runBoarHunt(page, dayLabel, count = 2) {
+  resetHuntStateIfNewDay();
+  if (boarHuntFightsToday >= count) {
+    console.log(`Дейлик (${dayLabel}): кабан уже сделан сегодня, пропускаю`);
+    return;
+  }
+
   console.log(`Дейлик (${dayLabel}): Кабан — Конь -> Леса Эльсены -> запад -> юг -> Напасть на кабана x${count}`);
 
   const HORSE  = 'Конь';
@@ -5966,14 +6062,30 @@ async function runBoarHunt(page, dayLabel, count = 2) {
     retries: 3,
   });
 
-  for (let i = 0; i < count; i++) {
+  for (let i = boarHuntFightsToday; i < count; i++) {
     console.log(`Дейлик (${dayLabel}): бой с кабаном ${i + 1}/${count}`);
     await performStep(page, {
       stepName: `${ATTACK_BOAR} (${i + 1}/${count})`,
       currentTexts: [ATTACK_BOAR, ATTACK_BOAR.toLowerCase()],
       retries: 3,
     });
-    await fightLoop(page);
+
+    try {
+      await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (${dayLabel}): кабан ещё на кулдауне (${waitMinutes} мин, сделано ${i}/${count}) -> отложу оставшиеся бои до следующего цикла`);
+        boarHuntFightsToday = i;
+        persistDailyQuestState();
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        return;
+      }
+      throw e;
+    }
+
+    boarHuntFightsToday = i + 1;
+    persistDailyQuestState();
   }
 
   if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
@@ -5987,6 +6099,12 @@ async function runBoarHunt(page, dayLabel, count = 2) {
 // только dayLabel в логах и число боёв. Шаг "восток x2" — навигация до места охоты, не связана
 // со счётчиком боёв.
 async function runBisonHunt(page, dayLabel, count = 2) {
+  resetHuntStateIfNewDay();
+  if (bisonHuntFightsToday >= count) {
+    console.log(`Дейлик (${dayLabel}): бизон уже сделан сегодня, пропускаю`);
+    return;
+  }
+
   console.log(`Дейлик (${dayLabel}): Бизон — Амулет -> Дорожный крест -> восток x2 -> Охотиться x${count}`);
 
   const AMULET     = 'Амулет';
@@ -6022,14 +6140,30 @@ async function runBisonHunt(page, dayLabel, count = 2) {
   await stepMany(EAST, 2);
   await pause(page, 800, 1600);
 
-  for (let i = 0; i < count; i++) {
+  for (let i = bisonHuntFightsToday; i < count; i++) {
     console.log(`Дейлик (${dayLabel}): бой с бизоном ${i + 1}/${count}`);
     // "Охотиться" -- то же слово, что и confirm-кнопка охоты на лосей (см. clickByTextsExact) --
     // кликаем точным совпадением, а не has-text, чтобы не задеть похожую по тексту кнопку.
     const ok = await clickByTextsExact(page, [HUNT, HUNT.toLowerCase()], `${HUNT} (${i + 1}/${count})`);
     if (!ok) throw new Error('bison_hunt_button_not_found');
     await pause(page, 800, 1600);
-    await fightLoop(page);
+
+    try {
+      await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (${dayLabel}): бизон ещё на кулдауне (${waitMinutes} мин, сделано ${i}/${count}) -> отложу оставшиеся бои до следующего цикла`);
+        bisonHuntFightsToday = i;
+        persistDailyQuestState();
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        return;
+      }
+      throw e;
+    }
+
+    bisonHuntFightsToday = i + 1;
+    persistDailyQuestState();
   }
 
   if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
@@ -6042,6 +6176,12 @@ async function runBisonHunt(page, dayLabel, count = 2) {
 // Используется и в среду (5/5), и в пятницу (2/2) — маршрут в игре идентичен, отличается
 // только dayLabel в логах.
 async function runVaranHunt(page, dayLabel) {
+  resetHuntStateIfNewDay();
+  if (varanHuntFightsToday >= 2) {
+    console.log(`Дейлик (${dayLabel}): варан уже сделан сегодня, пропускаю`);
+    return;
+  }
+
   console.log(`Дейлик (${dayLabel}): Варан — Амулет -> Дорожный крест -> юг -> Устроиться на привал x2`);
 
   const AMULET     = 'Амулет';
@@ -6071,14 +6211,30 @@ async function runVaranHunt(page, dayLabel) {
     retries: 3,
   });
 
-  for (let i = 0; i < 2; i++) {
+  for (let i = varanHuntFightsToday; i < 2; i++) {
     console.log(`Дейлик (${dayLabel}): бой с вараном ${i + 1}/2`);
     await performStep(page, {
       stepName: `${CAMP} (${i + 1}/2)`,
       currentTexts: [CAMP, CAMP.toLowerCase()],
       retries: 3,
     });
-    await fightLoop(page);
+
+    try {
+      await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (${dayLabel}): варан ещё на кулдауне (${waitMinutes} мин, сделано ${i}/2) -> отложу оставшиеся бои до следующего цикла`);
+        varanHuntFightsToday = i;
+        persistDailyQuestState();
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        return;
+      }
+      throw e;
+    }
+
+    varanHuntFightsToday = i + 1;
+    persistDailyQuestState();
   }
 
   if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
@@ -6093,12 +6249,15 @@ async function runWednesdayExtraDaily(page) {
   await runBoarHunt(page, 'среда, 3/5');
   await runBisonHunt(page, 'среда, 4/5');
   await runVaranHunt(page, 'среда, 5/5');
+  return wednesdayMountainSpiritDoneToday && wednesdayHyenaFightsToday >= 2
+    && boarHuntFightsToday >= 2 && bisonHuntFightsToday >= 2 && varanHuntFightsToday >= 2;
 }
 
 // Дейлик пятницы: 2 охоты, обе используют маршруты, уже описанные для среды (кабан и варан).
 async function runFridayExtraDaily(page) {
   await runBoarHunt(page, 'пятница, 1/2');
   await runVaranHunt(page, 'пятница, 2/2');
+  return boarHuntFightsToday >= 2 && varanHuntFightsToday >= 2;
 }
 
 // Дейлик воскресенья: 2 охоты (кабан x3, бизон x3), маршруты те же, что и в среду/пятницу,
@@ -6106,6 +6265,7 @@ async function runFridayExtraDaily(page) {
 async function runSundayExtraDaily(page) {
   await runBoarHunt(page, 'воскресенье, 1/2', 3);
   await runBisonHunt(page, 'воскресенье, 2/2', 3);
+  return boarHuntFightsToday >= 3 && bisonHuntFightsToday >= 3;
 }
 
 // Дейлик четверга: 3 охоты в Мисттоуне. Все три начинаются одинаково (Конь -> Мисттоун ->
@@ -6129,6 +6289,24 @@ function resetThursdayStateIfNewDay() {
     thursdayGravediggerDoneToday = false;
     thursdayButcherFightsToday = 0;
     thursdayWitchFightsToday = 0;
+  }
+}
+
+// Same per-fight cooldown resume as Thursday, but for Wednesday's mountain-spirit/hyena hunts and
+// the boar/bison/varan hunts shared by Wednesday/Friday/Sunday -- these hit the exact same
+// "Вы слишком устали" cooldown, so retrying the whole chain from scratch every cycle (the old
+// behavior) meant a stuck later step (e.g. boar's 2nd fight on cooldown) made the bot re-fight
+// already-finished earlier steps (mountain spirit, hyenas) forever, never actually finishing the day.
+function resetHuntStateIfNewDay() {
+  const key = getDayKeyNow();
+  if (huntStateDayKey !== key) {
+    huntStateDayKey = key;
+    wednesdayMountainSpiritDoneToday = false;
+    wednesdayHyenaFightsToday = 0;
+    boarHuntFightsToday = 0;
+    bisonHuntFightsToday = 0;
+    varanHuntFightsToday = 0;
+    harpyHuntFightsToday = 0;
   }
 }
 
