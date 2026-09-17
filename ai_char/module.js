@@ -8556,9 +8556,25 @@ async function postChatMessage(page, message, room = 1) {
 // Читает последние сообщения комнаты как {nick, text} - используется, чтобы заметить чей-то
 // ответ на сообщение AI__ (сопоставление по нику из ссылки mod=infa рядом с текстом сообщения).
 async function getRecentChatMessages(page, room = 1) {
-  await page.goto(`http://lbast.ru/chat.php?room=${room}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  const text = await getBodyText(page);
-  return text;
+  const url = `http://lbast.ru/chat.php?room=${room}`;
+  const alreadyInRoom = String(page.url() || '').includes(`chat.php?room=${room}`);
+
+  // Паша, 17.09.2026: "чат не обновляешь. Нужно нажимать обновить". Повторный goto на ТОТ ЖЕ
+  // адрес чат сам прерывает - в логе это видно как net::ERR_ABORTED, и комната остаётся со
+  // старым содержимым, то есть монитор не видит новых сообщений вообще. Штатный способ
+  // обновления в игре - ссылка "Обновить" на самой странице чата.
+  if (alreadyInRoom) {
+    const refreshed = await clickByTexts(page, ['Обновить'], `Обновить чат (room=${room})`).catch(() => false);
+    if (refreshed) {
+      await pause(page, 500, 900);
+      return await getBodyText(page);
+    }
+  }
+
+  // Первый заход в комнату (или "Обновить" не нашлась) - обычная навигация.
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 400, 800);
+  return await getBodyText(page);
 }
 
 // Живой факт (16.09.2026): полный текст страницы чата всегда меняется между опросами даже
