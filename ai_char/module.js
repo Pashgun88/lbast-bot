@@ -57,7 +57,10 @@ function appendDebugSnapshot(tag, { label = '', url = '', text = '' } = {}) {
 
 let lastHandledMailSignature = '';
 const ENABLE_PVP_ALERTS = true;
-const SELF_NICK = 'tsunami';
+// Паша, 17.09.2026: "Замени селф ник на свой". Было 'tsunami' - константа досталась файлу от
+// кода главного персонажа, и из-за неё детектор входящих атак (ATTACK_LINE_RE ищет
+// "использует грамоту ... на <ник>") для AI__ не срабатывал НИ РАЗУ.
+const SELF_NICK = 'AI__';
 const SELF_NICK_RE = new RegExp(`\\b${SELF_NICK}\\b`, 'i');
 const PAUSE_SPEED_FACTOR = 0.5;
 
@@ -262,7 +265,10 @@ let fishRestaurantSuppressedUntil = 0;
 // Дейлики по дню недели (гайд Паши от 17.09.2026). Date.getDay(): 4 = четверг.
 const THURSDAY_WEEKDAY = 4;
 let thursdayDailiesDayKey = '';
-let thursdayDailiesDone = { gravedigger: false, butcher: false, deadend: false };
+let thursdayDailiesDone = {
+  gravedigger: false, butcher: false, deadend: false,
+  gravediggerBoss: false, deadendBoss: false,
+};
 
 // Квесты, которые мы РЕАЛЬНО умеем проходить и в которых есть бои. Нужны, чтобы решать, можно
 // ли сейчас тратить HP на ферму. Штольни СОЗНАТЕЛЬНО не включены: квест выключен
@@ -393,7 +399,11 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.fishRestaurantNextRewardNumber)) fishRestaurantNextRewardNumber = s.fishRestaurantNextRewardNumber;
   if (typeof s.thursdayDailiesDayKey === 'string') thursdayDailiesDayKey = s.thursdayDailiesDayKey;
   if (s.thursdayDailiesDone && typeof s.thursdayDailiesDone === 'object') {
-    thursdayDailiesDone = { gravedigger: false, butcher: false, deadend: false, ...s.thursdayDailiesDone };
+    thursdayDailiesDone = {
+      gravedigger: false, butcher: false, deadend: false,
+      gravediggerBoss: false, deadendBoss: false,
+      ...s.thursdayDailiesDone,
+    };
   }
 
   if (typeof s.harpyHuntDayKey === 'string') harpyHuntDayKey = s.harpyHuntDayKey;
@@ -516,6 +526,8 @@ function emitPvpAlert(payload) {
 // Ник ЭТОГО персонажа. ВНИМАНИЕ: SELF_NICK выше = 'tsunami' - он достался файлу от кода
 // главного персонажа Цунами, и для AI__ не годится. Для чат-триггеров нужен именно свой ник,
 // иначе "обратились ко мне" не сработает ни разу.
+// Теперь совпадает с SELF_NICK выше (оба = 'AI__'), но оставлено отдельной константой:
+// SELF_NICK участвует в боевых регэкспах, а этот - в разборе чата, и смешивать их не стоит.
 const AI_SELF_NICK = 'AI__';
 const AI_SELF_NICK_RE = /\bAI__\b/i;
 
@@ -7697,11 +7709,21 @@ async function progressButcherHouse(page) {
   // Паша: "Пока только без боя" -> не атакуем. Уходим через "Выскочить из комнаты", чтобы не
   // оставлять за собой экран с активной кнопкой боя (иначе его подберёт другой обработчик -
   // ровно так 17.09.2026 начался бой с корованом мимо всех гейтов).
+  // Паша, 17.09.2026: "четверг - делай просто по гайду", то есть боссов проходим.
+  // Бой обязателен через гейт; если HP не хватает - ЖДЁМ, а не бросаем (waitForRecovery),
+  // иначе маршрут сюда придётся идти заново. Если в бой всё же нельзя - уходим из комнаты,
+  // чтобы не оставить за собой активную кнопку "Атаковать".
   if (await existsAnyText(page, ['Атаковать'])) {
-    console.log('Четверг/мясник: за жёлтой дверью только "Атаковать" - дейлик боевой, а бои тут пока запрещены. Ухожу из комнаты.');
-    await clickByTexts(page, ['Выскочить из комнаты'], 'Выскочить из комнаты').catch(() => {});
-    await pause(page, 600, 1200);
-    return 'needs_fight';
+    if (!(await questFightHpGate(page, 'Четверг: мясник (Желтая комната)', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+      await clickByTexts(page, ['Выскочить из комнаты'], 'Выскочить из комнаты').catch(() => {});
+      return false;
+    }
+    console.log('Четверг/мясник: бой в Желтой комнате.');
+    await clickByTexts(page, ['Атаковать'], 'Атаковать (мясник)');
+    await fightLoop(page);
+    await pause(page, 800, 1500);
+    await clickByTexts(page, ['В игру', 'в игру'], 'В игру (мясник)').catch(() => {});
+    return true;
   }
 
   const ok = await clickByTexts(page, ['Мясник', 'мясник'], 'Мясник');
@@ -7741,6 +7763,57 @@ async function progressDeadEndHouse(page) {
   return true;
 }
 
+// Босс могильщика (гайд): ... -> Идти в дом могильщика -> Идти в правую дверь ->
+// Спуститься в чулан -> Атаковать. Призрак тёщи могильщика, даёт "Ржавую сковороду".
+// НЕ ПРОВЕРЕНО ВЖИВУЮ - первый запуск смотреть по логам.
+async function progressGravediggerBoss(page) {
+  await goToMisstoneMainStreet(page);
+  await performStep(page, { stepName: 'Идти в дом могильщика', currentTexts: ['Идти в дом могильщика'], retries: 3 });
+  await performStep(page, { stepName: 'Идти в правую дверь', currentTexts: ['Идти в правую дверь'], retries: 3 });
+  await performStep(page, { stepName: 'Спуститься в чулан', currentTexts: ['Спуститься в чулан'], retries: 3 });
+
+  if (!(await questFightHpGate(page, 'Четверг: призрак тёщи могильщика', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+    return false;
+  }
+  console.log('Четверг/могильщик: бой с призраком тёщи (ожидается "Ржавая сковорода").');
+  await clickByTexts(page, ['Атаковать'], 'Атаковать (призрак тёщи)');
+  await fightLoop(page);
+  await pause(page, 800, 1500);
+  await clickByTexts(page, ['В игру', 'в игру'], 'В игру (могильщик, босс)').catch(() => {});
+  return true;
+}
+
+// Босс дома в тупике (гайд): ... -> Свернуть в переулок -> Идти к дому -> Войти в дом ->
+// Войти в дверь -> Войти в комнату -> Идти в глубь комнаты -> Атаковать.
+// Призрачная ведьма, даёт "Коготь ведьмы". НЕ ПРОВЕРЕНО ВЖИВУЮ.
+async function progressDeadEndBoss(page) {
+  await goToMisstoneMainStreet(page);
+  for (let i = 1; i <= 2; i++) {
+    await performStep(page, {
+      stepName: `Идти на запад (${i}/2, к переулку)`,
+      currentTexts: ['Идти на запад'],
+      skipIfNextVisible: false,
+      retries: 3,
+    });
+  }
+  await performStep(page, { stepName: 'Свернуть в переулок', currentTexts: ['Свернуть в переулок'], retries: 3 });
+  await performStep(page, { stepName: 'Идти к дому', currentTexts: ['Идти к дому'], retries: 3 });
+  await performStep(page, { stepName: 'Войти в дом', currentTexts: ['Войти в дом'], retries: 3 });
+  await performStep(page, { stepName: 'Войти в дверь', currentTexts: ['Войти в дверь'], retries: 3 });
+  await performStep(page, { stepName: 'Войти в комнату', currentTexts: ['Войти в комнату'], retries: 3 });
+  await performStep(page, { stepName: 'Идти в глубь комнаты', currentTexts: ['Идти в глубь комнаты'], retries: 3 });
+
+  if (!(await questFightHpGate(page, 'Четверг: призрачная ведьма', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+    return false;
+  }
+  console.log('Четверг/тупик: бой с призрачной ведьмой (ожидается "Коготь ведьмы").');
+  await clickByTexts(page, ['Атаковать'], 'Атаковать (призрачная ведьма)');
+  await fightLoop(page);
+  await pause(page, 800, 1500);
+  await clickByTexts(page, ['В игру', 'в игру'], 'В игру (тупик, босс)').catch(() => {});
+  return true;
+}
+
 async function runThursdayDailiesIfAvailable(page) {
   if (getWeekday() !== THURSDAY_WEEKDAY) {
     return false; // сегодня не четверг - этих дейликов просто нет
@@ -7749,14 +7822,21 @@ async function runThursdayDailiesIfAvailable(page) {
   const today = getDayKeyNow();
   if (thursdayDailiesDayKey !== today) {
     thursdayDailiesDayKey = today;
-    thursdayDailiesDone = { gravedigger: false, butcher: false, deadend: false };
+    thursdayDailiesDone = {
+      gravedigger: false, butcher: false, deadend: false,
+      gravediggerBoss: false, deadendBoss: false,
+    };
     persistDailyQuestState();
   }
 
+  // Безбоевые цели идут первыми, боссы после: если HP не хватит, гейт боссов заставит ждать,
+  // и лучше к этому моменту уже забрать всё, что берётся без боя.
   const TASKS = [
     ['gravedigger', 'Дом могильщика', progressGravediggerHouse],
-    ['butcher', 'Дом мясника', progressButcherHouse],
     ['deadend', 'Дом в тупике', progressDeadEndHouse],
+    ['butcher', 'Дом мясника (бой)', progressButcherHouse],
+    ['gravediggerBoss', 'Могильщик: призрак тёщи (бой)', progressGravediggerBoss],
+    ['deadendBoss', 'Тупик: призрачная ведьма (бой)', progressDeadEndBoss],
   ];
 
   let didAnything = false;
@@ -8456,6 +8536,7 @@ async function postChatMessage(page, message, room = 1) {
   const textarea = page.locator('textarea#msgbody');
   await textarea.fill(message);
   await page.locator('input#send').click({ timeout: 8000 });
+  noteChatMessageSent(room); // -> комната считается активной, опрос раз в 30 сек
   await pause(page, 800, 1500);
 }
 
@@ -8596,7 +8677,8 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
 // idlePollMs=20 мин - из более раннего указания: "если никого нет раз в 20 минут, если идет
 // общение поддерживаешь беседу" (при активности интервал сам падает до CHAT_ACTIVE_POLL_MS).
 const CHAT_ROOMS = [
-  { room: 12, name: 'Клановый зал', idlePollMs: 20 * 60_000 },
+  // idlePollMs убран: теперь общий CHAT_IDLE_POLL_MS = 5 минут (Паша, 17.09.2026).
+  { room: 12, name: 'Клановый зал' },
   // Отключены 17.09.2026 по просьбе Паши:
   // { room: 1, name: 'Городская площадь' },
   // { room: 2, name: 'Сады Афродиты' },
@@ -8616,9 +8698,20 @@ const CHAT_ROOMS = [
 // Комната считается "активной" ACTIVE_WINDOW_MS после последнего замеченного изменения - в этом
 // окне она проверяется каждые ACTIVE_POLL_MS, иначе раз в IDLE_POLL_MS (или в room.idlePollMs,
 // если для комнаты задан отдельный интервал - см. Клановый зал выше).
+// Паша, 17.09.2026: "проверяй каждые 5 минут, а когда отправляешь сообщение - 30 сек, когда
+// общение прекратилось опять 5 минут". Активное окно = сколько держится режим 30 секунд
+// после последнего движения в комнате (нового сообщения ИЛИ нашей собственной отправки).
 const CHAT_ACTIVE_POLL_MS = 30_000;
-const CHAT_IDLE_POLL_MS = 3 * 60_000;
+const CHAT_IDLE_POLL_MS = 5 * 60_000;
 const CHAT_ACTIVE_WINDOW_MS = 5 * 60_000;
+
+// Когда МЫ написали в комнату - ждём ответа, а значит следующие CHAT_ACTIVE_WINDOW_MS
+// опрашиваем её раз в 30 секунд. Хранится здесь, а не в state драйвера, чтобы работало при
+// любом вызове postChatMessage (в том числе из разовых скриптов).
+const lastChatSentAt = {};
+function noteChatMessageSent(room) {
+  lastChatSentAt[room] = Date.now();
+}
 
 // state: {[room]: {lastText, lastChangeAt, lastCheckedAt}} - переиспользуется между вызовами,
 // начать с {}. Каждый вызов проверяет только те комнаты, чей интервал уже истёк (не долбит все
@@ -8629,7 +8722,9 @@ async function runChatMonitorCycle(chatPage, state) {
   let didAnyFetch = false;
   for (const { room, name, idlePollMs } of CHAT_ROOMS) {
     const s = state[room] || { lastText: undefined, lastChangeAt: 0, lastCheckedAt: 0 };
-    const isActive = now - s.lastChangeAt < CHAT_ACTIVE_WINDOW_MS;
+    const sentAt = lastChatSentAt[room] || 0;
+    const isActive = (now - s.lastChangeAt < CHAT_ACTIVE_WINDOW_MS)
+      || (now - sentAt < CHAT_ACTIVE_WINDOW_MS);
     const intervalMs = isActive ? CHAT_ACTIVE_POLL_MS : (idlePollMs || CHAT_IDLE_POLL_MS);
     if (now - s.lastCheckedAt < intervalMs) {
       state[room] = s;
