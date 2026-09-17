@@ -1360,11 +1360,24 @@ async function dropCurrentAssignment(page, reason = '') {
   }
 
   console.log(`Отказ от задания (${reason}): "${snapshotText(info.assignment, 200)}"`);
-  const dropped = await clickByTexts(page, ['отказаться'], 'отказаться от задания');
-  if (!dropped) {
-    console.log('Отказ от задания: ссылка "отказаться" не нажалась.');
+  // 17.09.2026, Паша письмом: ты видимо когда от задания отказывался отказался и от статуи,
+  // кнопка идентична, но другая строка. Проверено живьём: в анкете есть строка
+  // Статуя славы: еще N мин Отказаться со ссылкой mod=statuenull, рядом с Текущее задание.
+  // Клик по ТЕКСТУ отказаться - лотерея между ними, и он снял бафф статуи: максимум HP упал
+  // 380 -> 340, а я успел заподозрить чужой вход в аккаунт. Целимся по href, а не по надписи.
+  const dropHref = await page
+    .evaluate(() => {
+      const a = Array.from(document.querySelectorAll("a")).find((x) => (x.getAttribute("href") || "").includes("mod=dropquest"));
+      return a ? a.getAttribute("href") : null;
+    })
+    .catch(() => null);
+
+  if (!dropHref) {
+    console.log("Отказ от задания: ссылка mod=dropquest не найдена - НИЧЕГО не жму по тексту, чтобы не снять бафф статуи (mod=statuenull).");
     return false;
   }
+
+  await page.goto("http://lbast.ru/" + (dropHref[0] === "/" ? dropHref.slice(1) : dropHref), { waitUntil: "domcontentloaded", timeout: 60000 });
   await pause(page, 800, 1500);
   await clickByTexts(page, ['В игру', 'в игру'], 'В игру (после отказа)');
   await pause(page, 600, 1200);
