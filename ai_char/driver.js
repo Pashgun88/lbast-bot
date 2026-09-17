@@ -7,6 +7,14 @@
 
 const { chromium } = require('playwright');
 const path = require('path');
+
+// dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
+// вовсе, и AI_LOGIN/AI_PASS появлялись только если их вручную экспортировали в шелле. До сих
+// пор это не всплывало потому, что сессия жила в профиле Chrome и логин не требовался ни разу,
+// - но при смерти сессии драйвер молча выходил с кодом 1. Подключаем ДО require('./module'):
+// module.js читает process.env на этапе загрузки.
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
 const {
   doScenario,
   runDailyQuests,
