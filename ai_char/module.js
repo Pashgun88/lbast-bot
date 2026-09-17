@@ -1174,6 +1174,60 @@ async function clickInfoForQuest(page, questName) {
 }
 
 
+// Анкета (pers.php) показывает строку "Текущее задание: <текст> - отказаться", и отказ ведёт
+// на /pers.php?r=NNNN&mod=dropquest. Разобрано вживую 17.09.2026 после жалобы Паши: игра
+// пишет "у вас уже есть задание", и новое задание не берётся, пока старое висит.
+// ВАЖНО: r= меняется при каждой загрузке страницы, поэтому href НЕ хардкодим - берём ссылку
+// на анкету с текущей страницы и кликаем по тексту "отказаться".
+function hasAlreadyHasQuestText(text) {
+  return /у\s*вас\s*уже\s*есть\s*задание/i.test(String(text || ''));
+}
+
+async function readCurrentAssignment(page) {
+  const persHref = await page
+    .$eval('a[href^="pers.php"]', (a) => a.getAttribute('href'))
+    .catch(() => null);
+  if (!persHref) return null;
+
+  await page.goto(`http://lbast.ru/${persHref.replace(/^\//, '')}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await pause(page, 400, 800);
+
+  const text = await getBodyText(page);
+  const m = text.match(/Текущее задание:\s*([\s\S]*?)\s*-\s*отказаться/i);
+  return { text, assignment: m ? m[1].trim() : null };
+}
+
+// Отказ от текущего задания через анкету. Возвращает true, только если задание реально было
+// и ссылка отказа нажалась. Это НЕОБРАТИМО - прогресс по заданию теряется, поэтому вызывается
+// лишь тогда, когда игра сама сказала "у вас уже есть задание" и иначе квест не сдвинуть.
+async function dropCurrentAssignment(page, reason = '') {
+  const info = await readCurrentAssignment(page);
+  if (!info) {
+    console.log('Отказ от задания: не нашёл ссылку на анкету (pers.php) на текущей странице.');
+    return false;
+  }
+  if (!info.assignment) {
+    console.log('Отказ от задания: в анкете нет активного задания - отказываться не от чего.');
+    await clickByTexts(page, ['В игру', 'в игру'], 'В игру (анкета)');
+    return false;
+  }
+
+  console.log(`Отказ от задания (${reason}): "${snapshotText(info.assignment, 200)}"`);
+  const dropped = await clickByTexts(page, ['отказаться'], 'отказаться от задания');
+  if (!dropped) {
+    console.log('Отказ от задания: ссылка "отказаться" не нажалась.');
+    return false;
+  }
+  await pause(page, 800, 1500);
+  await clickByTexts(page, ['В игру', 'в игру'], 'В игру (после отказа)');
+  await pause(page, 600, 1200);
+  console.log('Отказ от задания: выполнено, задание освободилось.');
+  return true;
+}
+
 async function ensureTavernQuestTaken(page) {
   const QUEST_TAVERN = '\u0425\u0430\u0440\u0447\u0435\u0432\u043d\u044f';
 
@@ -1209,6 +1263,14 @@ async function ensureTavernQuestTaken(page) {
       currentTexts: ['\u0421\u043f\u0440\u043e\u0441\u0438\u0442\u044c \u043e \u0440\u0430\u0431\u043e\u0442\u0435', '\u0441\u043f\u0440\u043e\u0441\u0438\u0442\u044c \u043e \u0440\u0430\u0431\u043e\u0442\u0435'],
       retries: 4,
     });
+
+    // \u0418\u0433\u0440\u0430 \u043c\u043e\u0433\u043b\u0430 \u043e\u0442\u0432\u0435\u0442\u0438\u0442\u044c "\u0443 \u0432\u0430\u0441 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0437\u0430\u0434\u0430\u043d\u0438\u0435" - \u0442\u043e\u0433\u0434\u0430 \u043d\u043e\u0432\u043e\u0435 \u043d\u0435 \u0432\u043e\u0437\u044c\u043c\u0451\u0442\u0441\u044f, \u043f\u043e\u043a\u0430 \u0441\u0442\u0430\u0440\u043e\u0435
+    // \u0432\u0438\u0441\u0438\u0442 \u0432 \u0430\u043d\u043a\u0435\u0442\u0435. \u041e\u0442\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u043c\u0441\u044f \u043e\u0442 \u043d\u0435\u0433\u043e \u0438 \u043f\u0440\u043e\u0431\u0443\u0435\u043c \u0437\u0430\u043d\u043e\u0432\u043e \u0432 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u043c \u0446\u0438\u043a\u043b\u0435.
+    if (hasAlreadyHasQuestText(await getBodyText(page))) {
+      console.log('Tavern quest: \u0438\u0433\u0440\u0430 \u043e\u0442\u0432\u0435\u0442\u0438\u043b\u0430 "\u0443 \u0432\u0430\u0441 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0437\u0430\u0434\u0430\u043d\u0438\u0435" -> \u0438\u0434\u0443 \u0432 \u0430\u043d\u043a\u0435\u0442\u0443 \u043e\u0442\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c\u0441\u044f.');
+      await dropCurrentAssignment(page, '\u0425\u0430\u0440\u0447\u0435\u0432\u043d\u044f: \u043c\u0435\u0448\u0430\u0435\u0442 \u0432\u0437\u044f\u0442\u044c \u043d\u043e\u0432\u043e\u0435 \u0437\u0430\u0434\u0430\u043d\u0438\u0435');
+      return false;
+    }
 
     await performStep(page, {
       stepName: '\u0412 \u0438\u0433\u0440\u0443',
@@ -6774,6 +6836,11 @@ async function progressDemonLakeQuest(page) {
     await pause(page, 800, 1500);
     await clickByTexts(page, ['Получить задание'], 'Получить задание');
     await pause(page, 800, 1500);
+    if (hasAlreadyHasQuestText(await getBodyText(page))) {
+      console.log('Demon lake quest: игра ответила "у вас уже есть задание" -> иду в анкету отказываться.');
+      await dropCurrentAssignment(page, 'Демон озера: мешает взять задание');
+      return false;
+    }
     await clickByTexts(page, ['В игру'], 'В игру');
     await pause(page, 800, 1500);
   }
@@ -8827,5 +8894,8 @@ module.exports = {
   runStatueOfGloryIfDue,
   clickOnlySensibleOption,
   runShepotQuestIfAvailable,
+  readCurrentAssignment,
+  dropCurrentAssignment,
+  hasAlreadyHasQuestText,
   runDovolstvieIfAvailable,
 };
