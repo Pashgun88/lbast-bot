@@ -473,7 +473,36 @@ function parseMailCountFromText(text) {
   return Number(match[1] || 0);
 }
 
+// 17.09.2026, найдено измерением: счётчик писем ЕСТЬ на location.php, но лежит в атрибуте
+// картинки, а не в тексте страницы:
+//   <img src="pics/icons/mail_unread.gif" title="Письма (1)">
+// getBodyText возвращает innerText, куда атрибуты не попадают, поэтому parseMailCountFromText
+// искал верную строку там, где её физически быть не может, и всегда возвращал 0. Из-за этого
+// handleUnreadMailIfAny выходил в первой же строке КАЖДЫЙ цикл и не заметил ни одного письма
+// (живая проверка: письмо от Tsunami от 17-09 15:48 висело непрочитанным, в логах - ни строки).
+// Признак непрочитанного - сама иконка mail_unread.gif; число берём из её title.
+async function readMailCountFromIcon(page) {
+  return page
+    .evaluate(() => {
+      const img = document.querySelector('img[src*="mail_unread"]');
+      if (!img) return 0;
+      const title = (img.getAttribute('title') || '').replace(/\s+/g, ' ');
+      const m = title.match(/Письма\s*\((\d+)\)/i);
+      // Иконка непрочитанного есть, а число не разобралось - значит писем хотя бы одно.
+      return m ? Number(m[1]) : 1;
+    })
+    .catch(() => 0);
+}
+
 async function getMailCountFromPage(page) {
+  const iconCount = await readMailCountFromIcon(page);
+  if (iconCount > 0) {
+    return {
+      count: iconCount,
+      sourceText: `mail_unread.gif title="Письма (${iconCount})"`,
+    };
+  }
+
   const bodyText = await getBodyText(page);
   const titleText = await getPageTitleSafe(page);
 
