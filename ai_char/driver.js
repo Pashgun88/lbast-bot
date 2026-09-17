@@ -31,6 +31,7 @@ const {
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
   hasPendingFightQuests,
+  escapeStuckSceneIfAny,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -215,6 +216,13 @@ async function loginIfNeeded(page) {
       // жила у Tsunami. Без неё location.php молча зависал на голом "В бой!" на много
       // циклов подряд (parseStats/openQuestsMenu давали null/[] без единой ошибки) - живой
       // случай 15.09.2026 с "Бандит" обнаружен только ручной проверкой браузера.
+      // Персонаж мог остаться внутри квестовой сцены (живой случай: Чулан дома могильщика).
+      // Тогда location.php отдаёт экран сцены без шапки и без Q, и весь цикл ниже сыплется
+      // в null/null. Выходим из сцены ДО всех проверок.
+      await escapeStuckSceneIfAny(page).catch((e) => {
+        console.log('Escape stuck scene error:', e.message);
+      });
+
       const preAttackText = await getBodyText(page);
       const attackHandled = await handleIncomingAttackIfAny(page, preAttackText).catch((e) => {
         console.log('Incoming attack handling error:', e.message);

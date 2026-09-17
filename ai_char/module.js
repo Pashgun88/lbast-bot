@@ -7835,6 +7835,40 @@ async function progressDeadEndBoss(page) {
   return true;
 }
 
+// Квестовая сцена может оставить персонажа "внутри себя": location.php отдаёт не локацию, а
+// экран сцены. Живой случай 17.09.2026 - Чулан дома могильщика ("Убежать" / "Атаковать").
+// Шапки со статами там нет и ссылки Q нет, поэтому сыплется ВЕСЬ цикл: parseStats даёт
+// null/null, "Не найдено для шага open quests menu", runDailyQuests возвращает пустоту.
+// Внешне похоже на автобан или на залипший бой, но это ни то, ни другое.
+// Выход из таких сцен всегда безопасный. Бой отсюда НЕ начинаем: это решение, и оно обязано
+// идти через questFightHpGate, а не через "нажми хоть что-нибудь".
+const STUCK_SCENE_EXITS = ['Убежать', 'Выскочить из комнаты', 'Выйти из дома', 'Вернуться'];
+
+async function escapeStuckSceneIfAny(page) {
+  const text = await getBodyText(page);
+  if (isBattleScreenText(text)) return false; // это бой - им занимается другой код
+
+  // ВАЖНО: определять сцену по отсутствию шапки со статами НЕЛЬЗЯ. Живая проверка 17.09.2026:
+  // в Чулане шапка была на месте - "AI__ (245/380) (23) Q9 D6", - и такая проверка молча
+  // пропустила бы застревание. Надёжный признак: на обычной локации есть ссылка на меню
+  // квестов (mod=quests), а внутри квестовой сцены её нет.
+  const onNormalLocation = await page
+    .evaluate(() => Boolean(document.querySelector('a[href*="mod=quests"]')))
+    .catch(() => true); // не смогли проверить - считаем, что всё нормально, и не трогаем
+  if (onNormalLocation) return false;
+
+  for (const exit of STUCK_SCENE_EXITS) {
+    if (await existsAnyText(page, [exit])) {
+      console.log(`Залипшая сцена: выхожу через "${exit}" (шапки со статами нет, Q недоступно).`);
+      await clickByTexts(page, [exit], `выход из сцены (${exit})`).catch(() => {});
+      await pause(page, 600, 1200);
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      return true;
+    }
+  }
+  return false;
+}
+
 async function runThursdayDailiesIfAvailable(page) {
   if (getWeekday() !== THURSDAY_WEEKDAY) {
     return false; // сегодня не четверг - этих дейликов просто нет
@@ -9497,6 +9531,7 @@ module.exports = {
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
   hasPendingFightQuests,
+  escapeStuckSceneIfAny,
   getPlayerRaceAndFaction,
   postChatMessage,
   getRecentChatMessages,
