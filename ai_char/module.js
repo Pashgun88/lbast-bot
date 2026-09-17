@@ -2297,6 +2297,10 @@ async function runFishEyeFight(page) {
     return false;
   }
 
+  // \u0411\u043e\u0439 \u043d\u0430 \u0430\u0440\u0435\u043d\u0435 \u0434\u043e\u0431\u0440\u043e\u0432\u043e\u043b\u044c\u043d\u044b\u0439 \u0438 \u043c\u0430\u0440\u0448\u0440\u0443\u0442\u0430 \u043f\u043e\u0441\u043b\u0435 \u0441\u0435\u0431\u044f \u043d\u0435 \u0442\u044f\u043d\u0435\u0442 - \u0437\u0434\u0435\u0441\u044c \u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u043e\u0431\u044b\u0447\u043d\u043e\u0433\u043e
+  // \u043e\u0442\u043a\u0430\u0437\u0430 (\u0432\u0435\u0440\u043d\u0451\u043c\u0441\u044f \u0432 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u043c \u0446\u0438\u043a\u043b\u0435), \u0436\u0434\u0430\u0442\u044c \u043f\u043e\u0434\u043b\u0435\u0447\u0438\u0432\u0430\u043d\u0438\u044f \u043f\u0440\u044f\u043c\u043e \u0432 \u0430\u0440\u0435\u043d\u0435 \u0441\u043c\u044b\u0441\u043b\u0430 \u043d\u0435\u0442.
+  if (!(await questFightHpGate(page, '\u0420\u044b\u0431\u0438\u0439 \u0433\u043b\u0430\u0437: \u0430\u0440\u0435\u043d\u0430'))) return false;
+
   // Some fights start immediately after descending to the arena.
   if (!await existsAnyText(page, ['\u0423\u0434\u0430\u0440\u0438\u0442\u044c', '\u0443\u0434\u0430\u0440\u0438\u0442\u044c'])) {
     await performStep(page, {
@@ -2532,6 +2536,10 @@ async function progressRumaForgeQuest(page, { questCount } = {}) {
   });
 
   // One fight (Ruma forge quest).
+  // Гейт добавлен 17.09.2026 по итогам аудита ПО КОДУ (grep всех fightLoop): этого квеста не
+  // было ни в одном продиктованном списке, и бой шёл без единой проверки HP. waitForRecovery -
+  // после боя идёт продолжение маршрута (кузница + сдача), бросать его на середине нельзя.
+  if (!(await questFightHpGate(page, 'Кузница Рума', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
   console.log('Ruma forge quest: fight');
 
   if (await existsAnyText(page, ['\u0412 \u0431\u043e\u0439!', '\u0432 \u0431\u043e\u0439!', '\u0412 \u0431\u043e\u0439', '\u0432 \u0431\u043e\u0439'])) {
@@ -6825,6 +6833,12 @@ async function progressGalleryLazuliteQuest(page) {
     text = await getBodyText(page);
 
     if (/В бой!/i.test(text)) {
+      // Засада уже сработала - уйти с неё нельзя, поэтому именно ждём подлечивания, а не
+      // отказываемся: отказ оставил бы заряженный экран "В бой!" (ровно та история, что с
+      // корованом 17.09.2026, когда бой потом начал обработчик атак в обход гейта).
+      if (!(await questFightHpGate(page, `Gallery: засада (попытка ${attempt + 1})`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+        return false;
+      }
       console.log(`Gallery quest: засада на поиске лазулитов (попытка ${attempt + 1}), бой.`);
       await fightLoop(page);
     } else if (/лазулит/i.test(text)) {
