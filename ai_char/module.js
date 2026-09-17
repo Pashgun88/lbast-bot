@@ -582,13 +582,30 @@ function buildMailSignature(mail) {
 }
 
 async function openMailbox(page) {
-  const ok = await clickByTexts(page, ['Письма'], 'Письма');
+  // 17.09.2026: раньше шаг жал ссылку по ТЕКСТУ Письма - и не находил её никогда. На
+  // location.php почта это ИКОНКА БЕЗ ТЕКСТА (href содержит letters.php), самого слова
+  // Письма на странице нет вовсе. Тот же класс ошибки, что был у счётчика непрочитанных:
+  // код искал текст там, где его физически не может быть, и молча выходил. Из-за этого
+  // письмо детектировалось, но ящик не открывался (Не удалось нажать на Письма).
+  // Проверенный способ - брать href по подстроке letters.php (так работает replyToLetter).
+  // Когда непрочитанных нет, иконка ведёт на страницу по умолчанию БЕЗ mod=inbox, где
+  // списка писем нет - поэтому mod=inbox дописываем явно.
+  const hrefs = await page
+    .evaluate(() => Array.from(document.querySelectorAll("a"))
+      .map((a) => a.getAttribute("href") || "")
+      .filter((h) => h.includes("letters.php")))
+    .catch(() => []);
 
-  if (!ok) {
-    console.log('Не удалось нажать на "Письма"');
+  if (!hrefs.length) {
+    console.log("Почта: на странице нет ссылки на письма (иконка letters.php не найдена).");
     return false;
   }
 
+  let href = hrefs.find((h) => h.includes("mod=inbox")) || hrefs[0];
+  if (!href.includes("mod=inbox")) href = href + "&mod=inbox";
+  const url = "http://lbast.ru/" + (href[0] === "/" ? href.slice(1) : href);
+
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
   await pause(page, 1000, 2000);
   return true;
 }
