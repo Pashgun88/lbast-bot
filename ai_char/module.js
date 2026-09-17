@@ -8286,22 +8286,46 @@ async function shepotReadHpFrom(hpPage) {
 // а не "пропустить проверку" (инцидент 17.09.2026, см. feedback_shtolni_debugging_mistakes).
 async function shepotWaitForHp(hpPage, floor, label, maxWaitMs = 90 * 60 * 1000) {
   const started = Date.now();
+  // Сколько подряд нечитаемых опросов HP терпим, прежде чем сдаться (см. комментарий ниже).
+  const MAX_NULL_READS = 5;
+  let nullReads = 0;
   for (;;) {
     const stats = await shepotReadHpFrom(hpPage);
     const frac = hpFraction(stats);
     if (frac == null) {
-      console.log(`Шепот/${label}: HP не читается даже на отдельной вкладке -> СТОП.`);
-      return false;
+      // 17.09.2026, живой случай: ОДИН нечитаемый опрос HP на второй вкладке (страница
+      // отрендерилась без шапки - похоже на входящую атаку или сбой загрузки) убил весь прогон
+      // гаунтлета на призраке, хотя сцена была цела и бой был не начат. Правило "null = не
+      // драться" остаётся железным, но блокировать оно должно БОЙ, а не само ожидание:
+      // перечитываем. Сдаёмся только если HP не читается много опросов подряд.
+      nullReads += 1;
+      if (nullReads >= MAX_NULL_READS) {
+        console.log(`Шепот/${label}: HP не читается ${nullReads} опросов подряд -> СТОП.`);
+        return false;
+      }
+      console.log(`Шепот/${label}: HP не прочитался (попытка ${nullReads}/${MAX_NULL_READS}) - перечитаю через минуту, сцену не трогаю.`);
+      await new Promise((r) => setTimeout(r, 60000));
+      continue;
     }
-    if (frac >= floor) {
-      console.log(`Шепот/${label}: HP ${stats.hpCurrent}/${stats.hpMax} (${Math.round(frac * 100)}%) - можно в бой.`);
+    nullReads = 0;
+    // 17.09.2026: с активным элем порог опускается до HP_FLOOR_WITH_BUFF - это давнее правило
+    // Паши ("с активным элем можно опустить порог хп до 0.4"), и именно здесь оно принципиально.
+    // Гаунтлет обязан уложиться в ОДНУ сессию (иначе цепочка рвётся), а бафф эля конечен: ждать
+    // до 70%, пока эль тикает, значит рискнуть доигрывать уже без него, а без эля бои стоят
+    // 170-210 урона вместо 50-116. Живой случай: регенерация встала на 230/340 (68%) в восьми
+    // единицах от порога 70%, и ожидание жгло бафф впустую. Бафф перечитываем каждый опрос на
+    // ОТДЕЛЬНОЙ вкладке - он может истечь посреди ожидания, и тогда порог обязан вернуться к 0.7.
+    const buffed = await isAnyBuffAleActive(hpPage).catch(() => false);
+    const effectiveFloor = buffed ? HP_FLOOR_WITH_BUFF : floor;
+    if (frac >= effectiveFloor) {
+      console.log(`Шепот/${label}: HP ${stats.hpCurrent}/${stats.hpMax} (${Math.round(frac * 100)}%), порог ${Math.round(effectiveFloor * 100)}%${buffed ? ' (эль активен)' : ''} - можно в бой.`);
       return true;
     }
     if (Date.now() - started > maxWaitMs) {
       console.log(`Шепот/${label}: HP не восстановилось за ${Math.round(maxWaitMs / 60000)} мин -> СТОП.`);
       return false;
     }
-    console.log(`Шепот/${label}: HP ${stats.hpCurrent}/${stats.hpMax} (${Math.round(frac * 100)}%) < ${Math.round(floor * 100)}% - жду 2 мин, сцену не трогаю.`);
+    console.log(`Шепот/${label}: HP ${stats.hpCurrent}/${stats.hpMax} (${Math.round(frac * 100)}%) < ${Math.round(effectiveFloor * 100)}%${buffed ? ' (эль активен)' : ''} - жду 2 мин, сцену не трогаю.`);
     await new Promise((r) => setTimeout(r, 120000));
   }
 }
