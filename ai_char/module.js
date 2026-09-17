@@ -8370,7 +8370,10 @@ async function runShepotGauntletContinuous(page, hpPage, { maxFights = 24, hpFlo
     text = String((await getBodyText(page)) || '');
     console.log(`\nШепот/гаунтлет, экран ${i + 1}: ${shepotSnap(text)}`);
 
-    if (/Гильдия вичхантеров|Спросить орка Хрыга/i.test(text)) {
+    // Игра пишет про гильдию в РОДИТЕЛЬНОМ падеже и с маленькой буквы ("спешить в гильдию
+    // вичхантеров"), поэтому точное "Гильдия вичхантеров" из гайда тут не матчится - ловим
+    // по корню. Плюс победный текст "Ведьма убита" - самый надёжный признак конца гаунтлета.
+    if (/Ведьма убита|гильди\w*\s+вичхантеров|Спросить орка Хрыга/i.test(text)) {
       console.log('Шепот: гаунтлет пройден! Дальше сдача в Гильдии вичхантеров (stage 6).');
       shepotStage = 6;
       shepotGauntletFightsDone = 0;
@@ -8378,7 +8381,14 @@ async function runShepotGauntletContinuous(page, hpPage, { maxFights = 24, hpFlo
       return true;
     }
 
-    const match = SHEPOT_MONSTER_ITEMS.find(({ re }) => re.test(text));
+    let match = SHEPOT_MONSTER_ITEMS.find(({ re }) => re.test(text));
+    // Слово "ведьм" встречается и в ПОБЕДНОМ тексте ("Ведьма убита...", "Отбившись от ведьминых
+    // прихвостней"), поэтому для ведьмы одного упоминания мало - нужна реальная кнопка атаки.
+    // Живой случай 17.09.2026: после победы код начал копить HP, чтобы "атаковать" уже убитую
+    // ведьму, и ждал впустую.
+    if (match && match.item === null && !(await existsAnyText(page, ['Атаковать ведьму']))) {
+      match = undefined;
+    }
     if (!match) {
       // Живой факт 17.09.2026: после КАЖДОГО боя игра сама выбрасывает обратно на форпост
       // "Кулак Хаоса", но сцена гаунтлета остаётся ПОДВЕШЕННОЙ - в шапке появляется
@@ -8595,22 +8605,52 @@ async function progressShepotQuestStage(page) {
   }
 
   if (shepotStage === 6) {
-    // НЕ ПРОВЕРЕНО ВЖИВУЮ: маршрут до Гильдии вичхантеров ни разу не пройден (квест прервался
-    // раньше на гаунтлете). Гайд не даёт явного пути, только "нужно попасть в Гильдию
-    // вичхантеров" - clickOnlySensibleOption как лучшая попытка, verify live перед доверием.
-    const result = await shepotBlastThroughNarrative(page, {
-      stopTexts: ['Спросить орка Хрыга'],
-      maxSteps: 20,
-      label: 'путь в гильдию (НЕ ПРОВЕРЕНО)',
-    });
-    if (!result.reachedStop) {
-      console.log('Шепот stage 6: не нашёл гильдию автоматически - НУЖНА ручная разведка маршрута (не проверено вживую).');
+    // Маршрут ПОДТВЕРЖДЁН живьём 17.09.2026. В гайде Kate2008 его нет вообще - гайд обрывается
+    // на "Как можно быстрее нужно попасть в Гильдию вичхантеров". Паша подсказал город и ворота
+    // (сначала назвал восточные - там гильдии нет, проверено; она у СЕВЕРНЫХ ворот Стоунгарда).
+    // Точный текст ссылки входа: "Гильдия вичхантеров". Награда за сдачу: 274 дин.
+    const GUILD = 'Гильдия вичхантеров';
+
+    if (!(await existsAnyText(page, [GUILD]))) {
+      await clickByTexts(page, ['Амулет', 'Aмулет'], 'Шепот: Амулет');
+      await pause(page, 800, 1200);
+      await clickByTexts(page, ['Стоунгард'], 'Шепот: Стоунгард');
+      await pause(page, 1500, 2500);
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await pause(page, 600, 1000);
+      if (await existsAnyText(page, ['Северные ворота'])) {
+        await clickByTexts(page, ['Северные ворота'], 'Шепот: Северные ворота Стоунгарда');
+        await pause(page, 800, 1200);
+      }
+    }
+
+    if (!(await existsAnyText(page, [GUILD]))) {
+      console.log('Шепот stage 6: "Гильдия вичхантеров" не найдена -> СТОП.');
       return false;
     }
-    await clickByTexts(page, ['Спросить орка Хрыга'], 'Шепот: Спросить орка Хрыга');
-    await pause(page, 800, 1500);
-    await shepotBlastThroughNarrative(page, { stopTexts: [], maxSteps: 10, label: 'сдача квеста' });
+
+    await clickByTexts(page, [GUILD], `Шепот: вход в ${GUILD}`);
+    await pause(page, 900, 1400);
+
+    // Реплики сдачи подтверждены живьём, слово в слово (совпали с гайдом).
+    const TURN_IN_DIALOG = [
+      'Спросить орка Хрыга',
+      'Нет... А что это?',
+      'Но теперь ведьма мертва, все в порядке?',
+      'Взять и уйти',
+    ];
+    for (const line of TURN_IN_DIALOG) {
+      if (!(await existsAnyText(page, [line]))) {
+        console.log(`Шепот stage 6: реплика "${line}" не найдена -> СТОП.`);
+        return false;
+      }
+      await clickByTexts(page, [line], `Шепот: ${line}`);
+      await pause(page, 800, 1300);
+    }
+
+    console.log('Шепот: квест сдан, награда получена. Следующий заход - в следующем месяце.');
     shepotStage = 0;
+    shepotGauntletFightsDone = 0;
     shepotDoneThisMonth = true;
     persistDailyQuestState();
     return true;
