@@ -259,6 +259,11 @@ let fishRestaurantNextRewardNumber = 1;
 let fishRestaurantFocusStartedAt = 0;
 let fishRestaurantSuppressedUntil = 0;
 
+// Дейлики по дню недели (гайд Паши от 17.09.2026). Date.getDay(): 4 = четверг.
+const THURSDAY_WEEKDAY = 4;
+let thursdayDailiesDayKey = '';
+let thursdayDailiesDone = { gravedigger: false, butcher: false, deadend: false };
+
 // "Дейлик" гарпии — бонусный бой привязан к конкретному дню недели с фиксированным числом
 // боёв, один в один как у Цунами (порт commit fb9dea7, 16.09.2026, EXTRA_DAILY_TASKS/
 // getDay()). Date.getDay(): 0=Вс,1=Пн,2=Вт,3=Ср,4=Чт,5=Пт,6=Сб. Гарпия: только вторник (2),
@@ -356,6 +361,10 @@ function restoreDailyQuestState() {
   if (typeof s.fishRestaurantDayKey === 'string') fishRestaurantDayKey = s.fishRestaurantDayKey;
   if (typeof s.fishRestaurantDoneToday === 'boolean') fishRestaurantDoneToday = s.fishRestaurantDoneToday;
   if (Number.isFinite(s.fishRestaurantNextRewardNumber)) fishRestaurantNextRewardNumber = s.fishRestaurantNextRewardNumber;
+  if (typeof s.thursdayDailiesDayKey === 'string') thursdayDailiesDayKey = s.thursdayDailiesDayKey;
+  if (s.thursdayDailiesDone && typeof s.thursdayDailiesDone === 'object') {
+    thursdayDailiesDone = { gravedigger: false, butcher: false, deadend: false, ...s.thursdayDailiesDone };
+  }
 
   if (typeof s.harpyHuntDayKey === 'string') harpyHuntDayKey = s.harpyHuntDayKey;
   if (Number.isFinite(s.harpyHuntFightsToday)) harpyHuntFightsToday = s.harpyHuntFightsToday;
@@ -383,6 +392,7 @@ function persistDailyQuestState() {
     demonLakeDayKey, demonLakeDoneToday,
     shipwreckDayKey, shipwreckDoneToday,
     fishRestaurantJournalOpened, fishRestaurantDayKey, fishRestaurantDoneToday, fishRestaurantNextRewardNumber,
+    thursdayDailiesDayKey, thursdayDailiesDone,
     harpyHuntDayKey, harpyHuntFightsToday,
   });
   saveStateToDisk(persistedState);
@@ -7554,6 +7564,129 @@ async function runFishRestaurantQuestIfAvailable(page) {
 // напрямую, минуя doScenario, поэтому Fish Eye никогда не запускался — обёртка ниже
 // вызывает тот же код явно, каждый цикл, независимо от Q.
 // ===================================================================================
+// ===================================================================================
+// ДЕЙЛИКИ ПО ДНЮ НЕДЕЛИ - четверг (гайд Паши, 17.09.2026).
+// Общий пролог у всех трёх: Конь -> Мисстоун -> Идти в город -> Идти на главную улицу.
+//
+// ВАЖНО: реализованы ТОЛЬКО безбоевые варианты. Паша: "Пока только без боя". В гайде у
+// могильщика и у дома в тупике есть ещё боссы (Призрак тёщи могильщика -> Ржавая сковорода,
+// Призрачная ведьма -> Коготь ведьмы) - они СОЗНАТЕЛЬНО не трогаются, пока маршрут не
+// проверен живьём. Когда дойдёт до них - бой обязан идти через questFightHpGate.
+//
+// НЕ ПРОВЕРЕНО ВЖИВУЮ: маршруты записаны со слов, первый запуск смотреть по логам.
+// ===================================================================================
+async function goToMisstoneMainStreet(page) {
+  await performStep(page, {
+    stepName: 'Конь',
+    currentTexts: ['Конь', 'конь'],
+    nextTexts: ['Мисстоун'],
+    retries: 3,
+  });
+  await performStep(page, {
+    stepName: 'Мисстоун',
+    currentTexts: ['Мисстоун'],
+    waitAfterClickMs: 7000,
+    retries: 3,
+  });
+  if (await existsAnyText(page, ['В пути', 'в пути'])) {
+    await clickByTexts(page, ['В пути еще', 'В пути ещё', 'В пути', 'в пути'], 'В пути');
+    await pause(page, 800, 1600);
+  }
+  await performStep(page, { stepName: 'Идти в город', currentTexts: ['Идти в город'], retries: 3 });
+  await performStep(page, { stepName: 'Идти на главную улицу', currentTexts: ['Идти на главную улицу'], retries: 3 });
+}
+
+// Дом могильщика, безбоевая ветка: ... -> Идти в дом могильщика -> Идти в правую дверь ->
+// квест "Разбить гробы".
+async function progressGravediggerHouse(page) {
+  await goToMisstoneMainStreet(page);
+  await performStep(page, { stepName: 'Идти в дом могильщика', currentTexts: ['Идти в дом могильщика'], retries: 3 });
+  await performStep(page, { stepName: 'Идти в правую дверь', currentTexts: ['Идти в правую дверь'], retries: 3 });
+  const ok = await clickByTexts(page, ['Разбить гробы', 'разбить гробы'], 'Разбить гробы');
+  if (!ok) {
+    console.log('Четверг/могильщик: "Разбить гробы" не найдено - возможно, уже сделано сегодня.');
+    return false;
+  }
+  await pause(page, 800, 1500);
+  await clickByTexts(page, ['В игру', 'в игру'], 'В игру (могильщик)').catch(() => {});
+  return true;
+}
+
+// Дом мясника: ... -> Идти в дом мясника -> Войти в желтую дверь -> Мясник.
+async function progressButcherHouse(page) {
+  await goToMisstoneMainStreet(page);
+  await performStep(page, { stepName: 'Идти в дом мясника', currentTexts: ['Идти в дом мясника'], retries: 3 });
+  await performStep(page, {
+    stepName: 'Войти в желтую дверь',
+    currentTexts: ['Войти в желтую дверь', 'Войти в жёлтую дверь'],
+    retries: 3,
+  });
+  const ok = await clickByTexts(page, ['Мясник', 'мясник'], 'Мясник');
+  if (!ok) {
+    console.log('Четверг/мясник: "Мясник" не найден - возможно, уже сделано сегодня.');
+    return false;
+  }
+  await pause(page, 800, 1500);
+  await clickByTexts(page, ['В игру', 'в игру'], 'В игру (мясник)').catch(() => {});
+  return true;
+}
+
+// Дом в тупике, безбоевая ветка: ... -> 2 раза Запад -> Свернуть в переулок -> Идти к дому ->
+// Осмотреть кучу тряпья.
+async function progressDeadEndHouse(page) {
+  await goToMisstoneMainStreet(page);
+  for (let i = 1; i <= 2; i++) {
+    await performStep(page, {
+      stepName: `Запад (${i}/2)`,
+      currentTexts: ['Запад', 'Идти на запад'],
+      skipIfNextVisible: false,
+      retries: 3,
+    });
+  }
+  await performStep(page, { stepName: 'Свернуть в переулок', currentTexts: ['Свернуть в переулок'], retries: 3 });
+  await performStep(page, { stepName: 'Идти к дому', currentTexts: ['Идти к дому'], retries: 3 });
+  const ok = await clickByTexts(page, ['Осмотреть кучу тряпья', 'осмотреть кучу тряпья'], 'Осмотреть кучу тряпья');
+  if (!ok) {
+    console.log('Четверг/тупик: "Осмотреть кучу тряпья" не найдено - возможно, уже сделано сегодня.');
+    return false;
+  }
+  await pause(page, 800, 1500);
+  await clickByTexts(page, ['В игру', 'в игру'], 'В игру (тупик)').catch(() => {});
+  return true;
+}
+
+async function runThursdayDailiesIfAvailable(page) {
+  if (getWeekday() !== THURSDAY_WEEKDAY) {
+    return false; // сегодня не четверг - этих дейликов просто нет
+  }
+
+  const today = getDayKeyNow();
+  if (thursdayDailiesDayKey !== today) {
+    thursdayDailiesDayKey = today;
+    thursdayDailiesDone = { gravedigger: false, butcher: false, deadend: false };
+    persistDailyQuestState();
+  }
+
+  const TASKS = [
+    ['gravedigger', 'Дом могильщика', progressGravediggerHouse],
+    ['butcher', 'Дом мясника', progressButcherHouse],
+    ['deadend', 'Дом в тупике', progressDeadEndHouse],
+  ];
+
+  let didAnything = false;
+  for (const [key, label, fn] of TASKS) {
+    if (thursdayDailiesDone[key]) continue;
+    const ok = await runNonQQuestSafe(page, `Четверг: ${label}`, () => fn(page));
+    if (ok) {
+      thursdayDailiesDone[key] = true;
+      persistDailyQuestState();
+      didAnything = true;
+      console.log(`Четверг: "${label}" выполнено.`);
+    }
+  }
+  return didAnything;
+}
+
 async function runFishEyeIfDue(page) {
   let didAnything = false;
 
@@ -9123,6 +9256,7 @@ module.exports = {
   ensureBuffAlesActive,
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
+  runThursdayDailiesIfAvailable,
   getPlayerRaceAndFaction,
   postChatMessage,
   getRecentChatMessages,

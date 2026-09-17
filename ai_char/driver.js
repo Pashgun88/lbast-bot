@@ -29,6 +29,7 @@ const {
   ensureBuffAlesActive,
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
+  runThursdayDailiesIfAvailable,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -335,9 +336,28 @@ async function loginIfNeeded(page) {
       // 16.09.2026, Паша: "с активным элем можно опустить порог хп до 0.4" - один общий
       // pers.php-чек на весь цикл (не по разу на каждую фарм-функцию), передаётся во все
       // три ниже как параметр buffed.
+      // Дейлики по дню недели (сейчас четверг: могильщик/мясник/дом в тупике) - идут ДО
+      // фарма: это квесты, а они в приоритете.
+      r = await runCycleStep(page, 'Дейлики по дню недели', () => runThursdayDailiesIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
       const buffedForFarm = await isAnyBuffAleActive(page).catch(() => false);
 
+      // Паша, 17.09.2026: "эти квесты не сделаны а ты на бизона пошел... квесты важнее фарма".
+      // Живой случай: при активном эле порог фарма падает до HP_FLOOR_WITH_BUFF (0.4), и ферма
+      // стачивала HP с 215 до 108 (28%) - после чего НИ ОДИН квест с боем уже не проходил по
+      // своему порогу 0.7, и драйвер просто стоял. Теперь ферма имеет право тратить только
+      // ИЗЛИШЕК сверх квестового порога: ниже 70% не фармим, даже с элем.
+      // Привязывать фарм к "есть ли невыполненные квесты" нельзя: в Q-меню всегда висят
+      // Штольни (выключены) и другие незакодированные квесты - фарм отключился бы навсегда.
+      const farmAllowed = hasEnoughHpForOptionalFight(stats);
+      if (!farmAllowed) {
+        console.log(`Ферма пропущена: HP ${stats.hpCurrent}/${stats.hpMax} < ${OPTIONAL_FIGHT_MIN_HP_FRACTION * 100}% - это HP нужно квестам.`);
+      }
+
       r = await runCycleStep(page, 'Harpy hunt (вторник)', () => {
+        if (!farmAllowed) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
         return runHarpyFarmRound(page, buffedForFarm);
       });
@@ -345,6 +365,7 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'Bison farm round', () => {
+        if (!farmAllowed) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
         return runBisonFarmRound(page, buffedForFarm);
       });
@@ -352,6 +373,7 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'Boar farm round', () => {
+        if (!farmAllowed) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
         return runBoarFarmRound(page, buffedForFarm);
       });
