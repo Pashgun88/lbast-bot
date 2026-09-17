@@ -8335,7 +8335,11 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
       lines: live.slice(0, 6).map((m) => `${m.nick}: ${m.text}`) });
   }
 
-  if (fresh.length === 0 && quietForMs >= CHAT_INITIATIVE_QUIET_MS
+  // quietForMs обязан быть КОНЕЧНЫМ числом: при первом наблюдении комнаты истории тишины нет
+  // (lastChangeAt = 0), и старое условие давало "молчит Infinity мин" - initiative срабатывал
+  // сразу на каждом запуске драйвера. Живой случай 17.09.2026, сразу после включения триггеров.
+  if (!firstObservation && fresh.length === 0
+      && Number.isFinite(quietForMs) && quietForMs >= CHAT_INITIATIVE_QUIET_MS
       && now - lastInitiativeAt >= CHAT_INITIATIVE_COOLDOWN_MS) {
     triggers.push({ ...base, type: 'initiative',
       reason: `комната молчит ${Math.round(quietForMs / 60000)} мин - повод заговорить первым` });
@@ -8411,7 +8415,9 @@ async function runChatMonitorCycle(chatPage, state) {
     // Триггеры считаем ВСЕГДА, а не только при изменении текста: "развлекательный момент"
     // должен сработать именно в молчащей комнате, где ничего не менялось.
     const triggers = detectChatTriggers({ room, name }, s.lastMsgs || [], nextMsgs, {
-      quietForMs: s.lastChangeAt ? now - s.lastChangeAt : Infinity,
+      // null, а не Infinity: пока мы не видели ни одного изменения, про длину тишины ничего
+      // не известно - "мы только что пришли" это не "комната давно молчит".
+      quietForMs: s.lastChangeAt ? now - s.lastChangeAt : null,
       lastInitiativeAt: s.lastInitiativeAt || 0,
       now,
     });

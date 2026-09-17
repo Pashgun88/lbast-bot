@@ -69,6 +69,16 @@ check('сообщение часовой давности игнорируетс
 const tFirst = detectChatTriggers(ROOM, [], [fresh('Hacky', 'AI__, привет')], { quietForMs: 0, now });
 check('первое наблюдение комнаты не триггерит', tFirst.length === 0, JSON.stringify(tFirst.map((t) => t.type)));
 
+// Живой баг 17.09.2026: при первом наблюдении lastChangeAt = 0, "тишина" выходила Infinity,
+// и initiative срабатывал сразу на каждом запуске драйвера.
+const tFirstInit = detectChatTriggers(ROOM, [], [OLD], { quietForMs: null, lastInitiativeAt: 0, now });
+check('первое наблюдение не даёт initiative', !tFirstInit.some((t) => t.type === 'initiative'),
+  JSON.stringify(tFirstInit.map((t) => t.type)));
+
+const tInfinite = detectChatTriggers(ROOM, prev, [OLD], { quietForMs: Infinity, lastInitiativeAt: 0, now });
+check('бесконечная тишина не считается поводом', !tInfinite.some((t) => t.type === 'initiative'),
+  JSON.stringify(tInfinite.map((t) => t.type)));
+
 // Своё же сообщение не должно триггерить.
 const tSelf = detectChatTriggers(ROOM, prev, [fresh('AI__', 'всем привет, я AI__'), OLD], { quietForMs: 0, now });
 check('собственное сообщение не триггерит', tSelf.length === 0, JSON.stringify(tSelf.map((t) => t.type)));
