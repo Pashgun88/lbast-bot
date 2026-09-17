@@ -170,10 +170,23 @@ async function loginIfNeeded(page) {
     for (;;) {
       try {
         const changed = await runChatMonitorCycle(chatPage, chatRoomState);
-        for (const { name, room, text } of changed) {
+        for (const { name, room, text, triggers } of changed) {
           console.log(`\n===== CHAT UPDATE: "${name}" (room=${room}) =====`);
           console.log(text.slice(0, 1500));
           console.log('===== END CHAT UPDATE =====\n');
+
+          // Обычный CHAT UPDATE печатается на любое шевеление в комнате, и обращение к нам в
+          // нём тонет. Триггеры - отдельный заметный блок: именно по нему видно, что пора
+          // писать ответ. Машиночитаемая копия каждого триггера уже ушла в лог строкой
+          // CHAT_TRIGGER:<base64> (см. emitChatTrigger в module.js).
+          if (Array.isArray(triggers) && triggers.length > 0) {
+            for (const t of triggers) {
+              console.log(`>>> ПОРА ОТВЕТИТЬ [${t.type}] "${name}": ${t.reason}`);
+              if (t.text) console.log(`    ${t.nick}: ${t.text}`);
+              if (Array.isArray(t.lines)) for (const l of t.lines) console.log(`    ${l}`);
+            }
+            console.log('');
+          }
         }
       } catch (e) {
         console.log('Chat watch loop error:', e.message);

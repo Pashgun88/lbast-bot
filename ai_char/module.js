@@ -473,6 +473,25 @@ function emitPvpAlert(payload) {
   }
 }
 
+// Ник ЭТОГО персонажа. ВНИМАНИЕ: SELF_NICK выше = 'tsunami' - он достался файлу от кода
+// главного персонажа Цунами, и для AI__ не годится. Для чат-триггеров нужен именно свой ник,
+// иначе "обратились ко мне" не сработает ни разу.
+const AI_SELF_NICK = 'AI__';
+const AI_SELF_NICK_RE = /\bAI__\b/i;
+
+// Триггер чата - отдельный маркер в логе, по образцу PVP_ALERT/ATTACK_ALERT/MAIL_MESSAGE.
+// Нужен потому, что обычные "CHAT UPDATE" печатаются на ЛЮБОЕ изменение комнаты, и обращение
+// к нам тонет среди болтовни. CHAT_TRIGGER печатается только когда реально пора вмешаться.
+function emitChatTrigger(payload) {
+  try {
+    const json = JSON.stringify(payload || {});
+    const encoded = Buffer.from(json, 'utf8').toString('base64');
+    console.log(`CHAT_TRIGGER:${encoded}`);
+  } catch (e) {
+    console.log(`Не удалось сериализовать chat trigger: ${e.message}`);
+  }
+}
+
 function buildMailSignature(mail) {
   return [
     String(mail?.sender || '').trim(),
@@ -8238,6 +8257,93 @@ function extractChatMessagesSection(fullText) {
   return section.slice(0, endIdx).trim();
 }
 
+// Формат сообщения (снято живьём 17.09.2026 из лога драйвера):
+//   Hacky [13.08]
+//    Universe, Ceadmil, bloede dh'oine!
+// Строка "Ник [ЧЧ.ММ]", следом строка с текстом. Сообщения идут сверху вниз ОТ НОВЫХ К СТАРЫМ.
+// Обращение к собеседнику оформляется как "Ник, текст" в начале сообщения.
+function parseChatMessages(sectionText) {
+  const lines = String(sectionText || '').split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].trim().match(/^(\S+)\s*\[(\d{1,2})\.(\d{2})\]$/);
+    if (!m) continue;
+    const text = (lines[i + 1] || '').trim();
+    if (!text) continue;
+    out.push({ nick: m[1], hh: Number(m[2]), mm: Number(m[3]), text });
+  }
+  return out;
+}
+
+function chatMessageKey(m) {
+  return `${m.nick}|${m.hh}.${m.mm}|${m.text}`;
+}
+
+// Возраст сообщения в минутах по времени из чата (местное время сервера совпадает с нашим -
+// в шапке страницы тот же час). Если время "из будущего" - считаем, что это вчерашнее.
+function chatMessageAgeMinutes(m, nowDate = new Date()) {
+  const msgMinutes = m.hh * 60 + m.mm;
+  const nowMinutes = nowDate.getHours() * 60 + nowDate.getMinutes();
+  const diff = nowMinutes - msgMinutes;
+  return diff >= 0 ? diff : diff + 24 * 60;
+}
+
+// Паша, 17.09.2026: "ничего не копить, только живое" - сигналы старше этого порога
+// выбрасываются: лучше промолчать, чем ответить на разговор часовой давности.
+const CHAT_TRIGGER_MAX_AGE_MIN = 15;
+// "Оживление после тишины": несколько новых сообщений подряд в комнате, которая молчала.
+const CHAT_QUIET_FOR_REVIVAL_MS = 20 * 60_000;
+const CHAT_REVIVAL_MIN_MESSAGES = 2;
+// "Развлекательный момент" (Паша: "я хочу чтобы ты сам писал, отталкиваясь от характера
+// персонажа") - повод заговорить первым в давно молчащей комнате, но не чаще раза в 3 часа,
+// иначе это уже не характер, а спам.
+const CHAT_INITIATIVE_QUIET_MS = 90 * 60_000;
+const CHAT_INITIATIVE_COOLDOWN_MS = 3 * 60 * 60_000;
+const CHAT_GREETING_RE = /(^|\s)(привет\w*|здаров\w*|здорово|здравствуй\w*|доброго|добрый\s+(?:день|вечер)|доброе\s+утро|салют|хай|ку)(\s|[,!.?)]|$)/i;
+
+// Решает, есть ли повод вмешаться. Возвращает список триггеров; пустой список = молчим.
+function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
+  const { quietForMs = 0, lastInitiativeAt = 0, now = Date.now() } = opts;
+  const triggers = [];
+  const nowDate = new Date(now);
+  const base = { room: roomInfo.room, roomName: roomInfo.name, at: new Date(now).toISOString() };
+
+  // Первое наблюдение комнаты: вся история выглядит "новой" - не считаем её поводом.
+  const firstObservation = prevMsgs.length === 0;
+  const seen = new Set(prevMsgs.map(chatMessageKey));
+  const fresh = firstObservation ? [] : nextMsgs.filter((m) => !seen.has(chatMessageKey(m)));
+
+  const live = fresh.filter((m) => {
+    if (AI_SELF_NICK_RE.test(m.nick)) return false; // своё же сообщение
+    return chatMessageAgeMinutes(m, nowDate) <= CHAT_TRIGGER_MAX_AGE_MIN;
+  });
+
+  for (const m of live) {
+    if (AI_SELF_NICK_RE.test(m.text)) {
+      triggers.push({ ...base, type: 'mention', nick: m.nick, text: m.text,
+        reason: `${m.nick} обратился к AI__` });
+    } else if (CHAT_GREETING_RE.test(m.text)) {
+      triggers.push({ ...base, type: 'greeting', nick: m.nick, text: m.text,
+        reason: `${m.nick} поздоровался` });
+    }
+  }
+
+  if (live.length >= CHAT_REVIVAL_MIN_MESSAGES && quietForMs >= CHAT_QUIET_FOR_REVIVAL_MS
+      && !triggers.some((t) => t.type === 'mention')) {
+    triggers.push({ ...base, type: 'revival',
+      reason: `после тишины пошёл разговор (${live.length} сообщений)`,
+      lines: live.slice(0, 6).map((m) => `${m.nick}: ${m.text}`) });
+  }
+
+  if (fresh.length === 0 && quietForMs >= CHAT_INITIATIVE_QUIET_MS
+      && now - lastInitiativeAt >= CHAT_INITIATIVE_COOLDOWN_MS) {
+    triggers.push({ ...base, type: 'initiative',
+      reason: `комната молчит ${Math.round(quietForMs / 60000)} мин - повод заговорить первым` });
+  }
+
+  return triggers;
+}
+
 // Список комнат чата (найдено живьём 16.09.2026, chat.php лобби) - Паша попросил
 // активность сразу в нескольких, не только на Городской площади.
 // Паша, 17.09.2026: "по чатам - смотри клановый зал, остальные пока не нужно". Оставлена
@@ -8299,11 +8405,29 @@ async function runChatMonitorCycle(chatPage, state) {
       continue;
     }
     const messagesOnly = extractChatMessagesSection(text);
-    if (s.lastText !== undefined && s.lastText !== messagesOnly) {
-      changed.push({ room, name, text });
-      s.lastChangeAt = now;
+    const nextMsgs = parseChatMessages(messagesOnly);
+    const textChanged = s.lastText !== undefined && s.lastText !== messagesOnly;
+
+    // Триггеры считаем ВСЕГДА, а не только при изменении текста: "развлекательный момент"
+    // должен сработать именно в молчащей комнате, где ничего не менялось.
+    const triggers = detectChatTriggers({ room, name }, s.lastMsgs || [], nextMsgs, {
+      quietForMs: s.lastChangeAt ? now - s.lastChangeAt : Infinity,
+      lastInitiativeAt: s.lastInitiativeAt || 0,
+      now,
+    });
+    if (triggers.some((t) => t.type === 'initiative')) {
+      s.lastInitiativeAt = now;
+    }
+    for (const t of triggers) {
+      emitChatTrigger(t);
+    }
+
+    if (textChanged || triggers.length > 0) {
+      changed.push({ room, name, text, triggers });
+      if (textChanged) s.lastChangeAt = now;
     }
     s.lastText = messagesOnly;
+    s.lastMsgs = nextMsgs;
     state[room] = s;
   }
   return changed;
@@ -8997,6 +9121,11 @@ module.exports = {
   postChatMessage,
   getRecentChatMessages,
   extractChatMessagesSection,
+  parseChatMessages,
+  detectChatTriggers,
+  chatMessageAgeMinutes,
+  emitChatTrigger,
+  AI_SELF_NICK,
   sendPrivateLetter,
   CHAT_ROOMS,
   runChatMonitorCycle,
