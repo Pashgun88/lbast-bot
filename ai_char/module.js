@@ -1519,9 +1519,26 @@ async function progressTavernQuest(page, { initialReserveMinutes, questCount } =
 // шаг очереди по нему просто пропускается, и очередь обрывается сама.
 let characterDownDetected = false;
 
+// Последнее ДОСТОВЕРНО прочитанное HP. Нужно потому, что боевые экраны ("В бой!") и часть
+// квестовых сцен шапку со статами не рендерят, и parseStats там возвращает null. Гейты,
+// написанные как `typeof hp === 'number' && hp < max * 0.7`, в этом случае молча пропускают
+// бой: все условия ложны. Именно так 17.09.2026 персонаж ушёл в бой с боевым псом на 63% и
+// в итоге погиб - в логе нет строки "останавливаюсь перед боем", сразу "бой с боевым псом".
+let lastKnownHp = { current: null, max: null, at: 0 };
+
+// Доля HP для гейта перед боем: берём свежее чтение, если оно есть, иначе последнее
+// достоверное. null означает "узнать не удалось" - вызывающий ОБЯЗАН считать это запретом боя.
+function hpFractionForGate(preStats) {
+  const current = typeof preStats?.hpCurrent === 'number' ? preStats.hpCurrent : lastKnownHp.current;
+  const max = typeof preStats?.hpMax === 'number' ? preStats.hpMax : lastKnownHp.max;
+  if (typeof current !== 'number' || typeof max !== 'number' || max <= 0) return null;
+  return current / max;
+}
+
 function noteHpFromPageText(text, label) {
   const stats = parseStats(text);
   if (typeof stats.hpCurrent !== 'number') return characterDownDetected;
+  lastKnownHp = { current: stats.hpCurrent, max: stats.hpMax, at: Date.now() };
   const wasDown = characterDownDetected;
   characterDownDetected = stats.hpCurrent <= 0;
   if (characterDownDetected && !wasDown) {
@@ -6386,13 +6403,11 @@ async function progressAssassinBankerQuest(page) {
     // половины макс. HP. Порог поднят до 70% специально для этого квеста.
     const preText = await getBodyText(page);
     const preStats = parseStats(preText);
-    if (
-      typeof preStats.hpCurrent === 'number' &&
-      typeof preStats.hpMax === 'number' &&
-      preStats.hpMax > 0 &&
-      preStats.hpCurrent < preStats.hpMax * 0.7
-    ) {
-      console.log(`Assassin quest (банкир): HP ${preStats.hpCurrent}/${preStats.hpMax} < 70% -> останавливаюсь перед боем, продолжу позже ("Продолжить квест" сохранит прогресс).`);
+    noteHpFromPageText(preText, 'банкир: перед боем');
+    const guardFrac = hpFractionForGate(preStats);
+    if (guardFrac === null || guardFrac < 0.7) {
+      const shown = guardFrac === null ? 'HP не читается ни на экране, ни по последнему замеру' : `${Math.round(guardFrac * 100)}% < 70%`;
+      console.log(`Assassin quest (банкир): HP-гейт не пройден (${shown}) -> останавливаюсь перед боем, продолжу позже ("Продолжить квест" сохранит прогресс).`);
       return false;
     }
 
@@ -6466,13 +6481,11 @@ async function progressAssassinPaintingQuest(page) {
     if (await existsAnyText(page, ['В бой!', 'в бой!'])) {
       const preText = await getBodyText(page);
       const preStats = parseStats(preText);
-      if (
-        typeof preStats.hpCurrent === 'number' &&
-        typeof preStats.hpMax === 'number' &&
-        preStats.hpMax > 0 &&
-        preStats.hpCurrent < preStats.hpMax * 0.7
-      ) {
-        console.log(`Assassin quest (картина): HP ${preStats.hpCurrent}/${preStats.hpMax} < 70% -> останавливаюсь перед боем с псом, продолжу позже ("Продолжить квест" сохранит прогресс).`);
+      noteHpFromPageText(preText, 'картина: перед боем');
+      const frac = hpFractionForGate(preStats);
+      if (frac === null || frac < 0.7) {
+        const shown = frac === null ? 'HP не читается ни на экране, ни по последнему замеру' : `${Math.round(frac * 100)}% < 70%`;
+        console.log(`Assassin quest (картина): HP-гейт не пройден (${shown}) -> не вступаю в бой с псом, продолжу позже ("Продолжить квест" сохранит прогресс).`);
         return false;
       }
       console.log(`Assassin quest (картина): бой с боевым псом, попытка ${attempt}/${MAX_DOG_FIGHTS}`);
@@ -6508,13 +6521,11 @@ async function progressAssassinMerchantQuest(page) {
   }
 
   const preStats = parseStats(text);
-  if (
-    typeof preStats.hpCurrent === 'number' &&
-    typeof preStats.hpMax === 'number' &&
-    preStats.hpMax > 0 &&
-    preStats.hpCurrent < preStats.hpMax * 0.7
-  ) {
-    console.log(`Assassin quest (торговец): HP ${preStats.hpCurrent}/${preStats.hpMax} < 70% -> откладываю бой с караваном (яд опаснее остальных боёв гильдии), попробую в следующем цикле.`);
+  noteHpFromPageText(text, 'торговец: перед боем');
+  const merchantFrac = hpFractionForGate(preStats);
+  if (merchantFrac === null || merchantFrac < 0.7) {
+    const shown = merchantFrac === null ? 'HP не читается ни на экране, ни по последнему замеру' : `${Math.round(merchantFrac * 100)}% < 70%`;
+    console.log(`Assassin quest (торговец): HP-гейт не пройден (${shown}) -> откладываю бой с караваном (яд опаснее остальных боёв гильдии), попробую в следующем цикле.`);
     return false;
   }
 
