@@ -91,7 +91,21 @@ async function runCycleStep(page, label, fn) {
   // шапка со статами не рендерится и parseStats молча вернул бы null (та же ловушка уже
   // описана ниже, в проверке после runDailyQuests).
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  const afterStats = parseStats(await getBodyText(page));
+  let afterStats = parseStats(await getBodyText(page));
+  // 17.09.2026, живой случай: null/null ПОСЛЕ явного перехода на location.php означает, что
+  // сама локация отдаёт не локацию, а залипшую сцену - шаг увёл персонажа внутрь и не вывел.
+  // Дальше весь остаток цикла работает вслепую: "не найдено open quests menu", меню дейликов
+  // не читается, ферма пропускается, и так до конца цикла. Так отравил цикл шаг
+  // "кораблекрушение". escapeStuckSceneIfAny вызывался ТОЛЬКО в начале цикла, то есть
+  // проверял ровно то место, где проблемы ещё нет. Пробуем выбраться там, где симптом виден.
+  if (typeof afterStats.hpCurrent !== 'number') {
+    const escaped = await escapeStuckSceneIfAny(page).catch(() => false);
+    if (escaped) {
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      afterStats = parseStats(await getBodyText(page));
+      console.log(`${label}: выбрался из залипшей сцены -> HP ${afterStats.hpCurrent}/${afterStats.hpMax}`);
+    }
+  }
   console.log(`HP after ${label}:`, afterStats.hpCurrent, '/', afterStats.hpMax);
   if (typeof afterStats.hpCurrent === 'number' && afterStats.hpCurrent <= 0) {
     await waitForHeal(page);
