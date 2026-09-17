@@ -1565,9 +1565,12 @@ async function progressTavernQuest(page, { initialReserveMinutes, questCount } =
     didAnything = true;
   }
 
-  // Finally: only attempt turn-in after all 3 bot steps are completed.
-  // Otherwise we can incorrectly "report" without having anything to report.
-  if (botsDone) {
+  // Раньше доклад пробовался ТОЛЬКО при botsDone. Паша, 17.09.2026: "ты уже всех убил с
+  // квеста, надо доложить о задании" - ботов добили, но цикл ботов вернул false (на одном из
+  // шагов не пустил HP-гейт), и квест навсегда оставался несданным. Пробовать доклад можно
+  // всегда: ensureTavernQuestTurnedIn сам возвращает false, если ссылки "Доложить о
+  // выполнении" на месте нет, так что "доложить, не убив" тут невозможно.
+  {
     if (!await resetToQuestMenu(page, questCount)) {
       return didAnything;
     }
@@ -4090,7 +4093,12 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   // this is NOT a hostile attack -> don't alert or log it as one, and let the cycle continue
   // normally afterward (farm accounting) instead of ending the cycle like a real attack does.
   const opponentName = getFightOpponentName(afterText);
-  const isRealAttacker = opponentName ? LATIN_NICK_RE.test(opponentName) : true;
+  // Раньше НЕизвестное имя противника считалось настоящим игроком (: true), и бой начинался
+  // без всякой проверки HP. 17.09.2026 именно так был начат бой с корованом на 39% HP: гейт
+  // квеста отказался от боя, но экран остался, а здесь имя не распозналось. Неизвестного
+  // противника считаем НЕ игроком - это почти всегда наш собственный квестовый/фермовый моб,
+  // и такой бой проходит через HP-гейт ниже. Настоящее нападение игрока имя даёт.
+  const isRealAttacker = opponentName ? LATIN_NICK_RE.test(opponentName) : false;
 
   if (!isRealAttacker) {
     console.log(`"В бой" -> противник "${opponentName}" (не игрок) -> это бой с ${FARM_LABEL}, не атака`);
@@ -8942,6 +8950,11 @@ module.exports = {
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runStatueOfGloryTask,
+  ensureTavernQuestTurnedIn,
+  resetToQuestMenu,
+  fightLoop,
+  clickByTexts,
+  fixedPause,
   scheduleNextStatueOfGlory,
   waitForHpAbove,
   clickOnlySensibleOption,
