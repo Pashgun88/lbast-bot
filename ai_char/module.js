@@ -7843,6 +7843,40 @@ async function progressDeadEndBoss(page) {
   return true;
 }
 
+// Меню ежедневных заданий (ссылка "D<N>" на локации -> location.php?r=NNNN&mod=daily).
+// Разобрано живьём 17.09.2026 по скриншоту Паши: строки имеют вид "1/4 Обыскать дом мясника
+// в Мисттоуне", то есть игра САМА показывает прогресс. Это единственный надёжный источник:
+// свои булевы флаги в state.json меня подвели - я пометил цель выполненной после одного
+// прохода и объявил четверг закрытым, когда на деле было 1/4.
+// r= меняется при каждой загрузке, поэтому href берём со свежей страницы, а не хардкодим.
+async function readDailyTasksProgress(page) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const href = await page
+    .evaluate(() => {
+      const a = Array.from(document.querySelectorAll('a'))
+        .find((x) => (x.getAttribute('href') || '').includes('mod=daily'));
+      return a ? a.getAttribute('href') : null;
+    })
+    .catch(() => null);
+
+  if (!href) {
+    console.log('Дейлики: ссылка на меню ежедневных заданий не найдена.');
+    return [];
+  }
+
+  await page.goto(`http://lbast.ru/${href.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 400, 800);
+
+  const text = await getBodyText(page);
+  const tasks = [];
+  for (const line of text.split('\n')) {
+    const m = line.trim().match(/^(\d+)\s*\/\s*(\d+)\s+(.+)$/);
+    if (!m) continue;
+    tasks.push({ done: Number(m[1]), total: Number(m[2]), title: m[3].trim() });
+  }
+  return tasks;
+}
+
 // Квестовая сцена может оставить персонажа "внутри себя": location.php отдаёт не локацию, а
 // экран сцены. Живой случай 17.09.2026 - Чулан дома могильщика ("Убежать" / "Атаковать").
 // Шапки со статами там нет и ссылки Q нет, поэтому сыплется ВЕСЬ цикл: parseStats даёт
@@ -7877,51 +7911,54 @@ async function escapeStuckSceneIfAny(page) {
   return false;
 }
 
+// Сопоставление строк меню дейликов с маршрутами. Названия в меню (снято со скриншота Паши
+// 17.09.2026): "Обыскать дом могильщика в Мисттоуне", "Обыскать дом мясника в Мисттоуне",
+// "Обыскать дом в тупике в Мисттоуне".
+// Для могильщика и тупика берём БЕЗБОЕВЫЕ ветки: они не тратят HP и не упираются в гейт, а
+// засчитываются так же. У мясника безбоевого пути нет вовсе - за жёлтой дверью только
+// "Атаковать", - поэтому там маршрут с боем и гейтом.
+const THURSDAY_TASK_ROUTES = [
+  { re: /дом\s+могильщика/i, label: 'Дом могильщика', fn: (p) => progressGravediggerHouse(p) },
+  { re: /дом\s+мясника/i, label: 'Дом мясника', fn: (p) => progressButcherHouse(p) },
+  { re: /дом\s+в\s+тупике/i, label: 'Дом в тупике', fn: (p) => progressDeadEndHouse(p) },
+];
+
 async function runThursdayDailiesIfAvailable(page) {
   if (getWeekday() !== THURSDAY_WEEKDAY) {
     return false; // сегодня не четверг - этих дейликов просто нет
   }
 
-  const today = getDayKeyNow();
-  if (thursdayDailiesDayKey !== today) {
-    thursdayDailiesDayKey = today;
-    thursdayDailiesDone = {
-      gravedigger: false, butcher: false, deadend: false,
-      gravediggerBoss: false, deadendBoss: false,
-    };
-    persistDailyQuestState();
+  // ИСТОЧНИК ИСТИНЫ - САМА ИГРА, а не наши флаги. Паша, 17.09.2026, прислал скриншот меню
+  // дейликов: "1/2 Собрать два эликсира...", "1/4 Обыскать дом мясника", "2/4 Обыскать дом в
+  // тупике". Эти задания МНОГОКРАТНЫЕ, а прежний код помечал цель выполненной после одного
+  // прохода - и я на этом основании объявил четверг закрытым при 1/4. Поля
+  // thursdayDailiesDone в state.json больше не участвуют в решениях (оставлены как история).
+  const tasks = await readDailyTasksProgress(page);
+  if (!tasks.length) {
+    console.log('Четверг: меню ежедневных заданий не прочиталось - пропускаю в этом цикле.');
+    return false;
   }
 
-  // Безбоевые цели идут первыми, боссы после: если HP не хватит, гейт боссов заставит ждать,
-  // и лучше к этому моменту уже забрать всё, что берётся без боя.
-  const TASKS = [
-    ['gravedigger', 'Дом могильщика', progressGravediggerHouse],
-    ['deadend', 'Дом в тупике', progressDeadEndHouse],
-    ['butcher', 'Дом мясника (бой)', progressButcherHouse],
-    ['gravediggerBoss', 'Могильщик: призрак тёщи (бой)', progressGravediggerBoss],
-    ['deadendBoss', 'Тупик: призрачная ведьма (бой)', progressDeadEndBoss],
-  ];
+  console.log(`Дейлики дня: ${tasks.map((t) => `${t.done}/${t.total} ${t.title}`).join(' | ')}`);
 
+  const pending = tasks.filter((t) => t.done < t.total);
+  if (!pending.length) {
+    console.log('Четверг: все ежедневные задания закрыты.');
+    return false;
+  }
+
+  // По ОДНОМУ заходу на цель за цикл. Четыре подряд надолго заняли бы драйвер, а Паша просил
+  // не простаивать: "делай пока резервы есть чтобы не простаивать зря". Остаток доберём в
+  // следующих циклах - счётчик игры сам покажет, когда цель закрыта.
   let didAnything = false;
-  for (const [key, label, fn] of TASKS) {
-    if (thursdayDailiesDone[key]) continue;
-    const ok = await runNonQQuestSafe(page, `Четверг: ${label}`, () => fn(page));
+  for (const t of pending) {
+    const route = THURSDAY_TASK_ROUTES.find((r) => r.re.test(t.title));
+    if (!route) continue; // например "Собрать два эликсира с дерева жизни" - это квест Дерево жизни
 
-    // 'needs_fight' - маршрут упирается в босса, а бои тут пока запрещены. Записываем это
-    // прямо в флаг выполнения (строкой, а не true - в state.json видно причину), чтобы не
-    // гонять весь маршрут заново каждые две минуты. Снимется само со сменой дня.
-    if (ok === 'needs_fight') {
-      thursdayDailiesDone[key] = 'needs_fight';
-      persistDailyQuestState();
-      console.log(`Четверг: "${label}" упирается в бой -> пропускаю на сегодня.`);
-      continue;
-    }
-
+    const ok = await runNonQQuestSafe(page, `Четверг: ${route.label} (${t.done}/${t.total})`, () => route.fn(page));
     if (ok) {
-      thursdayDailiesDone[key] = true;
-      persistDailyQuestState();
       didAnything = true;
-      console.log(`Четверг: "${label}" выполнено.`);
+      console.log(`Четверг: заход в "${route.label}" выполнен (было ${t.done}/${t.total}).`);
     }
   }
   return didAnything;
@@ -9540,6 +9577,7 @@ module.exports = {
   runThursdayDailiesIfAvailable,
   hasPendingFightQuests,
   escapeStuckSceneIfAny,
+  readDailyTasksProgress,
   getPlayerRaceAndFaction,
   postChatMessage,
   getRecentChatMessages,
