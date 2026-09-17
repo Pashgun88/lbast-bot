@@ -7594,12 +7594,24 @@ async function goToMisstoneMainStreet(page) {
     waitAfterClickMs: 7000,
     retries: 3,
   });
-  if (await existsAnyText(page, ['В пути', 'в пути'])) {
-    await clickByTexts(page, ['В пути еще', 'В пути ещё', 'В пути', 'в пути'], 'В пути');
-    await pause(page, 800, 1600);
+  // Поездка длится дольше одного клика: живьём 17.09.2026 понадобилось ПЯТЬ нажатий
+  // "В пути еще". Одного if-а не хватало, и следующий шаг не находился.
+  for (let i = 0; i < 15; i++) {
+    const t = await getBodyText(page);
+    if (/Идти в город|Идти на запад/i.test(t)) break;
+    if (/В пути/i.test(t)) {
+      await clickByTexts(page, ['В пути еще', 'В пути ещё', 'В пути', 'в пути'], `В пути (${i + 1})`).catch(() => {});
+    }
+    await pause(page, 1600, 2200);
   }
+
   await performStep(page, { stepName: 'Идти в город', currentTexts: ['Идти в город'], retries: 3 });
-  await performStep(page, { stepName: 'Идти на главную улицу', currentTexts: ['Идти на главную улицу'], retries: 3 });
+
+  // ВАЖНО: ссылки "Идти на главную улицу" в игре НЕ СУЩЕСТВУЕТ - в гайде это было описание,
+  // а не кнопка. Разведано живьём 17.09.2026: вход в город ведёт на окраину (только
+  // запад/восток), и ОДИН шаг на запад - это "Мисттоун. Центральная улица", где и стоят оба
+  // дома (мясника и могильщика). Восток уводит из города на "Дорогу" к замку Альянса.
+  await performStep(page, { stepName: 'Идти на запад (к домам)', currentTexts: ['Идти на запад'], retries: 3 });
 }
 
 // Дом могильщика, безбоевая ветка: ... -> Идти в дом могильщика -> Идти в правую дверь ->
@@ -7641,10 +7653,13 @@ async function progressButcherHouse(page) {
 // Осмотреть кучу тряпья.
 async function progressDeadEndHouse(page) {
   await goToMisstoneMainStreet(page);
+  // От Центральной улицы (куда привёл пролог) до переулка - ещё ДВА шага на запад.
+  // Разведано живьём: запад x2 - Главная улица с разломом, запад x3 - Главная улица, где
+  // и появляется "Свернуть в переулок". Гайд считал шаги именно от Центральной улицы.
   for (let i = 1; i <= 2; i++) {
     await performStep(page, {
-      stepName: `Запад (${i}/2)`,
-      currentTexts: ['Запад', 'Идти на запад'],
+      stepName: `Идти на запад (${i}/2, к переулку)`,
+      currentTexts: ['Идти на запад'],
       skipIfNextVisible: false,
       retries: 3,
     });
