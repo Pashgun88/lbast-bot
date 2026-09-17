@@ -6958,7 +6958,21 @@ async function runAssassinGuildQuestsIfAvailable(page) {
   if (!(await resetToQuestMenu(page))) {
     return false;
   }
+  // Пауза ОБЯЗАТЕЛЬНА: resetToQuestMenu делает паузу ПЕРЕД открытием меню, а не после, и
+  // getBodyText успевал прочитать ещё не отрисованную страницу.
+  await pause(page, 700, 1300);
   const qNames = parseQuestNamesFromQMenuText(await getBodyText(page));
+
+  // 17.09.2026, моя же ошибка в первой версии этой правки: пустой список я приравнял к
+  // "заданий в меню нет" и пометил ВСЕ ТРИ выполненными на день - хотя runDailyQuests в том
+  // же цикле прекрасно видел и банкира, и торговца. Пустое/непрочитанное меню - это третий
+  // исход ("не смог убедиться"), и решать по нему нельзя ни в одну сторону. Ровно то правило,
+  // которое нарушала прежняя версия с "не нашёл цель -> значит сделано".
+  if (qNames.length === 0) {
+    console.log('Гильдия асассинов: меню Q не прочиталось (пустой список) -> ничего не решаю, вернусь в следующем цикле.');
+    return false;
+  }
+
   const guildNames = qNames.filter((n) => /гильди\w*\s+асассинов/i.test(n));
 
   for (const quest of ASSASSIN_GUILD_QUESTS) {
