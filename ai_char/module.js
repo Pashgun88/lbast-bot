@@ -7553,7 +7553,20 @@ const FISH_RESTAURANT_REWARD_HANDLERS = {
   1: progressFishRestaurantReward1,
 };
 
+// Паша, 17.09.2026: "Рыбный ресторан настроим как закончишь с дейликами". До тех пор квест
+// выключен, и это не косметика: его маршрут упирается в ОБЯЗАТЕЛЬНУЮ засаду с пятнистым
+// аллигатором. Защита виньеток правильно отказывается жать "В бой!", но игра всё равно
+// оставляет бой висеть, а незавершённый бой блокирует игру ЦЕЛИКОМ - 17.09.2026 из-за этого
+// подряд упали все три боссовых маршрута четверга (location.php отдавал голый "В бой!").
+// Включать только вместе с явной обработкой засады: questFightHpGate + fightLoop.
+const FISH_RESTAURANT_ENABLED = false;
+
 async function runFishRestaurantQuestIfAvailable(page) {
+  if (!FISH_RESTAURANT_ENABLED) {
+    console.log('Fish Restaurant: выключен до настройки засады с аллигатором (FISH_RESTAURANT_ENABLED = false).');
+    return false;
+  }
+
   const today = getDayKeyNow();
   if (fishRestaurantDayKey !== today) {
     fishRestaurantDayKey = today;
