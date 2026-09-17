@@ -71,17 +71,22 @@ async function runCycleStep(page, label, fn) {
     console.log(`${label} error:`, e.message);
     return false;
   });
-  if (!didAnything) {
-    return { didAnything: false, ko: false };
-  }
-  const afterText = await getBodyText(page);
-  const afterStats = parseStats(afterText);
+  // 17.09.2026, живой инцидент: HP проверялось ТОЛЬКО когда шаг вернул true. Гаунтлет
+  // асассинов увёл HP в минус и вернул false -> проверка не выполнилась, и драйвер ещё
+  // несколько минут водил мёртвого персонажа по локациям, пока игра отвечала
+  // "Восстановите здоровье". Урон возможен и в шаге, который "ничего не сделал"
+  // (входящая атака, проигранный бой внутри гаунтлета), поэтому HP читаем ВСЕГДА.
+  // Явно возвращаемся на location.php: шаг мог оставить страницу на доске квестов, где
+  // шапка со статами не рендерится и parseStats молча вернул бы null (та же ловушка уже
+  // описана ниже, в проверке после runDailyQuests).
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const afterStats = parseStats(await getBodyText(page));
   console.log(`HP after ${label}:`, afterStats.hpCurrent, '/', afterStats.hpMax);
   if (typeof afterStats.hpCurrent === 'number' && afterStats.hpCurrent <= 0) {
     await waitForHeal(page);
-    return { didAnything: true, ko: true };
+    return { didAnything: Boolean(didAnything), ko: true };
   }
-  return { didAnything: true, ko: false };
+  return { didAnything: Boolean(didAnything), ko: false };
 }
 
 async function waitForHeal(page) {

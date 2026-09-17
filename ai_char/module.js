@@ -1510,7 +1510,31 @@ async function progressTavernQuest(page, { initialReserveMinutes, questCount } =
   return didAnything;
 }
 
+// 17.09.2026, живой инцидент: внутри ОДНОГО вызова runDailyQuests очередь квестов идёт без
+// единой проверки HP - драйвер смотрит на него только после всей очереди. Персонаж умер на
+// гаунтлете асассинов, и следующие несколько минут драйвер водил труп по локациям и перебирал
+// шаги Харчевни, пока игра отвечала "Восстановите здоровье". Навигировать на location.php перед
+// каждым шагом нельзя (квесты стартуют с открытого Q-меню, это сломает им контекст), поэтому
+// читаем HP из текста страницы, на которой шаг и так закончился, и запоминаем флагом: следующий
+// шаг очереди по нему просто пропускается, и очередь обрывается сама.
+let characterDownDetected = false;
+
+function noteHpFromPageText(text, label) {
+  const stats = parseStats(text);
+  if (typeof stats.hpCurrent !== 'number') return characterDownDetected;
+  const wasDown = characterDownDetected;
+  characterDownDetected = stats.hpCurrent <= 0;
+  if (characterDownDetected && !wasDown) {
+    console.log(`ВНИМАНИЕ: после "${label}" HP=${stats.hpCurrent}/${stats.hpMax} - персонаж выбыл из строя, обрываю очередь квестов.`);
+  }
+  return characterDownDetected;
+}
+
 async function runQuestStepSafe(page, label, fn) {
+  if (characterDownDetected) {
+    console.log(`Quest step skip (персонаж выбыл из строя): ${label}`);
+    return false;
+  }
   try {
     const ok = await fn();
     if (ok) {
@@ -1526,10 +1550,15 @@ async function runQuestStepSafe(page, label, fn) {
     } else {
       console.log(`Quest step skip: ${label}`);
     }
+    noteHpFromPageText(await getBodyText(page), label);
     return ok;
   } catch (e) {
     console.log(`Quest step error (${label}): ${e.message}`);
+    // Текст ошибки шага содержит страницу целиком - HP там обычно видно, и именно так мы
+    // ловим смерть, случившуюся внутри провалившегося шага.
+    noteHpFromPageText(e.message, label);
     await recoverToCity(page, `${label}: ${e.message}`);
+    noteHpFromPageText(await getBodyText(page), label);
 
     if (label === 'Харчевня') {
       tavernFailStreak++;
@@ -2134,11 +2163,19 @@ async function tryClaimFishEyeReward(page) {
 }
 
 async function runNonQQuestSafe(page, label, fn) {
+  if (characterDownDetected) {
+    console.log(`${label}: пропускаю, персонаж выбыл из строя.`);
+    return false;
+  }
   try {
-    return await fn();
+    const result = await fn();
+    noteHpFromPageText(await getBodyText(page), label);
+    return result;
   } catch (e) {
     console.log(`${label} error: ${e.message}`);
+    noteHpFromPageText(e.message, label);
     await recoverToCity(page, `${label}: ${e.message}`);
+    noteHpFromPageText(await getBodyText(page), label);
     return null; // indicates recovery happened
   }
 }
