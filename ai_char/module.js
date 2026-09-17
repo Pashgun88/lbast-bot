@@ -6745,9 +6745,13 @@ async function progressAssassinBankerQuest(page) {
   // Похоже, каждое задание гильдии выполнимо не чаще раза в день: если цель на клетке
   // не появилась даже после честной попытки принять и снять чужой блокер, задание уже
   // сделано сегодня — это не ошибка, а нормальный дневной лимит.
+  // 17.09.2026: раньше здесь стояло `return true` с рассуждением "не нашёл цель - похоже,
+  // уже сделано". Это и есть источник ложных флагов: тот же самый отрицательный сигнал даёт
+  // гибель в гаунтлете, неудачная поездка на коне и чужой блокер в анкете. "Не смог
+  // убедиться" - не "сделано". О выполненности судит меню Q в runAssassinGuildQuestsIfAvailable.
   if (!taken) {
-    console.log('Assassin quest (банкир): цель "Идти к дому" не появилась — похоже, на сегодня уже сделано.');
-    return true;
+    console.log('Assassin quest (банкир): цель "Идти к дому" не появилась - не берусь судить, сделано ли; решает меню Q.');
+    return false;
   }
 
   // 15.09.2026, живой баг: "Идти к дому" может успешно появиться и сработать (квест ещё
@@ -6835,9 +6839,10 @@ async function progressAssassinBankerQuest(page) {
 
 async function progressAssassinPaintingQuest(page) {
   const taken = await ensureAssassinQuestTaken(page, 2, ['Прокрасться в дом', 'прокрасться в дом']);
+  // См. тот же разбор у банкира: "не нашёл цель" не означает "сделано".
   if (!taken) {
-    console.log('Assassin quest (картина): цель "Прокрасться в дом" не появилась — похоже, на сегодня уже сделано.');
-    return true;
+    console.log('Assassin quest (картина): цель "Прокрасться в дом" не появилась - не берусь судить, сделано ли; решает меню Q.');
+    return false;
   }
   if (await existsAnyText(page, ['Вы уже выполняли это задание сегодня'])) {
     console.log('Assassin quest (картина): "Вы уже выполняли это задание сегодня" — считаю сделанным.');
@@ -6930,33 +6935,66 @@ async function progressAssassinMerchantQuest(page) {
 
 // Дневной диспетчер: гоняется из runDailyQuests/driver.js каждый цикл, сам решает, что ещё
 // не сделано сегодня, и делает ровно один шаг за вызов (не спамит все три подряд без пауз).
+// 17.09.2026, Паша: "почему не выполняются квесты асасинов?".
+// Разбор: banker и painting стояли done=true в state.json, поэтому обе ветки пропускались
+// молча - но игра ПРИ ЭТОМ держала "Гильдия асассинов: Убить банкира" в меню Q, то есть квест
+// не сдан. Флаг встал ложно: progressAssassin*Quest возвращали true, когда цель на клетке не
+// появилась ("не нашёл -> похоже, уже сделано"). Тот же отрицательный сигнал даёт гибель в
+// гаунтлете (а персонаж сегодня там и погиб), неудачная поездка и чужой блокер. То есть
+// "не смог убедиться" записывалось как "сделано", и на весь день.
+// Что признак достоверен, видно на сверке: картина сегодня действительно сдана - её в Q нет,
+// и флаг совпал; банкир в Q есть - флаг врал. Значит источник истины - меню Q, а не флаги.
+// Это тот же вывод, что и по четверговым дейликам: судить о выполненности по своим флагам,
+// когда игра показывает своё состояние, нельзя.
+const ASSASSIN_GUILD_QUESTS = [
+  { key: 'banker', re: /банкир/i, label: 'Гильдия асассинов: банкир', run: (p) => progressAssassinBankerQuest(p) },
+  { key: 'painting', re: /картин/i, label: 'Гильдия асассинов: картина', run: (p) => progressAssassinPaintingQuest(p) },
+  { key: 'merchant', re: /торгов/i, label: 'Гильдия асассинов: торговец', run: (p) => progressAssassinMerchantQuest(p) },
+];
+
 async function runAssassinGuildQuestsIfAvailable(page) {
   resetAssassinGuildDayIfNeeded();
 
-  if (!assassinGuildDoneToday.banker) {
-    const ok = await runQuestStepSafe(page, 'Гильдия асассинов: банкир', () => progressAssassinBankerQuest(page));
-    if (ok) {
-      assassinGuildDoneToday.banker = true;
-      persistDailyQuestState();
-      return true;
-    }
+  if (!(await resetToQuestMenu(page))) {
+    return false;
   }
+  const qNames = parseQuestNamesFromQMenuText(await getBodyText(page));
+  const guildNames = qNames.filter((n) => /гильди\w*\s+асассинов/i.test(n));
 
-  if (!assassinGuildDoneToday.painting) {
-    const ok = await runQuestStepSafe(page, 'Гильдия асассинов: картина', () => progressAssassinPaintingQuest(page));
-    if (ok) {
-      assassinGuildDoneToday.painting = true;
-      persistDailyQuestState();
-      return true;
+  for (const quest of ASSASSIN_GUILD_QUESTS) {
+    const inMenu = guildNames.some((n) => quest.re.test(n));
+
+    if (!inMenu) {
+      // Игра больше не предлагает это задание - значит на сегодня оно закрыто. Это
+      // ЕДИНСТВЕННЫЙ признак, по которому мы имеем право пометить квест сделанным.
+      if (!assassinGuildDoneToday[quest.key]) {
+        assassinGuildDoneToday[quest.key] = true;
+        persistDailyQuestState();
+        console.log(`${quest.label}: в меню Q его нет -> на сегодня закрыт.`);
+      }
+      continue;
     }
-  }
 
-  if (!assassinGuildDoneToday.merchant && assassinMerchantAttemptsToday < ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY) {
-    assassinMerchantAttemptsToday += 1;
-    const ok = await runQuestStepSafe(page, 'Гильдия асассинов: торговец', () => progressAssassinMerchantQuest(page));
-    persistDailyQuestState();
+    // Квест висит в меню - значит он НЕ сдан, что бы ни говорил наш флаг. Чиним флаг.
+    if (assassinGuildDoneToday[quest.key]) {
+      console.log(`${quest.label}: флаг говорил "сделано", но квест висит в Q -> флаг был ложным, пробую заново.`);
+      assassinGuildDoneToday[quest.key] = false;
+      persistDailyQuestState();
+    }
+
+    // У торговца остаётся лимит попыток: он может просто не стоять сейчас на клетке, и
+    // бесконечно ездить к нему бессмысленно. Это ограничение по МИРУ, а не по выполненности.
+    if (quest.key === 'merchant') {
+      if (assassinMerchantAttemptsToday >= ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY) {
+        console.log(`${quest.label}: дневной лимит попыток исчерпан (${assassinMerchantAttemptsToday}/${ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY}) - цель могла не появиться на клетке.`);
+        continue;
+      }
+      assassinMerchantAttemptsToday += 1;
+      persistDailyQuestState();
+    }
+
+    const ok = await runQuestStepSafe(page, quest.label, () => quest.run(page));
     if (ok) {
-      assassinGuildDoneToday.merchant = true;
       return true;
     }
   }
