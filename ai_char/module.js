@@ -1781,6 +1781,31 @@ async function questFightHpGate(
   return true;
 }
 
+// Гейт "до выхода из дома". questFightHpGate отказывается от боя, уже СТОЯ на боевом экране,
+// и потому обязан уметь с него уйти. Но бывают места, где ссылки выхода нет вовсе: живой
+// случай 17.09.2026 - арена "Рыбьего глаза". Гейт честно отказался от боя на 52%, ни один из
+// восьми вариантов выхода ("Вернуться"/"Уйти"/"Убежать"/...) на экране не нашёлся, бой остался
+// висеть, и location.php четыре цикла подряд отдавал голый "В бой!" -> arena_go.php: ни статов,
+// ни Q-меню, ни дейликов. Драйвер при этом не падает - он послушно ждёт по 16 минут.
+// Вывод общий: перебирать слова выхода бесполезно, отказываться надо ТАМ, ГДЕ ЕЩЁ МОЖНО УЙТИ,
+// то есть до входа. Сюда же относится любой маршрут в один конец.
+async function preTripHpGate(page, label, floor = QUEST_FIGHT_HP_FLOOR) {
+  await page
+    .goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    .catch(() => {});
+  const text = await getBodyText(page).catch(() => '');
+  noteHpFromPageText(text, `${label}: перед выходом`);
+  const frac = hpFractionForGate(parseStats(text));
+  if (frac === null || frac < floor) {
+    const shown = frac === null
+      ? 'HP не читается ни на экране, ни по последнему замеру'
+      : `${Math.round(frac * 100)}% < ${Math.round(floor * 100)}%`;
+    console.log(`${label}: HP-гейт не пройден (${shown}) -> никуда не иду, вернусь в следующем цикле.`);
+    return false;
+  }
+  return true;
+}
+
 async function runQuestStepSafe(page, label, fn) {
   if (characterDownDetected) {
     console.log(`Quest step skip (персонаж выбыл из строя): ${label}`);
@@ -2332,6 +2357,10 @@ async function runFishEyeRouteToArena(page) {
 
 async function runFishEyeFight(page) {
   console.log('Fish Eye quest: fight start');
+
+  // HP проверяем ДО спуска на арену, а не на ней самой: с арены уйти нельзя (см. preTripHpGate).
+  // Гейт ниже, на самой арене, оставлен - он ловит случай, когда HP просело уже по дороге.
+  if (!(await preTripHpGate(page, 'Рыбий глаз: до спуска на арену'))) return false;
 
   await runFishEyeRouteToArena(page);
 
