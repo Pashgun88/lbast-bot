@@ -1678,6 +1678,13 @@ async function runDailyQuests(page, stats) {
   // always fail with "hp=n/a". Set it here from the stats we were already given.
   lastCycleStats = stats;
 
+  // Сброс флага "персонаж выбыл из строя" по СВЕЖИМ статам начала цикла (драйвер читает их сам
+  // и передаёт сюда) - иначе флаг залипнет навсегда: при взведённом флаге runQuestStepSafe и
+  // runNonQQuestSafe выходят раньше, чем успевают перечитать HP, и сами его не снимут.
+  if (typeof stats?.hpCurrent === 'number') {
+    characterDownDetected = stats.hpCurrent <= 0;
+  }
+
   checkExclusiveQuestTimeouts();
 
   const reserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
