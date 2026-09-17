@@ -787,7 +787,9 @@ async function handleUnreadMailIfAny(page) {
     return false;
   }
 
-  console.log('??????? ????? ??????: ' + mailCount);
+  // 17.09.2026: все сообщения этой функции были побиты кодировкой ("??????? ????? ??????") -
+  // то есть даже сработав, она докладывала о письме нечитаемо, и в логе это выглядело как шум.
+  console.log('Непрочитанных писем: ' + mailCount);
 
   let openedMailbox = false;
   const handledSignatures = new Set();
@@ -797,7 +799,7 @@ async function handleUnreadMailIfAny(page) {
     openedMailbox = await openMailbox(page);
 
     if (!openedMailbox) {
-      console.log('?? ??????? ??????? ?????? ??????');
+      console.log('Почта: не удалось открыть ящик.');
       return false;
     }
 
@@ -805,7 +807,7 @@ async function handleUnreadMailIfAny(page) {
       if (i > 0) {
         openedMailbox = await openMailbox(page);
         if (!openedMailbox) {
-          console.log('?? ??????? ?????? ??????? ?????? ??????');
+          console.log('Почта: не удалось открыть ящик повторно.');
           break;
         }
       }
@@ -813,7 +815,7 @@ async function handleUnreadMailIfAny(page) {
       const openedThread = await clickMailThread(page, true);
       if (!openedThread) {
         if (i === 0) {
-          console.log('?? ??????? ??????? ?? ???? ????????????? ??????');
+          console.log('Почта: не удалось открыть ни одну непрочитанную переписку.');
           return false;
         }
         break;
@@ -821,13 +823,13 @@ async function handleUnreadMailIfAny(page) {
 
       const mail = await readCurrentMail(page);
       if (!mail) {
-        console.log('?? ??????? ????????? ??????');
+        console.log('Почта: не удалось прочитать письмо.');
         break;
       }
 
       const signature = buildMailSignature(mail);
       if (handledSignatures.has(signature)) {
-        console.log('????????? ?? ?? ?????? ????????, ???????????? ?????? ?????');
+        console.log('Почта: то же самое письмо открылось повторно - прекращаю обход.');
         break;
       }
 
@@ -835,7 +837,7 @@ async function handleUnreadMailIfAny(page) {
       handledAny = true;
 
       if (signature === lastHandledMailSignature) {
-        console.log('??? ?????? ??? ????????? ? Telegram, ???????? ?? ???');
+        console.log('Почта: это письмо уже отправляли в Telegram, пропускаю.');
       } else {
         lastHandledMailSignature = signature;
 
@@ -844,13 +846,22 @@ async function handleUnreadMailIfAny(page) {
           body: mail.body,
         });
 
-        console.log('?????? ' + (i + 1) + '/' + mailCount + ' ?????????? ? Telegram ????? manager_bot.js');
+        // Паша, 17.09.2026: "нужно автоответы сделать по типу как в чате, считай письмо это
+        // тригер". MAIL_MESSAGE - машинный маркер для manager_bot.js, в логе он выглядит как
+        // строка base64, и глазами его не заметить. Громкий блок печатается ровно в том же
+        // формате, что чат-триггеры (>>> ПОРА ОТВЕТИТЬ), чтобы письмо требовало ответа так же
+        // заметно, как обращение в клановом зале.
+        console.log(`>>> ПОРА ОТВЕТИТЬ [letter] "${mail.sender || 'неизвестный'}": письмо ${i + 1}/${mailCount}`);
+        for (const line of String(mail.body || '').split('\n')) {
+          if (line.trim()) console.log(`    ${line.trim()}`);
+        }
+        console.log('');
       }
     }
 
     return handledAny;
   } catch (e) {
-    console.log('?????? ????????? ??????: ' + e.message);
+    console.log('Почта: ошибка обработки письма: ' + e.message);
     return false;
   } finally {
     if (openedMailbox) {
