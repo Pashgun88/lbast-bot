@@ -36,7 +36,13 @@ async function readHpFromAnketa(page) {
   while (hp.current < need && Date.now() < deadline) {
     console.log(`Жду восстановления: ${hp.current}/${hp.max}, нужно ${need}`);
     await fixedPause(page, 60_000);
-    const next = await readHpFromAnketa(page);
+    // 17.09.2026: разовый сетевой обрыв (page.goto: Timeout 60000ms) внутри цикла ожидания
+    // ронял ВЕСЬ скрипт необработанным отклонением - персонаж так и оставался в залипшем бою.
+    // DNS от VPN шатается, такие обрывы здесь норма: ждём дальше, а не падаем.
+    const next = await readHpFromAnketa(page).catch((e) => {
+      console.log("Не смог прочитать анкету (" + e.message + ") - подожду ещё минуту и повторю.");
+      return null;
+    });
     if (next) hp = next;
   }
   if (hp.current < need) {
@@ -56,4 +62,4 @@ async function readHpFromAnketa(page) {
   console.log('Экран:', (await getBodyText(page)).slice(0, 300));
 
   await ctx.close();
-})();
+})().catch((e) => { console.error("unstick_fight упал:", e.message); process.exit(1); });
