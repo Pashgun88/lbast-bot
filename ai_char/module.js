@@ -6973,7 +6973,14 @@ async function runAssassinGuildQuestsIfAvailable(page) {
     return false;
   }
 
-  const guildNames = qNames.filter((n) => /гильди\w*\s+асассинов/i.test(n));
+  // ВНИМАНИЕ: классы w и b в регулярках JavaScript - ТОЛЬКО ASCII, кириллицу они не
+  // покрывают. Первая версия этого фильтра требовала после фрагмента гильди пробел, а в
+  // слове Гильдия там стоит я - и фильтр не совпадал НИКОГДА. Замер: проверка класса w на
+  // букве я даёт false, фильтр дал 0 совпадений из 8 реальных имён меню Q.
+  // Последствие оказалось хуже исходного бага: guildNames выходил пустым, все три задания
+  // объявлялись отсутствующими в Q и помечались выполненными на день - дважды подряд,
+  // затирая ручную починку флагов в state.json. Кириллицу в регулярках описывать явно.
+  const guildNames = qNames.filter((n) => /асассин/i.test(n));
 
   for (const quest of ASSASSIN_GUILD_QUESTS) {
     const inMenu = guildNames.some((n) => quest.re.test(n));
