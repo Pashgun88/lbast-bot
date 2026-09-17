@@ -1411,6 +1411,11 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
       continue;
     }
 
+    // Гейт перед боем с ботом. Именно здесь 17.09.2026 драйвер водил уже мёртвого персонажа по
+    // трём целям: проверки не было вообще. Страница NPC шапку со статами обычно рендерит, так
+    // что чтение честное; если нет - hpFractionForGate возьмёт последний замер, а null запретит.
+    if (!(await questFightHpGate(page, `Харчевня (бой ${kills + 1}/${BOT_LIMIT})`))) return false;
+
     await performStep(page, {
       stepName: '\u0412 \u0431\u043e\u0439!',
       currentTexts: [
@@ -1433,6 +1438,8 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
 
     const text = await getBodyText(page);
     const stats = parseStats(text);
+    // Без этого гейт второго и третьего боя опирался бы на замер ДО первого боя.
+    noteHpFromPageText(text, `Харчевня (после боя ${kills}/${BOT_LIMIT})`);
     if (stats.cooldown !== null) {
       reserveMinutes = stats.cooldown;
     } else if (Number.isFinite(reserveMinutes)) {
@@ -1545,6 +1552,30 @@ function noteHpFromPageText(text, label) {
     console.log(`ВНИМАНИЕ: после "${label}" HP=${stats.hpCurrent}/${stats.hpMax} - персонаж выбыл из строя, обрываю очередь квестов.`);
   }
   return characterDownDetected;
+}
+
+// Общий порог HP для ЛЮБОГО квестового боя. 0.7, а не 0.4: 15.09.2026 один охранник банкира
+// снял ~225 HP за бой даже с эликсиром, 17.09.2026 персонаж погиб на Харчевне/Демоне озера,
+// зайдя в бой без всякой проверки. Дешевле пропустить квест до следующего цикла, чем лечиться.
+const QUEST_FIGHT_HP_FLOOR = 0.7;
+
+// Проверка перед боем. ВАЖНО: боевые экраны ("В бой!") шапку со статами не рендерят, поэтому
+// здесь нельзя писать `typeof hp === 'number' && hp < max*0.7` - на null все условия ложны и
+// гейт молча пропускает бой. hpFractionForGate падает на последнее достоверное чтение, а если
+// и его нет - возвращает null, и это ЗАПРЕТ боя, а не разрешение.
+async function questFightHpGate(page, label, floor = QUEST_FIGHT_HP_FLOOR) {
+  const text = await getBodyText(page).catch(() => '');
+  const stats = parseStats(text);
+  noteHpFromPageText(text, `${label}: перед боем`);
+  const frac = hpFractionForGate(stats);
+  if (frac === null || frac < floor) {
+    const shown = frac === null
+      ? 'HP не читается ни на экране, ни по последнему замеру'
+      : `${Math.round(frac * 100)}% < ${Math.round(floor * 100)}%`;
+    console.log(`${label}: HP-гейт не пройден (${shown}) -> в бой не иду, вернусь в следующем цикле.`);
+    return false;
+  }
+  return true;
 }
 
 async function runQuestStepSafe(page, label, fn) {
@@ -2248,6 +2279,8 @@ async function runDrabasQuest(page) {
     retries: 4,
   });
 
+  if (!(await questFightHpGate(page, '\u041a\u0430\u043c\u043d\u0438 \u0414\u0440\u0430\u0431\u0430\u0441\u0430'))) return false;
+
   await performStep(page, {
     stepName: '\u0412 \u0431\u043e\u0439!',
     currentTexts: ['\u0412 \u0431\u043e\u0439!', '\u0432 \u0431\u043e\u0439!', '\u0412 \u0431\u043e\u0439', '\u0432 \u0431\u043e\u0439'],
@@ -2593,6 +2626,8 @@ async function progressCaravanRobberyQuest(page) {
     currentTexts: ['\u042f \u0445\u043e\u0447\u0443 \u0433\u0440\u0430\u0431\u0438\u0442\u044c \u043a\u043e\u0440\u043e\u0432\u0430\u043d!', '\u044f \u0445\u043e\u0447\u0443 \u0433\u0440\u0430\u0431\u0438\u0442\u044c \u043a\u043e\u0440\u043e\u0432\u0430\u043d!'],
     nextTexts: ['\u0412 \u0431\u043e\u0439!', '\u0432 \u0431\u043e\u0439!'],
   });
+
+  if (!(await questFightHpGate(page, '\u0413\u0440\u0430\u0431\u0438\u043c \u043a\u043e\u0440\u043e\u0432\u0430\u043d\u044b'))) return false;
 
   await tryPerformStepOptional(page, {
     stepName: '\u0412 \u0431\u043e\u0439!',
@@ -6440,6 +6475,10 @@ async function progressAssassinBankerQuest(page) {
     retries: 3,
   });
 
+  // Финальный бой был единственным в этом квесте вообще без гейта: охранники проверялись, а
+  // банкир - нет, хотя к нему приходишь уже потрёпанным после трёх боёв с охраной.
+  if (!(await questFightHpGate(page, 'Assassin quest (банкир): финал'))) return false;
+
   console.log('Assassin quest (банкир): финальный бой с банкиром');
   await fightLoop(page);
 
@@ -6783,6 +6822,7 @@ async function progressDemonLakeQuest(page) {
   await pause(page, 800, 1500);
 
   if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
+    if (!(await questFightHpGate(page, 'Демон озера'))) return false;
     await performStep(page, {
       stepName: 'В бой!',
       currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
@@ -6874,6 +6914,7 @@ async function progressShipwreckQuest(page) {
   }
 
   if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
+    if (!(await questFightHpGate(page, 'Кораблекрушение (бой 1)'))) return false;
     await performStep(page, {
       stepName: 'В бой!',
       currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
@@ -6889,6 +6930,7 @@ async function progressShipwreckQuest(page) {
   await pause(page, 700, 1300);
 
   if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
+    if (!(await questFightHpGate(page, 'Кораблекрушение (бой 2)'))) return false;
     await performStep(page, {
       stepName: 'В бой! (2)',
       currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
