@@ -7397,9 +7397,23 @@ const VIGNETTE_EXCLUDE_TEXTS = new Set([
   'Магазин', 'Инвентарь', 'Карта', 'Почта',
 ]);
 
+// Ссылки, начинающие бой. Пропуск виньеток НЕ ИМЕЕТ ПРАВА их нажимать: вход в бой - это
+// решение (и оно обязано проходить через questFightHpGate), а не "продолжить рассказ".
+// Живой случай 17.09.2026: в маршруте Рыбного ресторана эвристика "единственная нечужая
+// ссылка" нажала "В бой!" и утащила персонажа в бой с Пятнистым аллигатором мимо всех
+// гейтов. Незавершённый бой затем заблокировал игру целиком - посыпались Рыбий глаз,
+// травы, все три четверговых дейлика и Q-меню (везде голый "В бой!").
+const VIGNETTE_FIGHT_LINK_RE = /^(в\s*бой!?|напасть\b.*|атаковать\b.*|ударить|вступить\s+в\s+бой|принять\s+бой)$/i;
+
 async function skipTravelVignettes(page, targetTexts, maxAttempts = 8) {
   for (let i = 0; i < maxAttempts; i++) {
     if (await existsAnyText(page, targetTexts)) return;
+
+    // Боевой экран - это не виньетка. Кликать здесь нечего, и чем раньше выйдем, тем лучше.
+    if (isBattleScreenText(await getBodyText(page))) {
+      console.log('skipTravelVignettes: это боевой экран, а не виньетка -> выхожу, не кликаю.');
+      return;
+    }
     const clicked = await page.evaluate(() => {
       const el = document.querySelector('.bBorder a');
       if (!el) return false;
@@ -7422,14 +7436,21 @@ async function skipTravelVignettes(page, targetTexts, maxAttempts = 8) {
     // single "continue" choice. Deliberately a no-op (returns false) when 0 or 2+ such
     // links exist, so it never guesses on a real multi-option decision screen.
     const excludeArr = Array.from(VIGNETTE_EXCLUDE_TEXTS);
-    const clickedLone = await page.evaluate((exclude) => {
+    const clickedLone = await page.evaluate(({ exclude, fightRe }) => {
+      const re = new RegExp(fightRe, 'i');
       const links = Array.from(document.querySelectorAll('a'))
         .filter((a) => a.textContent && a.textContent.trim().length > 0)
         .filter((a) => !exclude.includes(a.textContent.trim()));
       if (links.length !== 1) return false;
+      const label = links[0].textContent.trim();
+      if (re.test(label)) return 'fight'; // единственная ссылка ведёт в бой - не трогаем
       links[0].click();
       return true;
-    }, excludeArr).catch(() => false);
+    }, { exclude: excludeArr, fightRe: VIGNETTE_FIGHT_LINK_RE.source }).catch(() => false);
+    if (clickedLone === 'fight') {
+      console.log('skipTravelVignettes: единственная ссылка на экране начинает бой -> НЕ нажимаю, выхожу.');
+      return;
+    }
     if (!clickedLone) return;
     console.log('skipTravelVignettes: клик по единственной нечужой ссылке на экране (эвристика).');
     await pause(page, 800, 1500);
