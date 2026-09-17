@@ -251,6 +251,13 @@ let fishRestaurantJournalOpened = false;
 let fishRestaurantDayKey = '';
 let fishRestaurantDoneToday = false;
 let fishRestaurantNextRewardNumber = 1;
+// Паша, 17.09.2026: "рыбный ресторан ты начинал делать и убежал на другой квест". Маршрут
+// награды длинный (вереница шагов + 3 боя), и любой упавший шаг раньше просто возвращал
+// управление в цикл, который шёл к следующему квесту. Делаем квест эксклюзивным на время
+// прохода - как Харчевня/Штольни. НЕ персистим: после рестарта процесса фокус снимается сам,
+// иначе упавший маршрут мог бы заблокировать драйвер навсегда.
+let fishRestaurantFocusStartedAt = 0;
+let fishRestaurantSuppressedUntil = 0;
 
 // "Дейлик" гарпии — бонусный бой привязан к конкретному дню недели с фиксированным числом
 // боёв, один в один как у Цунами (порт commit fb9dea7, 16.09.2026, EXTRA_DAILY_TASKS/
@@ -843,6 +850,12 @@ function checkExclusiveQuestTimeouts() {
     shtolniLastStage = '';
     console.log('Shtolni quest: focus timeout (30 min) -> release and continue other actions');
   }
+
+  if (fishRestaurantFocusStartedAt && now - fishRestaurantFocusStartedAt > EXCLUSIVE_QUEST_MAX_ACTIVE_MS) {
+    fishRestaurantFocusStartedAt = 0;
+    fishRestaurantSuppressedUntil = now + EXCLUSIVE_QUEST_TIMEOUT_BACKOFF_MS;
+    console.log('Fish Restaurant: focus timeout (30 min) -> release and continue other actions');
+  }
 }
 
 function isExclusiveQQuestInProgress() {
@@ -850,7 +863,10 @@ function isExclusiveQQuestInProgress() {
   const now = Date.now();
   const tavernActive = tavernTakenToday && !tavernDoneToday && now >= tavernSuppressedUntil;
   const shtolniActive = shtolniTakenToday && !shtolniDoneToday && now >= shtolniSuppressedUntil;
-  return tavernActive || shtolniActive;
+  const fishRestaurantActive = Boolean(fishRestaurantFocusStartedAt)
+    && !fishRestaurantDoneToday
+    && now >= fishRestaurantSuppressedUntil;
+  return tavernActive || shtolniActive || fishRestaurantActive;
 }
 
 function scheduleQuestFollowup(reason) {
@@ -1866,6 +1882,11 @@ async function runDailyQuests(page, stats) {
   const shtolniSuppressed = now < shtolniSuppressedUntil;
   if (tavernTakenToday && !tavernDoneToday && !tavernSuppressed) exclusiveInProgress.push('Харчевня');
   if (shtolniTakenToday && !shtolniDoneToday && !shtolniSuppressed) exclusiveInProgress.push('Штольни');
+  // Рыбного ресторана нет в TARGET_Q_QUESTS, поэтому пока он в фокусе, ни один Q-квест из
+  // списка не стартует - именно этого и не хватало: драйвер уходил с недоделанного маршрута.
+  if (fishRestaurantFocusStartedAt && !fishRestaurantDoneToday && now >= fishRestaurantSuppressedUntil) {
+    exclusiveInProgress.push('Рыбный ресторан');
+  }
   const isQQuestAllowed = (questName) => {
     if (exclusiveInProgress.length === 0) return true;
     return exclusiveInProgress.includes(questName);
@@ -7394,18 +7415,26 @@ async function progressFishRestaurantReward1(page) {
   await skipTravelVignettes(page, ['Попробовать встать']);
   await performStep(page, { stepName: 'Попробовать встать', currentTexts: ['Попробовать встать'], retries: 3 });
 
+  // Три боя подряд, раньше шли вообще без проверки HP (в утреннем аудите гейтов этот маршрут
+  // пропущен). waitForRecovery: маршрут эскортный и бросать его на середине нельзя - Паша,
+  // 17.09.2026: "рыбный ресторан ты начинал делать и убежал на другой квест". Поэтому при
+  // низком HP ждём подлечивания между боями, а не выходим из квеста.
+  const FR = 'Рыбный ресторан reward #1';
+  if (!(await questFightHpGate(page, `${FR} (бой 1/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
   console.log('Fish Restaurant reward #1: бой 1/3 (Призрак в топях)');
   await fightLoop(page);
   await pause(page, 800, 1500);
 
   await skipTravelVignettes(page, ['Напасть']);
   await performStep(page, { stepName: 'Напасть (1)', currentTexts: ['Напасть'], retries: 3 });
+  if (!(await questFightHpGate(page, `${FR} (бой 2/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
   console.log('Fish Restaurant reward #1: бой 2/3 (сложный Призрак в топях)');
   await fightLoop(page);
   await pause(page, 800, 1500);
 
   await skipTravelVignettes(page, ['Напасть']);
   await performStep(page, { stepName: 'Напасть (2)', currentTexts: ['Напасть'], retries: 3 });
+  if (!(await questFightHpGate(page, `${FR} (бой 3/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
   console.log('Fish Restaurant reward #1: бой 3/3 (сложный Призрак в топях)');
   await fightLoop(page);
 
@@ -7455,14 +7484,21 @@ async function runFishRestaurantQuestIfAvailable(page) {
   // только если наградный проход на сегодня уже сделан (не мешает ему, не блокирует его).
   const handler = FISH_RESTAURANT_REWARD_HANDLERS[fishRestaurantNextRewardNumber];
   if (handler) {
+    // Берём фокус на время прохода: пока он держится, isExclusiveQQuestInProgress не даст
+    // начать другие квесты, и маршрут доводится до конца (или до таймаута в 30 минут).
+    if (!fishRestaurantFocusStartedAt) fishRestaurantFocusStartedAt = Date.now();
     const ok = await runNonQQuestSafe(page, `Fish Restaurant reward #${fishRestaurantNextRewardNumber}`, () => handler(page));
     if (ok) {
       fishRestaurantDoneToday = true;
       fishRestaurantNextRewardNumber += 1;
+      fishRestaurantFocusStartedAt = 0;
+      fishRestaurantSuppressedUntil = 0;
       persistDailyQuestState();
     }
     return Boolean(ok);
   }
+  // Маршрута нет - держать фокус бессмысленно, иначе заблокируем остальные квесты до таймаута.
+  fishRestaurantFocusStartedAt = 0;
   console.log(`Fish Restaurant: нет закодированного маршрута для награды №${fishRestaurantNextRewardNumber} - остановлено, ждёт ручного добавления.`);
 
   if (!fishRestaurantJournalOpened) {
