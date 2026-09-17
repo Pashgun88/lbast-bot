@@ -1476,7 +1476,13 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
     // Гейт перед боем с ботом. Именно здесь 17.09.2026 драйвер водил уже мёртвого персонажа по
     // трём целям: проверки не было вообще. Страница NPC шапку со статами обычно рендерит, так
     // что чтение честное; если нет - hpFractionForGate возьмёт последний замер, а null запретит.
-    if (!(await questFightHpGate(page, `Харчевня (бой ${kills + 1}/${BOT_LIMIT})`))) return false;
+    // waitForRecovery: Харчевню не бросаем на полпути - ждём подлечивания и добиваем ботов.
+    if (!(await questFightHpGate(
+      page,
+      `Харчевня (бой ${kills + 1}/${BOT_LIMIT})`,
+      QUEST_FIGHT_HP_FLOOR,
+      { waitForRecovery: true },
+    ))) return false;
 
     await performStep(page, {
       stepName: '\u0412 \u0431\u043e\u0439!',
@@ -1625,16 +1631,53 @@ const QUEST_FIGHT_HP_FLOOR = 0.7;
 // здесь нельзя писать `typeof hp === 'number' && hp < max*0.7` - на null все условия ложны и
 // гейт молча пропускает бой. hpFractionForGate падает на последнее достоверное чтение, а если
 // и его нет - возвращает null, и это ЗАПРЕТ боя, а не разрешение.
-async function questFightHpGate(page, label, floor = QUEST_FIGHT_HP_FLOOR) {
+async function questFightHpGate(
+  page,
+  label,
+  floor = QUEST_FIGHT_HP_FLOOR,
+  { waitForRecovery = false, maxWaitMs = 40 * 60 * 1000 } = {},
+) {
   const text = await getBodyText(page).catch(() => '');
   const stats = parseStats(text);
   noteHpFromPageText(text, `${label}: перед боем`);
   const frac = hpFractionForGate(stats);
+
+  // Паша, 17.09.2026: "ты не выполнил харчевню а уже идешь выполнять другое задание, нужно
+  // закончить харчевню". Для таких квестов отказ от боя - неправильная реакция: лечение
+  // ~14 hp/мин, до порога обычно 2-5 минут. Ждём восстановления во ВТОРОЙ вкладке, чтобы не
+  // трогать сцену квеста (waitForHpAbove делает page.reload() - на экране NPC так нельзя).
+  // Ждём только при ЧИТАЕМОМ HP: null означает "проверить нечем", и это по-прежнему отказ.
+  if (waitForRecovery && frac !== null && frac < floor && lastKnownHp.max > 0) {
+    const need = Math.ceil(lastKnownHp.max * floor);
+    console.log(`${label}: HP ${Math.round(frac * 100)}% < ${Math.round(floor * 100)}% -> жду восстановления до ${need}/${lastKnownHp.max}, квест не бросаю.`);
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+      await fixedPause(page, 60_000);
+      const hpNow = await readHpFromLocationInNewTab(page);
+      if (typeof hpNow !== 'number') continue;
+      lastKnownHp = { current: hpNow, max: lastKnownHp.max, at: Date.now() };
+      console.log(`${label}: HP ${hpNow}/${lastKnownHp.max} (нужно ${need})`);
+      if (hpNow >= need) {
+        console.log(`${label}: HP восстановилось -> иду в бой.`);
+        return true;
+      }
+    }
+    console.log(`${label}: HP не восстановилось за отведённое время -> ухожу с боевого экрана.`);
+  }
+
   if (frac === null || frac < floor) {
     const shown = frac === null
       ? 'HP не читается ни на экране, ни по последнему замеру'
       : `${Math.round(frac * 100)}% < ${Math.round(floor * 100)}%`;
     console.log(`${label}: HP-гейт не пройден (${shown}) -> в бой не иду, вернусь в следующем цикле.`);
+    // ОБЯЗАТЕЛЬНО уйти с боевого экрана. 17.09.2026, живой случай: гейт отказался от боя с
+    // огненной лисой на 59%, но персонаж остался стоять на экране с кнопкой "В бой!", и в
+    // начале следующего цикла handleIncomingAttackIfAny принял её за нападение и залез в тот
+    // же самый бой в обход гейта. Отказ от боя обязан ещё и разоружать экран.
+    await clickByTexts(page, ['Вернуться', 'вернуться'], `${label}: уйти с экрана боя`).catch(() => {});
+    await page
+      .goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 })
+      .catch(() => {});
     return false;
   }
   return true;
@@ -4056,6 +4099,12 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
     // ждёт свой ход). runIncomingAttackPvpLoop растягивал даже простого квестового пса
     // (Гильдия асассинов: картина) на ~100-115 сек между ударами - используем обычный
     // быстрый fightLoop вместо медленной PvP-паузы.
+    // Это НАШ бой (ферма или квестовый моб), а не навязанное нападение - от него можно
+    // отказаться, и на 59% HP именно так и надо. Настоящий PvP гейтить нельзя (игра не даст
+    // уйти, и отказ = бесплатный удар по нам), поэтому проверка стоит только в этой ветке.
+    if (!(await questFightHpGate(page, `"В бой" (${opponentName || 'не игрок'})`))) {
+      return false;
+    }
     await fightLoop(page).catch(() => {});
     try {
       await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -8892,6 +8941,9 @@ module.exports = {
   CHAT_ROOMS,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
+  runStatueOfGloryTask,
+  scheduleNextStatueOfGlory,
+  waitForHpAbove,
   clickOnlySensibleOption,
   runShepotQuestIfAvailable,
   readCurrentAssignment,
