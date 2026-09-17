@@ -8483,10 +8483,19 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   const nowDate = new Date(now);
   const base = { room: roomInfo.room, roomName: roomInfo.name, at: new Date(now).toISOString() };
 
-  // Первое наблюдение комнаты: вся история выглядит "новой" - не считаем её поводом.
+  // При первом наблюдении комнаты вся история выглядит "новой", поэтому обычные поводы
+  // (приветствие, оживление, инициатива) подавляются - иначе рестарт драйвера реагировал бы
+  // на всю ленту разом.
+  //
+  // НО прямое обращение к AI__ подавлять НЕЛЬЗЯ. Живой провал 17.09.2026: Galla написала
+  // "AI__, кто ты, воин?", драйвер в этот момент был перезапущен, вопрос попал в "историю"
+  // первого наблюдения и был проглочен - Паша: "у тебя в чате спрашивают а ты молчишь".
+  // Так как я перезапускал драйвер десятки раз, а клановый зал опрашивается раз в 20 минут,
+  // мониторинг чата фактически не работал ни разу. От древних обращений защищает фильтр по
+  // возрасту (CHAT_TRIGGER_MAX_AGE_MIN), а не подавление первого наблюдения.
   const firstObservation = prevMsgs.length === 0;
   const seen = new Set(prevMsgs.map(chatMessageKey));
-  const fresh = firstObservation ? [] : nextMsgs.filter((m) => !seen.has(chatMessageKey(m)));
+  const fresh = nextMsgs.filter((m) => !seen.has(chatMessageKey(m)));
 
   const live = fresh.filter((m) => {
     if (AI_SELF_NICK_RE.test(m.nick)) return false; // своё же сообщение
@@ -8497,13 +8506,14 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
     if (AI_SELF_NICK_RE.test(m.text)) {
       triggers.push({ ...base, type: 'mention', nick: m.nick, text: m.text,
         reason: `${m.nick} обратился к AI__` });
-    } else if (CHAT_GREETING_RE.test(m.text)) {
+    } else if (!firstObservation && CHAT_GREETING_RE.test(m.text)) {
       triggers.push({ ...base, type: 'greeting', nick: m.nick, text: m.text,
         reason: `${m.nick} поздоровался` });
     }
   }
 
-  if (live.length >= CHAT_REVIVAL_MIN_MESSAGES && quietForMs >= CHAT_QUIET_FOR_REVIVAL_MS
+  if (!firstObservation && live.length >= CHAT_REVIVAL_MIN_MESSAGES
+      && quietForMs >= CHAT_QUIET_FOR_REVIVAL_MS
       && !triggers.some((t) => t.type === 'mention')) {
     triggers.push({ ...base, type: 'revival',
       reason: `после тишины пошёл разговор (${live.length} сообщений)`,

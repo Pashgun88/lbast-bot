@@ -65,9 +65,26 @@ const tStale = detectChatTriggers(ROOM, prev, [{ nick: 'Hacky', hh: (hh + 23) % 
   { quietForMs: 0, now });
 check('сообщение часовой давности игнорируется', !tStale.some((t) => t.type === 'mention'), JSON.stringify(tStale.map((t) => t.type)));
 
-// Первое наблюдение комнаты: история не должна считаться поводом.
-const tFirst = detectChatTriggers(ROOM, [], [fresh('Hacky', 'AI__, привет')], { quietForMs: 0, now });
-check('первое наблюдение комнаты не триггерит', tFirst.length === 0, JSON.stringify(tFirst.map((t) => t.type)));
+// Первое наблюдение комнаты: обычные поводы подавляются, но СВЕЖЕЕ обращение к AI__ должно
+// пробиваться. Живой провал 17.09.2026: Galla спросила "AI__, кто ты, воин?" ровно в момент
+// перезапуска драйвера, вопрос попал в "историю" первого наблюдения и был проглочен.
+const tFirst = detectChatTriggers(ROOM, [], [fresh('Hacky', 'AI__, кто ты, воин?')], { quietForMs: 0, now });
+check('первое наблюдение: свежее обращение к AI__ ПРОБИВАЕТСЯ', tFirst.some((t) => t.type === 'mention'),
+  JSON.stringify(tFirst.map((t) => t.type)));
+
+const tFirstGreet = detectChatTriggers(ROOM, [], [fresh('Hacky', 'всем привет!')], { quietForMs: 0, now });
+check('первое наблюдение: приветствие НЕ триггерит', tFirstGreet.length === 0,
+  JSON.stringify(tFirstGreet.map((t) => t.type)));
+
+const tFirstStale = detectChatTriggers(ROOM, [], [{ nick: 'Hacky', hh: (hh + 23) % 24, mm, text: 'AI__, ответь' }],
+  { quietForMs: 0, now });
+check('первое наблюдение: старое обращение НЕ триггерит', tFirstStale.length === 0,
+  JSON.stringify(tFirstStale.map((t) => t.type)));
+
+const tFirstRevival = detectChatTriggers(ROOM, [], [fresh('Hacky', 'о, кто тут'), fresh('Universe', 'да вот сижу')],
+  { quietForMs: 40 * 60_000, now });
+check('первое наблюдение: revival НЕ триггерит', !tFirstRevival.some((t) => t.type === 'revival'),
+  JSON.stringify(tFirstRevival.map((t) => t.type)));
 
 // Живой баг 17.09.2026: при первом наблюдении lastChangeAt = 0, "тишина" выходила Infinity,
 // и initiative срабатывал сразу на каждом запуске драйвера.
