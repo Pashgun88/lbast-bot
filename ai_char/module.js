@@ -72,8 +72,22 @@ let uiStuckState = { stepName: '', count: 0, firstAt: 0 };
 
 // UGO quest disabled (no longer needed).
 // const UGO_MIN_HP = 2000;
-const SHTOLNI_MIN_HP = 2000;
-const SHTOLNI_MIN_RESERVE_MINUTES = 20;
+// Абсолютный порог 2000 был настроен под HP основного персонажа (Tsunami, тысячи HP).
+// У AI__ max HP пока ~300-400 и растёт по мере прокачки — по просьбе Паши (14.09.2026,
+// "штольни можешь попробовать, но там довольно сильные боты", позже "порог хп сделай 90%")
+// порог задан долей от текущего максимума, а не абсолютным числом.
+// 14.09.2026: по прямой просьбе Паши для новой попытки поднято до 100% (обязательно
+// полное HP перед стартом/между боями), см. также вставленный HEAL-гейт после первого боя.
+const SHTOLNI_MIN_HP_FRACTION = 0.99;
+const SHTOLNI_MIN_HP = 250; // fallback только для мест ниже, где нет доступа к hpMax из stats
+const SHTOLNI_MIN_RESERVE_MINUTES = Number(process.env.AI_SHTOLNI_MIN_RESERVE || 20);
+// Пробный запуск 14.09.2026: первый же бот в штольнях снял 310+40=350 HP за один бой
+// (со 100% до отрицательного) — с текущей экипировкой AI__ это не "рискованно", а просто
+// поражение. По прямой просьбе Паши ("вижу бот очень сильный... пока не будем их делать")
+// квест отключен для AI__ до дальнейших указаний. Маршрут полностью записан в
+// LESSONS_AI_CHAR.md ("Штольни — полный маршрут") на случай, если вернёмся к нему позже
+// с лучшей экипировкой/уровнем.
+const SHTOLNI_ENABLED_FOR_AI = false; // отложено до завтрашнего сброса дневных квестов (14.09.2026, по просьбе Паши)
 // const UGO_INTERVAL_MS = 65 * 60 * 1000; // "раз в час и 5 минут"
 // const UGO_DAILY_LIMIT = 10; // не более 10 раз в день
 // let lastUgoRunAt = 0;
@@ -142,6 +156,21 @@ const STATUE_MAX_INTERVAL_MINUTES = 14 * 60;
 let lastStatueRunAt = 0;
 let nextStatueDueAt = 0;
 
+// "Шепот" - квест берётся у "Кулак Хаоса", Паша подтвердил 16.09.2026: "запомни как делается
+// он периодический" - раз в месяц, не раз в день. Длинный многоэтапный квест (см.
+// progressShepotQuest ниже) - stage переживает рестарты процесса, чтобы не проходить заново
+// уже пройденные куски после падения/перезапуска. monthKey сбрасывает done/stage раз в
+// календарный месяц.
+let shepotMonthKey = '';
+let shepotDoneThisMonth = false;
+let shepotStage = 0;
+// Паша, 17.09.2026 (после 3 боёв гаунтлета): "гайд верный, тебе нужно по очереди на предметы
+// нажимать" - все 4 кнопки "Использовать <предмет>" видны на экране ОДНОВРЕМЕННО (не гейтятся
+// по текущему монстру), поэтому определять нужный предмет по тому, что "есть на экране",
+// не работает - код трижды подряд выбирал первый по списку (отвар арайи). Правильный подход:
+// жёстко идти по порядку гайда, отслеривая номер боя отдельным счётчиком.
+let shepotGauntletFightsDone = 0;
+
 // Рыбалка: не более 6 успешных уловов в день, кулдаун 2 минуты между попытками —
 // пробуем между квестами каждый цикл, пока не наловим лимит. Никогда не запускается из фарма Блейка.
 // Также используется во время восстановления в Последнем доме (см. runLastHouseRecovery).
@@ -179,10 +208,79 @@ let shtolniLastStage = '';
 let shtolniFocusStartedAt = 0;
 let rumaForgeDayKey = '';
 let rumaForgeDoneToday = false;
+
+// "Довольствие" - короткий ежедневный квест без боя, продиктован Пашей 17.09.2026:
+// Амулет -> Дорожный крест -> Казначейство Тригмагистрата -> Получить довольствие -> В игру.
+let dovolstvieDayKey = getDayKeyNow();
+let dovolstvieDoneToday = true; // Паша, 17.09.2026: "сегодня уже сделано"
 let fisherFoodDayKey = '';
 let fisherFoodDoneToday = false;
 let caravanRobberyDayKey = '';
 let caravanRobberyDoneToday = false;
+
+// Гильдия асассинов: 3 независимых задания (банкир/картина/торговец), каждое можно
+// выполнять и копить предметы задания раз в день, до достижения 6 уровня для сдачи
+// (см. LESSONS_AI_CHAR.md, "Гильдия асассинов"). Отдельный dayKey/doneToday на каждое,
+// плюс лимит попыток в день на торговца (он может просто отсутствовать на клетке сейчас).
+let assassinGuildDayKey = '';
+const assassinGuildDoneToday = { banker: false, painting: false, merchant: false };
+let assassinMerchantAttemptsToday = 0;
+const ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY = 6;
+
+// Галерея искусств/лазулиты: одноразовый (не дневной) квест — раз сдан, никогда не
+// появится в Q снова. Флаг без day-key, чтобы после первой сдачи диспетчер не ходил
+// каждый цикл в Рыбацкую деревню проверять Марсиуса заново.
+let galleryQuestDone = false;
+
+// "Орден Тригмагистров: Охота на демона" (Демон озера) — маршрут записан со слов Паши
+// 14.09.2026 (продиктован по памяти, не проверен вживую). Обычный дневной квест.
+let demonLakeDayKey = '';
+let demonLakeDoneToday = false;
+
+// "Кораблекрушение" — маршрут продиктован Пашей 14.09.2026. Обычный дневной квест.
+let shipwreckDayKey = '';
+let shipwreckDoneToday = false;
+
+// "Рыбный ресторан Тёща Кумуса" — журнал наград открывается один раз (не по дням), затем
+// каждый день можно пройти ОДНУ ветку из 27 пронумерованных наград. Паша попросил идти по
+// порядку номеров (15.09.2026). Маршруты — из гайда Dikaya (zhg_web.php?st_id=224300),
+// см. LESSONS_AI_CHAR.md. НЕ проверено вживую (как Демон озера/Кораблекрушение до первого
+// реального прогона) - код написан по тексту гайда, каждый шаг матчится через performStep
+// с ретраями, чтобы не падать намертво на неточности формулировки кнопки.
+let fishRestaurantJournalOpened = false;
+let fishRestaurantDayKey = '';
+let fishRestaurantDoneToday = false;
+let fishRestaurantNextRewardNumber = 1;
+
+// "Дейлик" гарпии — бонусный бой привязан к конкретному дню недели с фиксированным числом
+// боёв, один в один как у Цунами (порт commit fb9dea7, 16.09.2026, EXTRA_DAILY_TASKS/
+// getDay()). Date.getDay(): 0=Вс,1=Пн,2=Вт,3=Ср,4=Чт,5=Пт,6=Сб. Гарпия: только вторник (2),
+// x3, остальные дни цель просто недоступна (не "уже сделано", а буквально нет дейлика).
+// Бизон/кабан НЕ гейтятся по дню - 16.09.2026, Паша: "продолжай фарм на бизоне и кабане
+// (теперь это обычный фарм)" - после ручного прохождения дневного бонуса они farmable как
+// обычные repeat-farm мобы (см. runBisonFarmRound/runBoarFarmRound), без дневного лимита.
+function getWeekday() {
+  return new Date().getDay();
+}
+
+const HARPY_HUNT_WEEKDAY = 2; // вторник
+const HARPY_HUNTS_PER_DAY = 3;
+
+let harpyHuntDayKey = '';
+let harpyHuntFightsToday = 0;
+
+function resetHuntStateIfNewDay() {
+  const key = getDayKeyNow();
+  if (harpyHuntDayKey !== key) {
+    harpyHuntDayKey = key;
+    harpyHuntFightsToday = 0;
+  }
+}
+
+function parseCooldownError(e) {
+  const m = /^fight_target_cooldown:(\d+)$/.exec((e && e.message) || '');
+  return m ? Number(m[1]) : null;
+}
 
 // Restore "already done today" markers from disk so a restart mid-day doesn't redo completed dailies.
 // Each quest's own dayKey check (getDayKeyNow() comparison) already discards stale data once the day rolls over.
@@ -207,6 +305,11 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.lastStatueRunAt)) lastStatueRunAt = s.lastStatueRunAt;
   if (Number.isFinite(s.nextStatueDueAt)) nextStatueDueAt = s.nextStatueDueAt;
 
+  if (typeof s.shepotMonthKey === 'string') shepotMonthKey = s.shepotMonthKey;
+  if (typeof s.shepotDoneThisMonth === 'boolean') shepotDoneThisMonth = s.shepotDoneThisMonth;
+  if (Number.isFinite(s.shepotStage)) shepotStage = s.shepotStage;
+  if (Number.isFinite(s.shepotGauntletFightsDone)) shepotGauntletFightsDone = s.shepotGauntletFightsDone;
+
   if (typeof s.tavernDayKey === 'string') tavernDayKey = s.tavernDayKey;
   if (typeof s.tavernDoneToday === 'boolean') tavernDoneToday = s.tavernDoneToday;
 
@@ -216,6 +319,9 @@ function restoreDailyQuestState() {
   if (typeof s.rumaForgeDayKey === 'string') rumaForgeDayKey = s.rumaForgeDayKey;
   if (typeof s.rumaForgeDoneToday === 'boolean') rumaForgeDoneToday = s.rumaForgeDoneToday;
 
+  if (typeof s.dovolstvieDayKey === 'string') dovolstvieDayKey = s.dovolstvieDayKey;
+  if (typeof s.dovolstvieDoneToday === 'boolean') dovolstvieDoneToday = s.dovolstvieDoneToday;
+
   if (typeof s.fisherFoodDayKey === 'string') fisherFoodDayKey = s.fisherFoodDayKey;
   if (typeof s.fisherFoodDoneToday === 'boolean') fisherFoodDoneToday = s.fisherFoodDoneToday;
 
@@ -224,6 +330,28 @@ function restoreDailyQuestState() {
 
   if (typeof s.fishingDayKey === 'string') fishingDayKey = s.fishingDayKey;
   if (Number.isFinite(s.fishingCatchesToday)) fishingCatchesToday = s.fishingCatchesToday;
+
+  if (typeof s.assassinGuildDayKey === 'string') assassinGuildDayKey = s.assassinGuildDayKey;
+  if (s.assassinGuildDoneToday && typeof s.assassinGuildDoneToday === 'object') {
+    Object.assign(assassinGuildDoneToday, s.assassinGuildDoneToday);
+  }
+  if (Number.isFinite(s.assassinMerchantAttemptsToday)) assassinMerchantAttemptsToday = s.assassinMerchantAttemptsToday;
+
+  if (typeof s.galleryQuestDone === 'boolean') galleryQuestDone = s.galleryQuestDone;
+
+  if (typeof s.demonLakeDayKey === 'string') demonLakeDayKey = s.demonLakeDayKey;
+  if (typeof s.demonLakeDoneToday === 'boolean') demonLakeDoneToday = s.demonLakeDoneToday;
+
+  if (typeof s.shipwreckDayKey === 'string') shipwreckDayKey = s.shipwreckDayKey;
+  if (typeof s.shipwreckDoneToday === 'boolean') shipwreckDoneToday = s.shipwreckDoneToday;
+
+  if (typeof s.fishRestaurantJournalOpened === 'boolean') fishRestaurantJournalOpened = s.fishRestaurantJournalOpened;
+  if (typeof s.fishRestaurantDayKey === 'string') fishRestaurantDayKey = s.fishRestaurantDayKey;
+  if (typeof s.fishRestaurantDoneToday === 'boolean') fishRestaurantDoneToday = s.fishRestaurantDoneToday;
+  if (Number.isFinite(s.fishRestaurantNextRewardNumber)) fishRestaurantNextRewardNumber = s.fishRestaurantNextRewardNumber;
+
+  if (typeof s.harpyHuntDayKey === 'string') harpyHuntDayKey = s.harpyHuntDayKey;
+  if (Number.isFinite(s.harpyHuntFightsToday)) harpyHuntFightsToday = s.harpyHuntFightsToday;
 }
 
 restoreDailyQuestState();
@@ -235,14 +363,33 @@ function persistDailyQuestState() {
     lastDrabasRunAt, drabasDayKey, drabasRunsToday,
     lastVinogradRunAt,
     lastStatueRunAt, nextStatueDueAt,
+    shepotMonthKey, shepotDoneThisMonth, shepotStage, shepotGauntletFightsDone,
     tavernDayKey, tavernDoneToday,
     shtolniDayKey, shtolniDoneToday,
     rumaForgeDayKey, rumaForgeDoneToday,
+    dovolstvieDayKey, dovolstvieDoneToday,
     fisherFoodDayKey, fisherFoodDoneToday,
     caravanRobberyDayKey, caravanRobberyDoneToday,
     fishingDayKey, fishingCatchesToday,
+    assassinGuildDayKey, assassinGuildDoneToday, assassinMerchantAttemptsToday,
+    galleryQuestDone,
+    demonLakeDayKey, demonLakeDoneToday,
+    shipwreckDayKey, shipwreckDoneToday,
+    fishRestaurantJournalOpened, fishRestaurantDayKey, fishRestaurantDoneToday, fishRestaurantNextRewardNumber,
+    harpyHuntDayKey, harpyHuntFightsToday,
   });
   saveStateToDisk(persistedState);
+}
+
+function resetAssassinGuildDayIfNeeded() {
+  const key = getDayKeyNow();
+  if (assassinGuildDayKey !== key) {
+    assassinGuildDayKey = key;
+    assassinGuildDoneToday.banker = false;
+    assassinGuildDoneToday.painting = false;
+    assassinGuildDoneToday.merchant = false;
+    assassinMerchantAttemptsToday = 0;
+  }
 }
 
 const EXCLUSIVE_QUEST_MAX_ACTIVE_MS = 30 * 60 * 1000; // max focus window
@@ -743,8 +890,8 @@ function parseStats(text) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  const qMatch = normalized.match(/\bQ\s*(\d+)\b/i);
-  const dMatch = normalized.match(/\bD\s*(\d+)\b/i);
+  const qMatch = normalized.match(/\bQ\s*(\d+)\b/i) || normalized.match(/КВЕСТЫ\s*\[(\d+)\]/i);
+  const dMatch = normalized.match(/\bD\s*(\d+)\b/i) || normalized.match(/TODO\s*\[(\d+)\]/i);
   const questsAvailable = qMatch ? Number(qMatch[1]) : null;
   const dailyAvailable = dMatch ? Number(dMatch[1]) : null;
 
@@ -900,15 +1047,40 @@ function mergeStatsPreferExisting(base, extra) {
 }
 
 async function openQuestsMenu(page, questCount) {
+  // If a previous dispatcher (Demon Lake, Shipwreck, ...) already left us on the quest
+  // board, the nav header's numeric "Q13" badge is gone from this page, so a fresh
+  // click search fails even though we don't need to click anything. Detect that case
+  // first instead of assuming the caller navigated back to location.php beforehand.
+  if (/mod=quests\b/i.test(page.url())) {
+    return true;
+  }
+
+  // IMPORTANT: do NOT fall back to a generic "\u041a\u0432\u0435\u0441\u0442\u044b"/"\u043a\u0432\u0435\u0441\u0442\u044b" text match here.
+  // `a:has-text("\u043a\u0432\u0435\u0441\u0442\u044b")` is a case-insensitive SUBSTRING match, and pers.php's
+  // account menu has a "\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0435 \u043a\u0432\u0435\u0441\u0442\u044b" link that also contains "\u043a\u0432\u0435\u0441\u0442\u044b" \u2014 that
+  // link leads to the quest CATALOG (pers.php?mod=questinfo, format "Name [\u0441 N \u0443\u0440.]"),
+  // not the active quest board (location.php?mod=quests, format "\u2022 Name [\u0438\u043d\u0444\u043e]").
+  // Discovered 14.09.2026 when parseQuestNamesFromQMenuText kept returning [] because
+  // openQuestsMenu had silently landed on the catalog page instead.
   const variants = [];
   if (Number.isFinite(questCount) && questCount > 0) {
     variants.push(`Q${questCount}`);
   }
-  variants.push('Q', '\u041a\u0432\u0435\u0441\u0442\u044b', '\u043a\u0432\u0435\u0441\u0442\u044b');
+  variants.push('Q');
 
-  const ok = await clickByTexts(page, variants, 'open quests menu');
+  let ok = await clickByTexts(page, variants, 'open quests menu');
   if (!ok) {
-    return false;
+    // The caller may have left `page` on some intermediate view (e.g. a Podvaly
+    // "Осмотреть подвалы" result screen) that doesn't render the top-nav "Q" badge
+    // at all. One retry from a known-good page fixes this instead of failing the
+    // whole daily-quests cycle. Found 14.09.2026 right after a Podvaly round ran
+    // out of monsters to attack mid-cycle.
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await pause(page, 500, 1000);
+    ok = await clickByTexts(page, variants, 'open quests menu (retry after reset)');
+    if (!ok) {
+      return false;
+    }
   }
 
   await pause(page, 800, 1600);
@@ -1472,6 +1644,11 @@ async function runDailyQuests(page, stats) {
   const questCount = stats?.questsAvailable;
   console.log(`Daily quests detected: Q=${questCount}`);
 
+  // AI__ driver.js calls runDailyQuests directly (not doScenario), so lastCycleStats — read by
+  // progressShtolniQuest's HP/reserve gate — would otherwise stay null forever and the gate would
+  // always fail with "hp=n/a". Set it here from the stats we were already given.
+  lastCycleStats = stats;
+
   checkExclusiveQuestTimeouts();
 
   const reserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
@@ -1485,6 +1662,10 @@ async function runDailyQuests(page, stats) {
   let didAnything = false;
   const menuText = await getBodyText(page);
   let listedQuests = parseQuestNamesFromQMenuText(menuText);
+  console.log('Q menu quest names:', JSON.stringify(listedQuests));
+  if (listedQuests.length === 0) {
+    appendDebugSnapshot('Q menu parse returned empty list', { label: 'q_menu_empty_parse', url: page.url(), text: menuText });
+  }
 
   // Exclusive quests: while one of these is in progress, do not start any other Q-quests.
   const exclusiveInProgress = [];
@@ -1532,13 +1713,11 @@ async function runDailyQuests(page, stats) {
   }
 
   if (!shtolniSuppressed && isQQuestAllowed('Штольни') && isQuestInMenu(listedQuests, 'Штольни') && !(tavernTakenToday && !tavernDoneToday)) {
-    const shtolniInProgress = shtolniTakenToday && !shtolniDoneToday;
-    if (!shtolniInProgress && (typeof reserveMinutes !== 'number' || reserveMinutes < 20)) {
-      console.log(`Quest step skip: Штольни (need >=20 reserve minutes to start, have=${reserveMinutes ?? 'n/a'})`);
-    } else {
-      if (await runQuestStepSafe(page, 'Штольни', () => progressShtolniQuest(page))) {
-        didAnything = true;
-      }
+    // 14.09.2026 (Паша): "по резерву отмени правило, просто жди сколько нужно" — резерв
+    // больше не пропускает попытку здесь; progressShtolniQuest сам активно ждёт нужный
+    // резерв (waitForReserveAtLeast) после проверки HP-гейта.
+    if (await runQuestStepSafe(page, 'Штольни', () => progressShtolniQuest(page))) {
+      didAnything = true;
     }
     await resetToQuestMenu(page, questCount);
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
@@ -1608,6 +1787,11 @@ function getDayKeyNow() {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function getMonthKeyNow() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function canRunLifeTreeNow() {
@@ -1780,7 +1964,13 @@ async function progressLifeTreeQuest(page, { questCount } = {}) {
 }
 
 async function runFishEyeRouteToArena(page) {
-  const AMULET = '\u0410\u043c\u0443\u043b\u0435\u0442';
+  // \u041c\u043e\u0436\u0435\u0442 \u0432\u044b\u0437\u044b\u0432\u0430\u0442\u044c\u0441\u044f \u043f\u043e\u0441\u043b\u0435 \u0445\u0435\u043d\u0434\u043b\u0435\u0440\u0430, \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u043e\u0441\u0442\u0430\u0432\u0438\u043b page \u043d\u0430 \u0434\u043e\u0441\u043a\u0435 \u043a\u0432\u0435\u0441\u0442\u043e\u0432/\u0434\u0440\u0443\u0433\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435
+  // (\u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440, runDemonLakeQuestIfAvailable, \u043a\u043e\u0433\u0434\u0430 \u043a\u0432\u0435\u0441\u0442\u0430 \u043d\u0435\u0442 \u0432 \u0441\u043f\u0438\u0441\u043a\u0435) - "\u0410\u043c\u0443\u043b\u0435\u0442" \u0432\u0438\u0434\u0435\u043d
+  // \u0442\u043e\u043b\u044c\u043a\u043e \u043d\u0430 location.php, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u044f\u0432\u043d\u043e \u0432\u043e\u0437\u0432\u0440\u0430\u0449\u0430\u0435\u043c\u0441\u044f \u0442\u0443\u0434\u0430 (\u0442\u043e\u0442 \u0436\u0435 \u043a\u043b\u0430\u0441\u0441 \u0431\u0430\u0433\u0430,
+  // \u0447\u0442\u043e \u0447\u0438\u043d\u0438\u043b\u0438 \u0432 runPodvalyFarmRound/progressDemonLakeQuest - \u043d\u0435 \u0434\u043e\u0432\u0435\u0440\u044f\u0442\u044c page).
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 500, 1000);
+
   const DEVTOWN = '\u0414\u0435\u0432\u0442\u0430\u0443\u043d';
   const EAST_CRAFT = '\u041d\u0430 \u0432\u043e\u0441\u0442\u043e\u043a, \u0432 \u0440\u0435\u043c\u0435\u0441\u043b\u0435\u043d\u043d\u044b\u0439 \u0440\u0430\u0439\u043e\u043d';
   const GO_EAST = '\u0418\u0434\u0442\u0438 \u043d\u0430 \u0432\u043e\u0441\u0442\u043e\u043a';
@@ -1789,8 +1979,9 @@ async function runFishEyeRouteToArena(page) {
   const FISH_EYE_TAVERN_PLAIN = '\u0420\u044b\u0431\u0438\u0439 \u0433\u043b\u0430\u0437';
   const DESCEND = '\u0421\u043f\u0443\u0441\u0442\u0438\u0442\u044c\u0441\u044f \u043d\u0430 \u0430\u0440\u0435\u043d\u0443';
 
-  const amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], 'Amulet');
-  if (amuletOk) await pause(page, 800, 1600);
+  // \u041a\u043b\u0438\u043a \u043f\u043e \u0442\u0435\u043a\u0441\u0442\u0443 "\u0410\u043c\u0443\u043b\u0435\u0442" \u0441\u0438\u0441\u0442\u0435\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043d\u0435 \u043d\u0430\u0445\u043e\u0434\u0438\u0442 \u0441\u0441\u044b\u043b\u043a\u0443 (Latin "A" \u0432 \u0432\u0451\u0440\u0441\u0442\u043a\u0435 \u0441\u0430\u0439\u0442\u0430, \u0441\u043c.
+  // CHAOS_FASTWAY_URL \u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0439) - \u043f\u0435\u0440\u0435\u0445\u043e\u0434\u0438\u043c \u043f\u0440\u044f\u043c\u043e \u043a \u0414\u0435\u0432\u0442\u0430\u0443\u043d\u0443 \u043f\u043e fastway URL.
+  await navigateFastway(page, DEVTOWN_FASTWAY_URL, '\u0414\u0435\u0432\u0442\u0430\u0443\u043d');
 
   await performStep(page, {
     stepName: DEVTOWN,
@@ -2359,6 +2550,19 @@ async function progressCaravanRobberyQuest(page) {
     await pause(page, 800, 1600);
   }
 
+  // \u0420\u0430\u043d\u044c\u0448\u0435 \u0437\u0434\u0435\u0441\u044c \u0431\u0435\u0437\u0443\u0441\u043b\u043e\u0432\u043d\u043e \u0441\u0442\u0430\u0432\u0438\u043b\u0441\u044f caravanRobberyDoneToday = true, \u0434\u0430\u0436\u0435 \u0435\u0441\u043b\u0438 \u0432\u0441\u0435 \u0448\u0430\u0433\u0438
+  // \u0432\u044b\u0448\u0435 \u043c\u043e\u043b\u0447\u0430 \u043d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u043d\u0430\u0448\u043b\u0438 (tryPerformStepOptional \u043d\u0435 \u0431\u0440\u043e\u0441\u0430\u0435\u0442 \u043e\u0448\u0438\u0431\u043a\u0443) \u2014 \u0442\u043e \u0435\u0441\u0442\u044c \u0444\u043b\u0430\u0433
+  // "\u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e" \u043c\u043e\u0433 \u0432\u044b\u0441\u0442\u0430\u0432\u0438\u0442\u044c\u0441\u044f \u0431\u0435\u0437 \u0440\u0435\u0430\u043b\u044c\u043d\u043e\u0433\u043e \u0431\u043e\u044f/\u043f\u0440\u043e\u0433\u0440\u0435\u0441\u0441\u0430. \u041f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u043c \u0447\u0435\u0440\u0435\u0437 Q-\u043c\u0435\u043d\u044e, \u043a\u0430\u043a
+  // \u0438 \u0434\u043b\u044f \u0425\u0430\u0440\u0447\u0435\u0432\u043d\u0438/\u0428\u0442\u043e\u043b\u0435\u043d: \u0441\u0447\u0438\u0442\u0430\u0435\u043c done \u0442\u043e\u043b\u044c\u043a\u043e \u0435\u0441\u043b\u0438 \u043a\u0432\u0435\u0441\u0442 \u0440\u0435\u0430\u043b\u044c\u043d\u043e \u043f\u0440\u043e\u043f\u0430\u043b \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430.
+  const menuOk = await resetToQuestMenu(page);
+  if (menuOk) {
+    const qNames = parseQuestNamesFromQMenuText(await getBodyText(page));
+    if (isQuestInMenu(qNames, QUEST)) {
+      console.log('Caravan Robbery quest: all after fight, but still listed in Q -> NOT marking done, will retry.');
+      return true; // \u043f\u0440\u043e\u0433\u0440\u0435\u0441\u0441 \u0431\u044b\u043b (\u0431\u043e\u0439/\u0448\u0430\u0433\u0438), \u043d\u043e \u043d\u0435 \u0441\u0447\u0438\u0442\u0430\u0435\u043c \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043d\u044b\u043c \u043d\u0430 \u0441\u0435\u0433\u043e\u0434\u043d\u044f
+    }
+  }
+
   caravanRobberyDoneToday = true;
   persistDailyQuestState();
   console.log('Caravan Robbery quest: done today');
@@ -2558,6 +2762,10 @@ async function tryPerformStepOptional(
 }
 
 async function progressShtolniQuest(page) {
+  if (!SHTOLNI_ENABLED_FOR_AI) {
+    return false;
+  }
+
   const QUEST = '\u0428\u0442\u043e\u043b\u044c\u043d\u0438';
   const CHILD_SEARCH_LINE =
     '\u0416\u0435\u043d\u0449\u0438\u043d\u0430 \u043d\u0430\u043f\u0440\u044f\u0436\u0435\u043d\u043d\u043e \u0432\u0441\u043c\u0430\u0442\u0440\u0438\u0432\u0430\u0435\u0442\u0441\u044f \u0432\u0434\u0430\u043b\u044c, \u043f\u044b\u0442\u0430\u044f\u0441\u044c \u0443\u0432\u0438\u0434\u0435\u0442\u044c \u0441\u0432\u043e\u0435\u0433\u043e \u0440\u0435\u0431\u0435\u043d\u043a\u0430.';
@@ -2601,17 +2809,57 @@ async function progressShtolniQuest(page) {
 
   // Global safety gates: user-requested constraints for this quest.
   // Enforced both when starting and when continuing an in-progress quest.
+  // AI__ (14.09.2026): порог HP задан не абсолютным числом (у AI__ max HP растёт по мере
+  // прокачки), а долей от максимума — SHTOLNI_MIN_HP_FRACTION = 0.9 (90% от hpMax).
   const stats = lastCycleStats;
   const reserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
   const hpCurrent = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
-  const reserveOk = typeof reserveMinutes === 'number' && reserveMinutes >= SHTOLNI_MIN_RESERVE_MINUTES;
-  const hpOk = typeof hpCurrent === 'number' && hpCurrent >= SHTOLNI_MIN_HP;
+  const hpMax = typeof stats?.hpMax === 'number' ? stats.hpMax : null;
+  const hpThreshold = typeof hpMax === 'number' ? Math.round(hpMax * SHTOLNI_MIN_HP_FRACTION) : null;
+  const hpOk = typeof hpCurrent === 'number' && typeof hpThreshold === 'number' && hpCurrent >= hpThreshold;
 
-  if (!reserveOk || !hpOk) {
-    console.log(`Shtolni gate: need reserve>=${SHTOLNI_MIN_RESERVE_MINUTES} and hp>=${SHTOLNI_MIN_HP}; have reserve=${reserveMinutes ?? 'n/a'} hp=${hpCurrent ?? 'n/a'}`);
+  if (!hpOk) {
+    console.log(`Shtolni gate: need hp>=${hpThreshold ?? 'n/a'} (${SHTOLNI_MIN_HP_FRACTION * 100}% of max); have hp=${hpCurrent ?? 'n/a'}`);
     return false;
   }
 
+  // 14.09.2026 (Паша): "по резерву отмени правило, просто жди сколько нужно, резерв это
+  // минуты" — резерв не блокирует попытку насовсем (как раньше, пока не наберётся сам по
+  // себе через много обычных циклов драйвера), а активно ожидается прямо здесь, сколько бы
+  // это ни заняло. HP уже проверен выше, так что ждать резерв имеет смысл.
+  const reserveOk = typeof reserveMinutes === 'number' && reserveMinutes >= SHTOLNI_MIN_RESERVE_MINUTES;
+  if (!reserveOk) {
+    console.log(`Shtolni gate: reserve=${reserveMinutes ?? 'n/a'} < ${SHTOLNI_MIN_RESERVE_MINUTES} -> жду сколько потребуется.`);
+    if (!await waitForReserveAtLeast(page, SHTOLNI_MIN_RESERVE_MINUTES, { waitMs: 5 * 60 * 1000, maxWaits: 2000 })) {
+      console.log('Shtolni: не дождался достаточного резерва (превышен предохранитель по числу попыток).');
+      return false;
+    }
+  }
+
+  // 14.09.2026 (Паша): "нужно было просто остаться и продолжить квест" — если на текущей
+  // странице уже видна "Продолжить квест" (значит квест реально в процессе, например мы
+  // выиграли первый бой и вышли долечиться), используем её напрямую вместо повторного
+  // захода через инфо-квеста → "К месту выполнения", который заново прогоняет весь путь по
+  // штольням и переигрывает уже пройденный первый бой (баг, приведший ко второму поражению).
+  let resumedInPlace = false;
+  if (await existsAnyText(page, ['Продолжить квест', 'продолжить квест'])) {
+    console.log('Shtolni: "Продолжить квест" уже на текущей странице -> продолжаем на месте, без повторного захода.');
+    resumedInPlace = await clickByTexts(
+      page,
+      ['Продолжить квест', 'продолжить квест'],
+      'Продолжить квест (resume in place)'
+    );
+    if (resumedInPlace) await pause(page, 800, 1600);
+  }
+
+  let hadFirstFight = false;
+  let hadSecondFight = false;
+
+  if (resumedInPlace) {
+    // Предполагаем, что раз квест уже шёл и предлагал прямое продолжение — первый бой уже
+    // отыгран (выигран), и мы попадаем сразу в логику развилки "Ждать"/"Ворваться" ниже.
+    hadFirstFight = true;
+  } else {
   const questExists = await existsAnyText(page, [QUEST]);
   if (!questExists) {
     return false;
@@ -2625,7 +2873,7 @@ async function progressShtolniQuest(page) {
 
   // Reserve gate for the whole shtolni run: 1st bot + 2nd bot + loot/turn-in after 2nd fight.
   // Do not leave the flow; wait in-place until we have enough reserve.
-  if (!await waitForReserveAtLeast(page, 20, { waitMs: 7 * 60 * 1000, maxWaits: 20 })) {
+  if (!await waitForReserveAtLeast(page, SHTOLNI_MIN_RESERVE_MINUTES, { waitMs: 5 * 60 * 1000, maxWaits: 2000 })) {
     console.log('Shtolni quest: reserve gate timed out, stop for now.');
     return false;
   }
@@ -2634,6 +2882,11 @@ async function progressShtolniQuest(page) {
   // to prevent parallel exclusive quest handling.
   shtolniTakenToday = true;
   if (!shtolniFocusStartedAt) shtolniFocusStartedAt = Date.now();
+
+  // 14.09.2026 (Паша): выпить "Праздничный эль" ЗАРАНЕЕ, ещё на экране инфо-квеста, пока мы
+  // не зашли в саму пещеру — раньше это делалось прямо перед первым боем, что означало
+  // навигацию в inv.php посреди "сцены" подземелья и, видимо, ломало распознавание предмета.
+  await tryDrinkFestiveAle(page);
 
   const textBefore = await getBodyText(page);
   if (/Вы еще не выполнили другое задание/i.test(textBefore)) {
@@ -2779,8 +3032,6 @@ async function progressShtolniQuest(page) {
     });
   }
 
-  let hadFirstFight = false;
-  let hadSecondFight = false;
   if (await existsAnyText(page, ['\u0412 \u0431\u043e\u0439!', '\u0432 \u0431\u043e\u0439!', '\u0412 \u0431\u043e\u0439', '\u0432 \u0431\u043e\u0439'])) {
     await performStep(page, {
       stepName: '\u0412 \u0431\u043e\u0439!',
@@ -2790,6 +3041,7 @@ async function progressShtolniQuest(page) {
     await fightLoop(page);
     hadFirstFight = true;
   }
+  } // end of !resumedInPlace branch
 
   // After the first fight we often land on a generic screen ("Вернуться"/location.php).
   // Prefer continuing the quest in-place (e.g. "Продолжить квест") instead of jumping back to Q.
@@ -2954,23 +3206,30 @@ async function progressShtolniQuest(page) {
     '\u0412\u043e\u0440\u0432\u0430\u0442\u044c\u0441\u044f',
     '\u0416\u0434\u0430\u0442\u044c',
   ]);
+  // 14.09.2026 (\u041f\u0430\u0448\u0430): \u043d\u0430 \u044d\u0442\u043e\u0439 \u0440\u0430\u0437\u0432\u0438\u043b\u043a\u0435 \u0434\u043b\u044f AI__ \u0432\u043c\u0435\u0441\u0442\u043e "\u0412\u043e\u0440\u0432\u0430\u0442\u044c\u0441\u044f \u0432 \u043a\u043e\u043c\u043d\u0430\u0442\u0443" \u0432\u0441\u0435\u0433\u0434\u0430
+  // \u0436\u043c\u0451\u043c "\u0416\u0434\u0430\u0442\u044c" (\u0434\u043e 2 \u0440\u0430\u0437 \u043f\u043e\u0434\u0440\u044f\u0434, \u043f\u043e\u043a\u0430 \u043a\u043d\u043e\u043f\u043a\u0430 \u043f\u0440\u0435\u0434\u043b\u0430\u0433\u0430\u0435\u0442\u0441\u044f) \u2014 \u043f\u043e \u0435\u0433\u043e \u0441\u043b\u043e\u0432\u0430\u043c, \u044d\u0442\u043e \u0432\u0435\u0434\u0451\u0442
+  // \u043a \u0431\u043e\u043b\u0435\u0435 \u043b\u0451\u0433\u043a\u043e\u043c\u0443 \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u044e. "\u0412\u043e\u0440\u0432\u0430\u0442\u044c\u0441\u044f" \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u043c \u0442\u043e\u043b\u044c\u043a\u043e \u0435\u0441\u043b\u0438 "\u0416\u0434\u0430\u0442\u044c" \u043d\u0435 \u043f\u0440\u0435\u0434\u043b\u0430\u0433\u0430\u044e\u0442.
   if (hadFirstFight || hasVorvatsya) {
-    let clickedVorvatsya = false;
+    let waitedCount = 0;
+    while (
+      waitedCount < 2 &&
+      (await existsAnyText(page, ['\u0416\u0434\u0430\u0442\u044c', '\u0436\u0434\u0430\u0442\u044c']))
+    ) {
+      const waitedOk = await tryPerformStepOptional(page, {
+        stepName: '\u0416\u0434\u0430\u0442\u044c',
+        currentTexts: ['\u0416\u0434\u0430\u0442\u044c', '\u0436\u0434\u0430\u0442\u044c'],
+      });
+      if (!waitedOk) break;
+      waitedCount += 1;
+      await pause(page, 800, 1600);
+    }
+    console.log(`Shtolni: clicked "\u0416\u0434\u0430\u0442\u044c" ${waitedCount} time(s) at the branch.`);
+
     if (await existsAnyText(page, ['\u0412\u043e\u0440\u0432\u0430\u0442\u044c\u0441\u044f', '\u0412\u043e\u0440\u0432\u0430\u0442\u044c\u0441\u044f \u0432 \u043a\u043e\u043c\u043d\u0430\u0442\u0443'])) {
       try {
-        clickedVorvatsya = await tryClickVorvatsya();
+        await tryClickVorvatsya();
       } catch (e) {
         // ignore
-      }
-    }
-    if (!clickedVorvatsya && await existsAnyText(page, ['\u0416\u0434\u0430\u0442\u044c', '\u0436\u0434\u0430\u0442\u044c'])) {
-      await tryPerformStepOptional(page, { stepName: '\u0416\u0434\u0430\u0442\u044c', currentTexts: ['\u0416\u0434\u0430\u0442\u044c', '\u0436\u0434\u0430\u0442\u044c'] });
-      if (await existsAnyText(page, ['\u0412\u043e\u0440\u0432\u0430\u0442\u044c\u0441\u044f', '\u0412\u043e\u0440\u0432\u0430\u0442\u044c\u0441\u044f \u0432 \u043a\u043e\u043c\u043d\u0430\u0442\u0443'])) {
-        try {
-          await tryClickVorvatsya();
-        } catch (e) {
-          // ignore
-        }
       }
     }
   }
@@ -2994,9 +3253,23 @@ async function progressShtolniQuest(page) {
   if (await existsAnyText(page, ['\u0412 \u0431\u043e\u0439!', '\u0432 \u0431\u043e\u0439!', '\u0412 \u0431\u043e\u0439', '\u0432 \u0431\u043e\u0439', '\u0423\u0434\u0430\u0440\u0438\u0442\u044c', '\u0443\u0434\u0430\u0440\u0438\u0442\u044c'])) {
     // HP gate: only if we can actually parse HP on this page.
     // On some fight/transition pages stats parsing is unavailable; do not block the quest in that case.
+    // 14.09.2026 (\u041f\u0430\u0448\u0430): "\u0445\u0438\u043b \u043f\u043e\u0441\u043b\u0435 \u043a\u0430\u0436\u0434\u043e\u0433\u043e \u0431\u043e\u044f" \u2014 \u0430\u0431\u0441\u043e\u043b\u044e\u0442\u043d\u044b\u0439 \u043f\u043e\u0440\u043e\u0433 2000 \u0431\u044b\u043b \u0440\u0430\u0441\u0441\u0447\u0438\u0442\u0430\u043d \u043d\u0430
+    // Tsunami (\u0442\u044b\u0441\u044f\u0447\u0438 HP) \u0438 \u0443 AI__ (max ~300-400) \u043d\u0438\u043a\u043e\u0433\u0434\u0430 \u043d\u0435 \u043c\u043e\u0433 \u0441\u0440\u0430\u0431\u043e\u0442\u0430\u0442\u044c (\u0432\u0435\u0447\u043d\u044b\u0439 \u0442\u0430\u0439\u043c\u0430\u0443\u0442).
+    // \u0417\u0430\u043c\u0435\u043d\u0435\u043d\u043e \u043d\u0430 \u0434\u043e\u043b\u044e \u043e\u0442 \u0442\u0435\u043a\u0443\u0449\u0435\u0433\u043e hpMax \u044d\u0442\u043e\u0433\u043e \u043f\u0435\u0440\u0441\u043e\u043d\u0430\u0436\u0430, \u043a\u0430\u043a \u0438 \u0432 \u043e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u0445 \u0433\u0435\u0439\u0442\u0430\u0445 \u0428\u0442\u043e\u043b\u0435\u043d.
+    const statsForGate = parseStats(await getBodyText(page));
+    // Транзитные экраны ("Далее"/"Ждать") часто не содержат обычный заголовок с HP/max —
+    // в этом случае используем hpMax из lastCycleStats (последний раз, когда его удалось
+    // прочитать на location.php), а не абсолютный "2000" (тот всегда недостижим у AI__).
+    const hpMaxForGate =
+      typeof statsForGate.hpMax === 'number'
+        ? statsForGate.hpMax
+        : typeof lastCycleStats?.hpMax === 'number'
+        ? lastCycleStats.hpMax
+        : null;
+    const hpGateThreshold = hpMaxForGate ? Math.max(1, Math.round(hpMaxForGate * SHTOLNI_MIN_HP_FRACTION) - 1) : SHTOLNI_MIN_HP;
     const hpNow = await getHpCurrentSafe(page);
-    if (hpNow !== null && hpNow <= 2000) {
-      if (!await waitForHpAbove(page, 2000, { waitMs: 5 * 60 * 1000, maxWaits: 24 })) {
+    if (hpNow !== null && hpNow <= hpGateThreshold) {
+      if (!await waitForHpAbove(page, hpGateThreshold, { waitMs: 5 * 60 * 1000, maxWaits: 24 })) {
         console.log('Shtolni quest: HP gate timed out, stop for now.');
         return progressed;
       }
@@ -3011,6 +3284,20 @@ async function progressShtolniQuest(page) {
     await fightLoop(page);
     progressed = true;
     hadSecondFight = true;
+    // 14.09.2026 (Паша): диагностика — не видели вживую, что реально показывается после 2го боя — снимаем полный текст и ссылки для отладки exitSteps.
+    try {
+      const linksNow = await page.locator('a').evaluateAll((els) =>
+        els.map((e) => ({ t: e.textContent.trim(), href: e.getAttribute('href') })).filter((x) => x.t)
+      );
+      const bodyText = await getBodyText(page);
+      appendDebugSnapshot('Shtolni: state right after 2nd fight (for exitSteps tuning)', {
+        label: 'shtolni_after_2nd_fight',
+        url: page.url(),
+        text: `${bodyText}\n\nLINKS: ${JSON.stringify(linksNow)}`,
+      });
+    } catch (e) {
+      // ignore
+    }
   }
 
   // Wrap up and exit.
@@ -3019,28 +3306,88 @@ async function progressShtolniQuest(page) {
     return progressed;
   }
 
-  const exitSteps = [
-    '\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c \u043a\u0432\u0435\u0441\u0442',
-    '\u0414\u0430\u043b\u0435\u0435',
-    '\u0418\u0434\u0442\u0438 \u043d\u0430 \u044e\u0433',
-    '\u0418\u0434\u0442\u0438 \u043d\u0430 \u0437\u0430\u043f\u0430\u0434',
-    '\u041f\u043e\u0433\u043e\u0432\u043e\u0440\u0438\u0442\u044c \u0441 \u0436\u0435\u043d\u0449\u0438\u043d\u043e\u0439',
-    '\u041e\u0442\u043a\u0430\u0437\u0430\u0442\u044c\u0441\u044f',
-    '\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f',
-  ];
+  // \u0412\u041d\u0418\u041c\u0410\u041d\u0418\u0415 (\u041f\u0430\u0448\u0430, 14.09.2026): "\u041e\u0442\u043a\u0430\u0437\u0430\u0442\u044c\u0441\u044f" \u0437\u0434\u0435\u0441\u044c \u0443 Tsunami \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043e\u0442\u043a\u043b\u043e\u043d\u044f\u0435\u0442
+  // \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u043d\u0443\u044e \u043d\u0430\u0433\u0440\u0430\u0434\u0443 \u0432 \u0444\u0438\u043d\u0430\u043b\u044c\u043d\u043e\u043c \u0434\u0438\u0430\u043b\u043e\u0433\u0435 \u2014 \u0434\u043b\u044f AI__ \u0442\u0430\u043a \u0434\u0435\u043b\u0430\u0442\u044c \u041d\u0415 \u043d\u0430\u0434\u043e. \u041f\u043e\u043a\u0430 \u043d\u0435
+  // \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043e \u0432\u0436\u0438\u0432\u0443\u044e, \u0447\u0442\u043e \u0438\u043c\u0435\u043d\u043d\u043e \u043f\u0440\u0435\u0434\u043b\u0430\u0433\u0430\u0435\u0442\u0441\u044f \u0432\u0437\u0430\u043c\u0435\u043d ("\u0412\u0437\u044f\u0442\u044c"/"\u041f\u0440\u0438\u043d\u044f\u0442\u044c"/\u0434\u0440.), \u043f\u043e\u044d\u0442\u043e\u043c\u0443
+  // "\u041e\u0442\u043a\u0430\u0437\u0430\u0442\u044c\u0441\u044f" \u0438\u0437 \u0430\u0432\u0442\u043e-\u043a\u043b\u0438\u043a\u0430 \u0443\u0431\u0440\u0430\u043d \u0438 \u0437\u0430\u043c\u0435\u043d\u0451\u043d \u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u043e\u0439: \u0435\u0441\u043b\u0438 \u044d\u0442\u043e\u0442 \u0448\u0430\u0433 \u0432\u0441\u043f\u043b\u044b\u0432\u0451\u0442,
+  // \u0432 \u043b\u043e\u0433\u0435 \u043f\u043e\u044f\u0432\u0438\u0442\u0441\u044f \u043f\u043e\u043b\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u044d\u043a\u0440\u0430\u043d\u0430, \u0447\u0442\u043e\u0431\u044b \u0440\u0435\u0448\u0438\u0442\u044c \u043e\u0441\u043e\u0437\u043d\u0430\u043d\u043d\u043e, \u0430 \u043d\u0435 \u0432\u044b\u0431\u0440\u0430\u0442\u044c \u043d\u0435 \u0433\u043b\u044f\u0434\u044f.
+  // 14.09.2026 (\u041f\u0430\u0448\u0430): "\u043d\u0435 \u043e\u0442\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u043c\u0441\u044f \u043e\u0442 \u043d\u0430\u0433\u0440\u0430\u0434\u044b, \u0431\u0435\u0440\u0451\u043c \u0435\u0451" \u2014 \u043f\u0440\u043e\u0431\u0443\u0435\u043c \u0432\u0430\u0440\u0438\u0430\u043d\u0442\u044b \u043f\u0440\u0438\u043d\u044f\u0442\u0438\u044f
+  // (\u0442\u0435\u043a\u0441\u0442 \u043a\u043d\u043e\u043f\u043a\u0438 \u0442\u043e\u0447\u043d\u043e \u043d\u0435 \u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043d, \u0442.\u043a. \u0432\u0436\u0438\u0432\u0443\u044e \u0434\u043e \u044d\u0442\u043e\u0433\u043e \u044d\u043a\u0440\u0430\u043d\u0430 \u0440\u0430\u043d\u044c\u0448\u0435 \u043d\u0435 \u0434\u043e\u0445\u043e\u0434\u0438\u043b\u0438).
+  const tryAcceptShtolniReward = async () => {
+    if (!await existsAnyText(page, ['\u041e\u0442\u043a\u0430\u0437\u0430\u0442\u044c\u0441\u044f', '\u043e\u0442\u043a\u0430\u0437\u0430\u0442\u044c\u0441\u044f'])) {
+      return false;
+    }
+    const ACCEPT_CANDIDATES = [
+      '\u0412\u0437\u044f\u0442\u044c \u043d\u0430\u0433\u0440\u0430\u0434\u0443',
+      '\u0412\u0437\u044f\u0442\u044c',
+      '\u041f\u0440\u0438\u043d\u044f\u0442\u044c \u043d\u0430\u0433\u0440\u0430\u0434\u0443',
+      '\u041f\u0440\u0438\u043d\u044f\u0442\u044c',
+      '\u0421\u043e\u0433\u043b\u0430\u0441\u0438\u0442\u044c\u0441\u044f',
+      '\u0417\u0430\u0431\u0440\u0430\u0442\u044c',
+    ];
+    const accepted = await clickByTextsLoose(page, ACCEPT_CANDIDATES, 'Shtolni reward accept');
+    appendDebugSnapshot(
+      accepted
+        ? 'Shtolni: reward accept button clicked'
+        : 'Shtolni: "\u041e\u0442\u043a\u0430\u0437\u0430\u0442\u044c\u0441\u044f" screen reached, no known accept button matched (AI__ \u2014 needs manual review)',
+      { label: 'shtolni_decline_screen', url: page.url(), text: await getBodyText(page) }
+    );
+    if (accepted) await pause(page, 800, 1600);
+    return accepted;
+  };
+
+  // 14.09.2026 (\u041f\u0430\u0448\u0430): \u0432\u043c\u0435\u0441\u0442\u043e \u0437\u0430\u0448\u0438\u0442\u043e\u0433\u043e \u0441\u043f\u0438\u0441\u043a\u0430 \u0448\u0430\u0433\u043e\u0432 \u0432\u044b\u0445\u043e\u0434\u0430 (\u043e\u043a\u0430\u0437\u0430\u043b\u0441\u044f \u043d\u0435\u0432\u0435\u0440\u043d\u044b\u043c \u2014 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0439 \u043e\u0431\u0440\u0430\u0442\u043d\u044b\u0439 \u043f\u0443\u0442\u044c \u0447\u0435\u0440\u0435\u0437 \u0448\u0442\u043e\u043b\u044c\u043d\u0438 \u2014 "\u0418\u0434\u0442\u0438 \u043d\u0430 \u044e\u0433" \u2192 "\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0434\u0432\u0435\u0440\u044c", \u0430 \u043d\u0435 "\u0418\u0434\u0442\u0438 \u043d\u0430 \u0437\u0430\u043f\u0430\u0434")
+  // \u0438\u0434\u0451\u043c \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438: \u043f\u043e\u043a\u0430 \u043d\u0430 \u044d\u043a\u0440\u0430\u043d\u0435 \u0440\u043e\u0432\u043d\u043e \u043e\u0434\u0438\u043d \u043e\u0441\u043c\u044b\u0441\u043b\u0435\u043d\u043d\u044b\u0439 \u0432\u044b\u0431\u043e\u0440 (\u0438\u0441\u043a\u043b\u044e\u0447\u0430\u044f \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u043e\u0435 \u043c\u0435\u043d\u044e \u0441\u0430\u0439\u0442\u0430) \u2014 \u043a\u043b\u0438\u043a\u0430\u0435\u043c \u043f\u043e \u043d\u0435\u043c\u0443, \u043a\u0430\u043a \u0432 \u0440\u0430\u0437\u0432\u0435\u0434\u043a\u0435 "\u041a\u043e\u043b\u043e\u0434\u0446\u0430 \u0421\u0442\u0440\u0430\u0445\u0430" \u0432 \u044d\u0442\u043e\u0439 \u0436\u0435 \u0441\u0435\u0441\u0441\u0438\u0438. \u041e\u0441\u0442\u0430\u043d\u0430\u0432\u043b\u0438\u0432\u0430\u0435\u043c\u0441\u044f \u043d\u0430 \u0440\u0430\u0437\u0432\u0438\u043b\u043a\u0435/\u0431\u043e\u0435 \u0438\u043b\u0438 \u043a\u043e\u0433\u0434\u0430 \u0441\u0441\u044b\u043b\u043e\u043a \u043d\u0435\u0442 \u0432\u043e\u0432\u0441\u0435.
+  const BORING_LINK_TEXTS = new Set([
+    '\u0410\u043c\u0443\u043b\u0435\u0442', '\u0410mulet', '\u041a\u043e\u043d\u044c', '\u041a\u0430\u0440\u0442\u0430', '\u0427\u0430\u0442', '\u0424\u043e\u0440\u0443\u043c', '\u041a\u043b\u0430\u043d\u044b', '\u0416\u0413', '\u0413\u0430\u043b\u0435\u0440\u0435\u044f',
+    '\u041a\u0442\u043e \u0437\u0434\u0435\u0441\u044c?', '\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c', '\u0412 \u0438\u0433\u0440\u0443', '\u0412\u044b\u0445\u043e\u0434', '\u0420\u0430\u0437\u043c\u0435\u0440 \u0442\u0435\u043a\u0441\u0442\u0430',
+  ]);
+  const isBoringLink = (t) => BORING_LINK_TEXTS.has(t) || /^\u0411\u043e\u0438\s*\[?\d*\]?$/i.test(t) || /^\u041f\u043e\u043c\u043e\u0449\u044c/i.test(t) || /^\u041f\u0430\u043c\u044f\u0442\u043d\u0438\u043a/i.test(t);
+
+  await tryAcceptShtolniReward();
 
   let didExit = false;
-  for (let i = 0; i < exitSteps.length; i++) {
-    const step = exitSteps[i];
-    const next = exitSteps[i + 1] ? [exitSteps[i + 1], exitSteps[i + 1].toLowerCase()] : [];
-    const ok = await tryPerformStepOptional(page, {
-      stepName: step,
-      currentTexts: [step, step.toLowerCase()],
-      nextTexts: next,
-    });
-    if (ok) progressed = true;
-    if (step === '\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f' && ok) didExit = true;
+  for (let i = 0; i < 15; i++) {
+    if (await tryAcceptShtolniReward()) {
+      progressed = true;
+      continue;
+    }
+
+    const linksNow = await page.locator('a').evaluateAll((els) =>
+      els.map((e) => ({ t: e.textContent.trim(), href: e.getAttribute('href') })).filter((x) => x.t)
+    ).catch(() => []);
+    const meaningful = linksNow.filter((l) => !isBoringLink(l.t));
+
+    if (meaningful.length === 0) {
+      // Ничего осмысленного больше нет — вероятно вышли обратно на обычную локацию.
+      if (/location\.php/i.test(page.url())) {
+        didExit = true;
+      }
+      break;
+    }
+    // 14.09.2026 (Паша, живой прогон): на обратном пути встречается развилка "Идти на юг" / "Открыть дверь"
+    // (та же дверь, что и на входе) — предпочитаем "Идти на юг" (продолжать обратный путь),
+    // а не заходить в дверь снова.
+    const southOption = meaningful.find((l) => /^Идти на юг$/i.test(l.t));
+    if (meaningful.length > 1 && !southOption) {
+      appendDebugSnapshot('Shtolni: exit walk hit a decision point (multiple options) - stopping', {
+        label: 'shtolni_exit_decision',
+        url: page.url(),
+        text: `${await getBodyText(page)}\n\nLINKS: ${JSON.stringify(meaningful)}`,
+      });
+      break;
+    }
+
+    const label = southOption ? southOption.t : meaningful[0].t;
+    const clicked = await clickByTexts(page, [label], `Shtolni exit: ${label}`);
+    if (!clicked) break;
+    progressed = true;
+    if (/\u0432\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f/i.test(label)) {
+      didExit = true;
+    }
+    await pause(page, 700, 1400);
   }
+  await tryAcceptShtolniReward();
 
   // IMPORTANT: do not mark Shtolni as "done" just because we exited the flow.
   // Some branches show exit-like buttons after the first fight, but the quest still has a second fight.
@@ -3546,7 +3893,12 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
 
   if (!isRealAttacker) {
     console.log(`"В бой" -> противник "${opponentName}" (не игрок) -> это бой с ${FARM_LABEL}, не атака`);
-    await runIncomingAttackPvpLoop(page).catch(() => {});
+    // 15.09.2026, живой баг: этот бой - НЕ настоящий PvP (нет смысла "тянуть время, чтобы
+    // выглядеть по-человечески" против оппонента, который не является игроком - никто не
+    // ждёт свой ход). runIncomingAttackPvpLoop растягивал даже простого квестового пса
+    // (Гильдия асассинов: картина) на ~100-115 сек между ударами - используем обычный
+    // быстрый fightLoop вместо медленной PvP-паузы.
+    await fightLoop(page).catch(() => {});
     try {
       await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 800, 1600);
@@ -3603,25 +3955,43 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   return true;
 }
 
+// 16.09.2026: link/button text on lbast.ru sometimes contains a literal ASCII `"` (e.g.
+// 'Ответить "да"', 'Таверна "Три поросенка"') - interpolating that straight into a
+// double-quoted CSS string (`a:has-text("${text}")`) breaks the selector's own quoting and
+// silently matches nothing (no error, just "не найдено ни одного варианта"). Hit this bug
+// twice live this session before finally fixing it here instead of working around it with a
+// shorter substring each time.
+function escapeCssStringLiteral(str) {
+  return String(str || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function buildSelectorsForText(text) {
   // Use these selectors when we intend to CLICK something.
   // Avoid `text=` for clicking because it can match non-clickable text and lead to wrong clicks
   // (e.g. hitting "Настройка" or other nearby labels).
+  // IMPORTANT: append Playwright's `:visible` pseudo-class. Some location pages render a
+  // second, hidden copy of the nav (display:none, 0x0 rect — looks like leftover
+  // responsive/mobile markup) BEFORE the real one in DOM order. `.first()` on an unfiltered
+  // selector then grabs the invisible clone forever, and every click on it times out with
+  // "element is not visible" no matter how long we wait. Found 15.09.2026 on the "Конь" nav
+  // link, but the same hidden-duplicate pattern can affect any nav link on such a page.
+  const escaped = escapeCssStringLiteral(text);
   return [
-    `a:has-text("${text}")`,
-    `button:has-text("${text}")`,
-    `input[value="${text}"]`,
+    `a:has-text("${escaped}"):visible`,
+    `button:has-text("${escaped}"):visible`,
+    `input[value="${escaped}"]:visible`,
   ];
 }
 
 function buildSelectorsForClickableDetect(text) {
   // Use these selectors when we want to DETECT that a clickable action is available.
   // Some lbast pages use non-standard clickable elements.
+  const escaped = escapeCssStringLiteral(text);
   return [
     ...buildSelectorsForText(text),
-    `[onclick]:has-text("${text}")`,
-    `[role="link"]:has-text("${text}")`,
-    `[role="button"]:has-text("${text}")`,
+    `[onclick]:has-text("${escaped}")`,
+    `[role="link"]:has-text("${escaped}")`,
+    `[role="button"]:has-text("${escaped}")`,
   ];
 }
 
@@ -3632,6 +4002,40 @@ function buildSelectorsForTextAny(text) {
 
 function escapeRegexLiteral(str) {
   return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// 16.09.2026, Паша: "если под текстом одна кнопка то сразу ее нажать - все равно выбора нет".
+// Общая логика для линейных сюжетных цепочек (диалоги/квестовые сцены, где на экране всегда
+// ровно один осмысленный переход) - убираем служебные пункты шапки/меню сайта и, если остаётся
+// РОВНО одна содержательная ссылка, кликаем её без необходимости знать точный текст заранее.
+// Изначально была написана как одноразовая copy-paste функция внутри временного скрипта для
+// Дня 3 "Жертвоприношения" (см. feedback_shtolni_debugging_mistakes) - теперь общий хелпер.
+const NAV_SERVICE_WORDS = [
+  // "Aмулет" (латинская A, U+0041) - известный баг верстки сайта, ссылка иногда рендерится
+  // с латинской буквой вместо кириллической "Амулет" (см. feedback_shtolni_debugging_mistakes) -
+  // без обоих вариантов фильтр пропускает её как "содержательную" ссылку и ломает
+  // одно-кнопочные экраны ложной неоднозначностью.
+  'Чат', 'В игру', 'Обновить', 'Амулет', 'Aмулет', 'Конь', 'Форум', 'ЖГ', 'Карта', 'Кланы',
+  'Бои', 'Выход', 'Размер текста', 'Помощь', 'Галерея', 'Кто здесь?', 'Уйти',
+];
+
+async function clickOnlySensibleOption(page, label = 'единственный вариант') {
+  const links = (await page.locator('a').allTextContents()).map((t) => t.trim()).filter(Boolean);
+  const candidates = links.filter(
+    (l) =>
+      l.length > 3 &&
+      !NAV_SERVICE_WORDS.some((w) => l === w || l.includes(w)) &&
+      // Персонажный ник со статами в шапке, напр. "AI__ (380/380)" - ссылка на pers.php,
+      // не игровой выбор.
+      !/^[\wА-Яа-яЁё_]+\s*\(\d+\/\d+\)$/.test(l)
+  );
+  const unique = [...new Set(candidates)];
+  if (unique.length !== 1) {
+    return { clicked: false, reason: unique.length === 0 ? 'no_candidates' : 'ambiguous', candidates: unique };
+  }
+  const target = unique[0];
+  const ok = await clickByTexts(page, [target], `${label}: "${target}"`);
+  return { clicked: ok, target, candidates: unique };
 }
 
 async function existsAnyText(page, texts) {
@@ -4320,6 +4724,12 @@ async function ensureFarmFightScreen(page) {
 
 const STONEGUARD_FASTWAY_URL = 'http://lbast.ru/location.php?r=6174&mod=fastway&lway=2';
 const CITY_FASTWAY_URL = 'http://lbast.ru/location.php?r=7900&mod=fastway&lway=2';
+// Ссылка "Амулет" в верхнем меню сайта написана с ЛАТИНСКОЙ "A" (U+0041), а не кириллической
+// "А" (U+0410) - клик по тексту "Амулет" на этом аккаунте систематически не находит ссылку
+// (см. LESSONS_AI_CHAR.md, "Технические баги"). Обходной путь везде, где раньше кликали
+// Амулет -> конкретное направление: переходить прямо по URL mod=fastway&lway=N.
+const CHAOS_FASTWAY_URL = 'http://lbast.ru/location.php?mod=fastway&lway=4'; // Кулак Хаоса
+const DEVTOWN_FASTWAY_URL = 'http://lbast.ru/location.php?mod=fastway&lway=8'; // Девтаун
 
 async function navigateFastway(page, url, label) {
   try {
@@ -4366,8 +4776,205 @@ function scheduleLongRestMinutes(minutes, reason) {
   console.log(`Long rest scheduled: ${minutes} min (${reason})`);
 }
 
+// "Эликсир лечения (HP+40)" (oid=1005), экипированный в подсумок (inv.php?mod=put_on),
+// появляется в бою через кнопку "Пояс" (arena_go.php?poyas=1) как ссылка
+// "Использовать Эликсир лечения (HP+40)" (arena_go.php?poyas=1&zapoyasom=1005).
+// Найдено и подтверждено вживую 14.09.2026 после подсказки Паши про квест "Дерево жизни".
+const HEALING_ELIXIR_ITEM_ID = '1005';
+const HEALING_ELIXIR_HP_FRACTION = 0.3;
+
+// 15.09.2026, Паша: "не забывай сам одевать" - после респека статов (Снять все -> сброс)
+// консьюмерские слоты (Пояс/Подсумок) остаются пустыми, если их явно не переэкипировать -
+// раньше это делалось вручную (то Пашей, то диагностическим скриптом), и не всегда
+// вспоминали сразу. Периодическая самопроверка вместо того, чтобы полагаться на то, что
+// кто-то заметит пустой слот: если Пояс или Подсумок пустует, ищем в инвентаре (invMod=3,
+// с обходом всех cpage=) строку "Оберег воина"/"Эликсир лечения" с "Экипировать" и жмём.
+// Никогда не трогает слот, если там уже что-то есть - только заполняет пустые.
+const HEALING_SLOT_ITEM_NAMES = ['Оберег воина', 'Эликсир лечения'];
+
+function isOutfitSlotEmpty(outfitText, slotLabel) {
+  const lines = outfitText.split('\n').map((l) => l.trim());
+  const line = lines.find((l) => l.startsWith(`${slotLabel}:`));
+  if (!line) return false; // slot not found on page at all - don't guess
+  const rest = line.slice(slotLabel.length + 1).trim();
+  return rest.length === 0;
+}
+
+async function ensureHealingGearEquipped(page) {
+  await page.goto('http://lbast.ru/inv.php?mod=outfit', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const outfitText = await getBodyText(page);
+  const beltEmpty = isOutfitSlotEmpty(outfitText, 'Пояс');
+  const pouchEmpty = isOutfitSlotEmpty(outfitText, 'Подсумок');
+  if (!beltEmpty && !pouchEmpty) return false;
+
+  let equippedSomething = false;
+  for (let cpage = 1; cpage <= 5; cpage++) {
+    const url = cpage === 1
+      ? 'http://lbast.ru/inv.php?invMod=3'
+      : `http://lbast.ru/inv.php?invMod=3&cpage=${cpage}`;
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const hrefs = await page.evaluate((names) => {
+      const rows = Array.from(document.querySelectorAll('a'));
+      const found = [];
+      for (const a of rows) {
+        if (a.textContent && a.textContent.trim() === 'Экипировать') {
+          const row = a.closest('tr') || a.parentElement;
+          const rowText = row ? row.textContent : '';
+          if (names.some((n) => rowText.includes(n))) {
+            found.push(a.getAttribute('href'));
+          }
+        }
+      }
+      return found;
+    }, HEALING_SLOT_ITEM_NAMES).catch(() => []);
+
+    if (hrefs.length === 0) continue;
+    for (const href of hrefs) {
+      const fullUrl = href.startsWith('http') ? href : `http://lbast.ru/${href.replace(/^\//, '')}`;
+      await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      console.log('ensureHealingGearEquipped: экипировал предмет ->', fullUrl);
+      equippedSomething = true;
+      await pause(page, 500, 900);
+    }
+    // Re-check whether both slots are now filled before scanning more pages.
+    await page.goto('http://lbast.ru/inv.php?mod=outfit', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const recheck = await getBodyText(page);
+    if (!isOutfitSlotEmpty(recheck, 'Пояс') && !isOutfitSlotEmpty(recheck, 'Подсумок')) break;
+  }
+  return equippedSomething;
+}
+
+// 15.09.2026, живой баг: когда эликсиров в инвентаре больше нет, эта страница отвечает
+// "Предмет не найден!" (обычный 200 OK, не сетевая ошибка - try/catch её не ловит) и НЕ
+// возвращает в бой - ни "Ударить", ни "В бой", ни "Сбросить пары" на ней нет. Раньше
+// функция считала это успехом (`return true`), fightLoop продолжал ждать боевую кнопку и
+// зависал на 10 итераций (`fight_not_reached`), оставляя location.php потом застрявшим на
+// голом "В бой!" на много циклов подряд. Теперь проверяем текст ответа явно.
+async function tryUseHealingElixir(page) {
+  try {
+    await page.goto(`http://lbast.ru/arena_go.php?poyas=1&zapoyasom=${HEALING_ELIXIR_ITEM_ID}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
+    });
+    const text = await getBodyText(page);
+    if (/Предмет не найден/i.test(text)) {
+      console.log('Эликсир лечения: закончился в инвентаре ("Предмет не найден!") -> возвращаюсь в бой без лечения.');
+      // Эта страница - тупик (нет ни "Ударить", ни "В бой"), нужно вернуться на сам бой.
+      await page.goBack({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      return false;
+    }
+    console.log('Used Эликсир лечения (HP+40) mid-fight.');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Временные усилители из инвентаря (не боевые предметы, расходники) - дают бафф к статам
+// на ограниченное время, статус виден в pers.php как "<название> ещё N мин." (подтверждено
+// live 15-16.09.2026: "Состояние AI__: вырви глаз" уже был виден на боевом экране, значит
+// эль вырви глаз кем-то использовался раньше и статус-текст в этом формате реален).
+// 16.09.2026, Паша: "в игре есть усилители временные... праздничный эль и эль вырви глаз,
+// можешь использовать их через инвентарь - усиляют на разное время, но будет проще бить
+// ботов" - обобщили однократную функцию под Праздничный эль (была только для Штолен,
+// 14.09.2026) на список из обоих элей, вызывается перед началом фарм-сессии (не в каждом
+// бою - бафф держится долго, повторное использование при уже активном статусе - трата
+// расходника впустую).
+// 17.09.2026, живой баг: код искал эль в инвентаре ТОЧНЫМ сравнением строк и потому никогда
+// его не находил ("Эль вырви глаз: не найден в инвентаре (закончился?)" в каждом запуске), хотя
+// эль лежал на месте - реальное имя предмета в инвентаре пишется с кавычками и заглавной буквой:
+// Эль "Вырви глаз". Сравниваем нормализованно (без кавычек, регистра и лишних пробелов).
+function normalizeItemName(s) {
+  return String(s || '').replace(/[«»"'`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+const BUFF_ALE_ITEM_NAMES = ['Праздничный эль', 'Эль "Вырви глаз"'];
+
+async function tryDrinkBuffAle(page, aleName) {
+  const currentUrl = page.url();
+  try {
+    await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const persText = await getBodyText(page);
+    // "Праздничный эль" -> "праздничный эль", Эль "Вырви глаз" -> "вырви глаз" (статус в
+    // pers.php использует короткое имя эффекта, не полное название предмета; кавычки из
+    // названия предмета в статусе не встречаются - снимаем их нормализацией).
+    const statusName = normalizeItemName(aleName).replace(/^эль\s+/, '');
+    if (new RegExp(`${statusName}\\s+ещ[её]`, 'i').test(persText)) {
+      console.log(`${aleName}: уже активен, повторно не пьём.`);
+      await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      return false;
+    }
+
+    await page.goto('http://lbast.ru/inv.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const links = await page.locator('a').evaluateAll((els) =>
+      els.map((e) => ({ t: e.textContent.trim(), href: e.getAttribute('href') })).filter((x) => x.t)
+    );
+    const idx = links.findIndex((l) => normalizeItemName(l.t) === normalizeItemName(aleName));
+    if (idx === -1) {
+      console.log(`${aleName}: не найден в инвентаре (закончился?).`);
+      await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      return false;
+    }
+    const useLink = links.slice(idx, idx + 4).find((l) => l.t === 'Использовать');
+    if (!useLink) {
+      console.log(`${aleName}: не нашёл кнопку "Использовать" рядом с элем.`);
+      await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      return false;
+    }
+    const useUrl = useLink.href.startsWith('http') ? useLink.href : 'http://lbast.ru/' + useLink.href.replace(/^\//, '');
+    await page.goto(useUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    console.log(`Выпит ${aleName}.`);
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return true;
+  } catch (e) {
+    console.log(`tryDrinkBuffAle(${aleName}) error:`, e.message);
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return false;
+  }
+}
+
+// Обходит оба эля раз за вызов - используется на старте фарм-сессии, не в каждом бою.
+async function ensureBuffAlesActive(page) {
+  let usedAny = false;
+  for (const aleName of BUFF_ALE_ITEM_NAMES) {
+    const used = await tryDrinkBuffAle(page, aleName);
+    if (used) usedAny = true;
+    await pause(page, 500, 1000);
+  }
+  return usedAny;
+}
+
+// 16.09.2026, Паша: "с активным элем можно опустить порог хп до 0.4" - один общий
+// pers.php-чек раз за цикл (не по разу на каждую фарм-функцию), результат передаётся в
+// runHarpyFarmRound/runBisonFarmRound/runBoarFarmRound как параметр, чтобы не плодить
+// лишние обращения к pers.php на каждый вызов.
+const HP_FLOOR_WITH_BUFF = 0.4;
+
+async function isAnyBuffAleActive(page) {
+  const currentUrl = page.url();
+  try {
+    await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const text = await getBodyText(page);
+    const active = BUFF_ALE_ITEM_NAMES.some((aleName) => {
+      const statusName = normalizeItemName(aleName).replace(/^эль\s+/, '');
+      return new RegExp(`${statusName}\\s+ещ[её]`, 'i').test(text);
+    });
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return active;
+  } catch (e) {
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return false;
+  }
+}
+
+// Обратная совместимость с существующим вызовом для Штолен (не трогаем этот путь).
+async function tryDrinkFestiveAle(page) {
+  return tryDrinkBuffAle(page, 'Праздничный эль');
+}
+
 async function fightLoop(page) {
   const UDAR = '\u0423\u0434\u0430\u0440\u0438\u0442\u044c';
+  const SKILL = '\u0423\u043c\u0435\u043d\u0438\u0435';
   const START_FIGHT_TEXTS = [
     '\u0412 \u0431\u043e\u0439!',
     '\u0432 \u0431\u043e\u0439!',
@@ -4391,6 +4998,10 @@ async function fightLoop(page) {
   // боя). Не крутим 300 итераций (~10 мин), а быстро бросаем ошибку -> цикл восстановится.
   const MAX_STUCK = 10;
   let stuck = 0;
+  // Ограничение на попытки эликсира в рамках одного боя — без этого при исчерпании запаса
+  // (obычно всего 1-2 шт. на весь инвентарь) цикл будет бесконечно "лечиться" вместо ударов.
+  const MAX_ELIXIR_USES_PER_FIGHT = 1;
+  let elixirUsesThisFight = 0;
 
   for (let i = 0; i < 300; i++) {
     const text = await getBodyText(page);
@@ -4400,6 +5011,15 @@ async function fightLoop(page) {
       if (!ok) throw new Error('fight_done_click_failed');
       await pause(page, 800, 2000);
       return true;
+    }
+
+    // Repeatable hunt targets (Гарпия/Бизон/etc.) have a real in-game per-target cooldown:
+    // "Вы слишком устали, приходите через N мин." Ported from Tsunami's daily_quests_piraty.js
+    // (commit fb9dea7, 16.09.2026) - detect it and throw a distinguishable error instead of
+    // burning through MAX_STUCK iterations hunting for a fight that isn't there right now.
+    const tiredMatch = text.match(/Вы\s+слишком\s+устали.{0,40}?через\s+(\d+)\s*мин/i);
+    if (tiredMatch) {
+      throw new Error(`fight_target_cooldown:${Number(tiredMatch[1]) || 1}`);
     }
 
     // Sometimes we are on a pre-fight page and must click "В бой" first.
@@ -4432,6 +5052,26 @@ async function fightLoop(page) {
     // but not always shown - in paired-bot fights it can appear on only one of the two bots.
     // Use it whenever HP drops below 75% max, then proceed to the normal hit.
     const stats = parseStats(text);
+
+    // Эликсир лечения (HP+40), экипированный в подсумок, доступен в бою через "Пояс" ->
+    // "Использовать Эликсир лечения". Ресурс ограничен (обычно 1-2 шт.), поэтому применяем
+    // только в реально опасной ситуации (HP < 30% от максимума в этом бою), не на каждый чих.
+    if (
+      elixirUsesThisFight < MAX_ELIXIR_USES_PER_FIGHT &&
+      typeof stats.hpCurrent === 'number' &&
+      typeof stats.hpMax === 'number' &&
+      stats.hpMax > 0 &&
+      stats.hpCurrent < stats.hpMax * HEALING_ELIXIR_HP_FRACTION
+    ) {
+      const usedElixir = await tryUseHealingElixir(page);
+      if (usedElixir) {
+        elixirUsesThisFight += 1;
+        stuck = 0;
+        await pause(page, 800, 1600);
+        continue;
+      }
+    }
+
     if (
       typeof stats.hpCurrent === 'number' &&
       typeof stats.hpMax === 'number' &&
@@ -4443,6 +5083,24 @@ async function fightLoop(page) {
       if (receptionOk) {
         await pause(page, 500, 1200);
       }
+    }
+
+    if (process.env.AI_DEBUG_FIGHT === '1') {
+      console.log('===== FIGHT SCREEN DEBUG =====\n' + text + '\n===== END =====');
+    }
+
+    // "Умение" (16.09.2026, Паша: "в бою используй умение - теперь это удар") - отдельная
+    // от "Ударить" боевая кнопка, которая САМА бьёт по клику (не подменю) - подтверждено
+    // вживую: клик по "Умение" сразу дал "AI__ бьет в голень Бизон, нанеся урон на 19" и
+    // после этого кнопка "Умение" пропала из ряда (Обновить/Ударить/Пояс/Инв. без неё) до
+    // восстановления - т.е. у умения свой отдельный кулдаун. Используем его КАЖДЫЙ раз,
+    // когда оно доступно, вместо обычного "Ударить" (не вместе - это альтернативный удар
+    // за тот же ход, не пред-действие вроде "Прием").
+    const usedSkill = await clickByTexts(page, [SKILL, SKILL.toLowerCase()], SKILL).catch(() => false);
+    if (usedSkill) {
+      stuck = 0;
+      await pause(page, 1000, 2000);
+      continue;
     }
 
     const ok = await clickByTexts(page, [UDAR, UDAR.toLowerCase()], UDAR);
@@ -4470,22 +5128,9 @@ async function useRecovery(page) {
 }
 
 async function goToChaosByAmulet(page) {
-  const AMULET = '\u0410\u043c\u0443\u043b\u0435\u0442';
-  const CHAOS = '\u041a\u0443\u043b\u0430\u043a \u0445\u0430\u043e\u0441\u0430';
-
-  // "\u0410\u043c\u0443\u043b\u0435\u0442" is the persistent top-nav link, so a miss here is almost always a transient page-load
-  // race, not a real absence \u2014 retry once after a short reload instead of silently stranding the
-  // caller wherever fishing/etc. left the page (observed: this cascaded into "\u0424\u043e\u0440\u043f\u043e\u0441\u0442" not found
-  // and the whole \u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 \u0434\u043e\u043c recovery throwing).
-  let amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
-  if (!amuletOk) {
-    await pause(page, 1000, 2000);
-    amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
-  }
-  if (amuletOk) await pause(page, 800, 2000);
-
-  const chaosOk = await clickByTexts(page, [CHAOS, CHAOS.toLowerCase()], CHAOS);
-  if (chaosOk) await pause(page, 800, 2000);
+  // \u041a\u043b\u0438\u043a \u043f\u043e \u0442\u0435\u043a\u0441\u0442\u0443 "\u0410\u043c\u0443\u043b\u0435\u0442" \u0441\u0438\u0441\u0442\u0435\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043d\u0435 \u043d\u0430\u0445\u043e\u0434\u0438\u0442 \u0441\u0441\u044b\u043b\u043a\u0443 (\u0441\u043c. CHAOS_FASTWAY_URL \u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0439
+  // \u0432\u044b\u0448\u0435) - \u043f\u0435\u0440\u0435\u0445\u043e\u0434\u0438\u043c \u043f\u0440\u044f\u043c\u043e \u043f\u043e fastway URL, \u043c\u0438\u043d\u0443\u044f \u0441\u0430\u043c\u0443 \u0441\u0441\u044b\u043b\u043a\u0443 "\u0410\u043c\u0443\u043b\u0435\u0442" \u0438 \u043f\u043e\u0434\u043c\u0435\u043d\u044e \u0446\u0435\u043b\u0438\u043a\u043e\u043c.
+  await navigateFastway(page, CHAOS_FASTWAY_URL, '\u041a\u0443\u043b\u0430\u043a \u0425\u0430\u043e\u0441\u0430');
 }
 
 // The number in "Лечение: N hp/мин" is itself a link that refreshes HP/cooldown; its text
@@ -5258,8 +5903,10 @@ async function doScenario(page) {
     if (shtolniTakenToday && !shtolniDoneToday) {
       const reserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
       const hpCurrent = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
+      const hpMax = typeof stats?.hpMax === 'number' ? stats.hpMax : null;
+      const hpThreshold = typeof hpMax === 'number' ? hpMax * SHTOLNI_MIN_HP_FRACTION : SHTOLNI_MIN_HP;
       const reserveLow = typeof reserveMinutes === 'number' && reserveMinutes < SHTOLNI_MIN_RESERVE_MINUTES;
-      const hpLow = typeof hpCurrent === 'number' && hpCurrent >= 0 && hpCurrent < SHTOLNI_MIN_HP;
+      const hpLow = typeof hpCurrent === 'number' && hpCurrent >= 0 && hpCurrent < hpThreshold;
 
       if (reserveLow || hpLow) {
         const delayMinutes = 15;
@@ -5329,8 +5976,10 @@ async function doScenario(page) {
     if (shtolniTakenToday && !shtolniDoneToday) {
       const reserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
       const hpCurrent = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
+      const hpMax = typeof stats?.hpMax === 'number' ? stats.hpMax : null;
+      const hpThreshold = typeof hpMax === 'number' ? hpMax * SHTOLNI_MIN_HP_FRACTION : SHTOLNI_MIN_HP;
       const reserveLow = typeof reserveMinutes === 'number' && reserveMinutes < SHTOLNI_MIN_RESERVE_MINUTES;
-      const hpLow = typeof hpCurrent === 'number' && hpCurrent >= 0 && hpCurrent < SHTOLNI_MIN_HP;
+      const hpLow = typeof hpCurrent === 'number' && hpCurrent >= 0 && hpCurrent < hpThreshold;
 
       if (reserveLow || hpLow) {
         const delayMinutes = 15;
@@ -5544,6 +6193,2434 @@ async function doScenario(page) {
   scheduleFarmNextCycle(stats, didAnyFarmFight);
 }
 
+// ===================================================================================
+// Гильдия асассинов (AI__): три независимых задания, доступны при морали <= 0.
+// Каждое — свой "zad" в ссылке приёма и свой "lway" в quest-шорткате коня.
+// Маршруты записаны по опыту реального прохождения, см. LESSONS_AI_CHAR.md,
+// раздел "Квесты, которые требуют формального 'взять задание' у источника".
+// Предметы заданий (Часы банкира / Старая картина / Четки торговца) просто копятся —
+// сдача ("Доложить о выполнении") заблокирована до 6 уровня персонажа.
+// ===================================================================================
+
+// 15.09.2026, живой баг: гильдия асассинов делит с некоторыми Q-квестами (Штольни,
+// Колодец Страха) один слот "ответственного задания" на pers.php. Если он занят чем-то
+// незавершённым (напр. брошенные вчера Штольни), "Гильдия асассинов" (obj=44) рендерит
+// ПУСТУЮ страницу (даже список заданий не показывается), а go=1&zad=N молча ничего не
+// делает - "Идти к дому" потом не появляется, и старый код ошибочно решал "уже сделано
+// сегодня". Проверяем и снимаем блокер заранее, а не гадаем по отсутствию цели.
+async function ensureNoStuckResponsibleTask(page) {
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 500, 1000);
+  const text = await getBodyText(page);
+  if (!/Текущее задание:\s*Вы выполняете/i.test(text)) {
+    return false;
+  }
+  console.log('Обнаружен занятый слот "ответственного задания" -> отказываюсь, чтобы освободить.');
+  const ok = await clickByTexts(page, ['отказаться'], 'отказаться (dropquest)');
+  if (ok) await pause(page, 800, 1500);
+  return ok;
+}
+
+// 15.09.2026, финальный найденный корень сегодняшних сбоев банкира: "obj=44" (Гильдия
+// асассинов) рендерит СОВЕРШЕННО ПУСТУЮ страницу (даже без списка заданий), если открыть
+// его напрямую URL'ом, находясь не на своей клетке - объект живёт на "Западные ворота"
+// Стоунгарда, и без физического захода туда сначала (Стоунгард -> Западные ворота ->
+// Гильдия асассинов) go=1&zad=N молча ничего не делает. Раньше это иногда "работало"
+// случайно, если персонаж уже был на воротах от предыдущего действия - отсюда
+// непоследовательные результаты весь день.
+async function goToAssassinGuildBuilding(page) {
+  await page.goto('http://lbast.ru/location.php?mod=fastway&lway=2', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 800, 1500);
+  await clickByTexts(page, ['Западные ворота'], 'Западные ворота');
+  await pause(page, 800, 1500);
+}
+
+async function acceptAssassinGuildQuest(page, zad) {
+  await goToAssassinGuildBuilding(page);
+  await page.goto(`http://lbast.ru/loc.php?obj=44&go=1&zad=${zad}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await pause(page, 900, 1500);
+}
+
+// 15.09.2026, живой регресс: сначала пытался снимать блокер "ответственного задания" ПЕРЕД
+// каждым accept - но если этот самый банкир/картина/торговец уже В ПРОЦЕССЕ (сам занимает
+// слот, персонаж на середине гаунтлета с охранниками), это ошибочно сбрасывало СОБСТВЕННЫЙ
+// незавершённый прогресс квеста при каждой повторной попытке, снова и снова начиная его с
+// нуля. Правильный порядок: сначала проверить цель на месте БЕЗ переприёма (если квест уже
+// наш и активен - она будет видна, ничего не трогаем); только если её нет - принять
+// (и лишь если это тоже не помогло - тогда уже искать чужой блокер и снимать именно его).
+async function ensureAssassinQuestTaken(page, zad, targetTexts) {
+  await goToAssassinGuildQuestSpot(page, zad);
+  if (await existsAnyText(page, targetTexts)) {
+    return true;
+  }
+
+  await acceptAssassinGuildQuest(page, zad);
+  await goToAssassinGuildQuestSpot(page, zad);
+  if (await existsAnyText(page, targetTexts)) {
+    return true;
+  }
+
+  const dropped = await ensureNoStuckResponsibleTask(page);
+  if (!dropped) {
+    return false;
+  }
+  await acceptAssassinGuildQuest(page, zad);
+  await goToAssassinGuildQuestSpot(page, zad);
+  return existsAnyText(page, targetTexts);
+}
+
+// Прямой goto на quest-шорткат коня иногда приземляется на промежуточный экран поездки
+// ("Вы скачете вперед... В пути еще N сек.") вместо конечной локации — ждём и обновляем
+// страницу, пока не доедем (обычно 3-7 сек, см. остальные Конь-маршруты в этом файле).
+async function waitOutHorseTravel(page, url, maxAttempts = 8) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const text = await getBodyText(page);
+    if (!/В\s*пути/i.test(text)) {
+      return;
+    }
+    await pause(page, 2000, 3000);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  }
+}
+
+async function goToAssassinGuildQuestSpot(page, zad) {
+  const url = `http://lbast.ru/location.php?mod=konj&lway=q2_${zad}`;
+  await page.goto(url, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await pause(page, 900, 1500);
+  await waitOutHorseTravel(page, url);
+}
+
+async function progressAssassinBankerQuest(page) {
+  const taken = await ensureAssassinQuestTaken(page, 3, ['Идти к дому', 'идти к дому']);
+
+  // Похоже, каждое задание гильдии выполнимо не чаще раза в день: если цель на клетке
+  // не появилась даже после честной попытки принять и снять чужой блокер, задание уже
+  // сделано сегодня — это не ошибка, а нормальный дневной лимит.
+  if (!taken) {
+    console.log('Assassin quest (банкир): цель "Идти к дому" не появилась — похоже, на сегодня уже сделано.');
+    return true;
+  }
+
+  // 15.09.2026, живой баг: "Идти к дому" может успешно появиться и сработать (квест ещё
+  // числится не сданным в state.json, напр. после ручного вмешательства Паши), но "Дом
+  // банкира" сам сообщает "Вы уже выполняли это задание сегодня." вместо реального
+  // гаунтлета - раньше это било в "Не найден шаг Идти в спальню" -> Quest step error ->
+  // Recover to city каждый цикл подряд, вместо того чтобы просто пометить готово.
+  if (await existsAnyText(page, ['Вы уже выполняли это задание сегодня'])) {
+    console.log('Assassin quest (банкир): "Вы уже выполняли это задание сегодня" — считаю сделанным.');
+    return true;
+  }
+
+  // 15.09.2026, живой прогон: реальность не совпала с изначально закодированным маршрутом -
+  // "Зайти в дом"/"Идти вперед" не появлялись вовсе, "Войти в ворота" был только на первом
+  // заходе, и боёв с охранником оказалось явно больше одного-двух (не выяснено точное число
+  // без риска). Вместо жёсткого счётчика - адаптивный цикл: "Идти к дому" (+опциональные
+  // "Войти в ворота"/"Зайти в дом"/"Идти вперед", если появятся) -> бой, если есть -> повтор,
+  // пока не появится "Идти в спальню" (следующий реальный шаг) или не сработает страховочный
+  // лимит попыток. HP-гейт перед каждым боем - не лезем в драку ниже 70% макс (см. просьбу
+  // Паши "не забывай про хп, с низким не заходи в бой"; порог поднят после реального
+  // KO ниже в этом же коде).
+  const MAX_GUARD_FIGHTS = 6;
+  for (let attempt = 1; attempt <= MAX_GUARD_FIGHTS; attempt += 1) {
+    if (await existsAnyText(page, ['Идти в спальню', 'идти в спальню'])) {
+      break;
+    }
+    if (await existsAnyText(page, ['Вы уже выполняли это задание сегодня'])) {
+      console.log('Assassin quest (банкир): "Вы уже выполняли это задание сегодня" (обнаружено в гаунтлете) — считаю сделанным.');
+      return true;
+    }
+
+    // 15.09.2026, живой инцидент: один охранник (С:44,И:37,Л:30,Бр:37, урон 55-63) один раз
+    // унёс HP с 210ish до -15 ДАЖЕ с эликсиром (+40) применённым в процессе - обычный порог
+    // 40% тут недостаточен, слишком близко к тому, что один бой реально может забрать больше
+    // половины макс. HP. Порог поднят до 70% специально для этого квеста.
+    const preText = await getBodyText(page);
+    const preStats = parseStats(preText);
+    if (
+      typeof preStats.hpCurrent === 'number' &&
+      typeof preStats.hpMax === 'number' &&
+      preStats.hpMax > 0 &&
+      preStats.hpCurrent < preStats.hpMax * 0.7
+    ) {
+      console.log(`Assassin quest (банкир): HP ${preStats.hpCurrent}/${preStats.hpMax} < 70% -> останавливаюсь перед боем, продолжу позже ("Продолжить квест" сохранит прогресс).`);
+      return false;
+    }
+
+    await tryPerformStepOptional(page, { stepName: 'Идти к дому', currentTexts: ['Идти к дому', 'идти к дому'] });
+    await tryPerformStepOptional(page, { stepName: 'Войти в ворота', currentTexts: ['Войти в ворота', 'войти в ворота'] });
+    await tryPerformStepOptional(page, { stepName: 'Зайти в дом', currentTexts: ['Зайти в дом', 'зайти в дом'] });
+    await tryPerformStepOptional(page, { stepName: 'Идти вперед', currentTexts: ['Идти вперед', 'идти вперед', 'Идти вперёд', 'идти вперёд'] });
+
+    if (await existsAnyText(page, ['Идти в спальню', 'идти в спальню'])) {
+      break;
+    }
+
+    if (await existsAnyText(page, ['В бой!', 'в бой!', 'Ударить', 'ударить'])) {
+      console.log(`Assassin quest (банкир): бой с охранником, попытка ${attempt}/${MAX_GUARD_FIGHTS}`);
+      await fightLoop(page);
+      await pause(page, 900, 1500);
+    }
+  }
+
+  await performStep(page, {
+    stepName: 'Идти в спальню',
+    currentTexts: ['Идти в спальню', 'идти в спальню'],
+    retries: 3,
+  });
+
+  // РАЗВИЛКА: только "Идти к банкиру". "Взломать сейф" проваливает задание на сегодня — не трогать.
+  await performStep(page, {
+    stepName: 'Идти к банкиру',
+    currentTexts: ['Идти к банкиру', 'идти к банкиру'],
+    retries: 3,
+  });
+
+  console.log('Assassin quest (банкир): финальный бой с банкиром');
+  await fightLoop(page);
+
+  console.log('Assassin quest (банкир): проход завершён, "Часы банкира" должны быть получены.');
+  return true;
+}
+
+async function progressAssassinPaintingQuest(page) {
+  const taken = await ensureAssassinQuestTaken(page, 2, ['Прокрасться в дом', 'прокрасться в дом']);
+  if (!taken) {
+    console.log('Assassin quest (картина): цель "Прокрасться в дом" не появилась — похоже, на сегодня уже сделано.');
+    return true;
+  }
+  if (await existsAnyText(page, ['Вы уже выполняли это задание сегодня'])) {
+    console.log('Assassin quest (картина): "Вы уже выполняли это задание сегодня" — считаю сделанным.');
+    return true;
+  }
+
+  // 15.09.2026, живой прогон: флейвор-текст при accept предупреждает "дом охраняют
+  // большие боевые псы" (множественное число) - подтверждено вживую: после победы над
+  // одним псом игра выбрасывает обратно на "Боевые кварталы" (не в "Пройти в дальнюю
+  // комнату"), и "Прокрасться в дом" нужно нажимать заново - гаунтлет из нескольких псов,
+  // как и гаунтлет охранников у банкира. Адаптивный цикл вместо жёсткой
+  // последовательности шагов: заходим -> идём по коридору -> бой, если есть -> повтор,
+  // пока не появится "Пройти в дальнюю комнату", с тем же 70%-гейтом перед каждым боем.
+  const MAX_DOG_FIGHTS = 6;
+  for (let attempt = 1; attempt <= MAX_DOG_FIGHTS; attempt += 1) {
+    if (await existsAnyText(page, ['Пройти в дальнюю комнату', 'пройти в дальнюю комнату'])) {
+      break;
+    }
+
+    await tryPerformStepOptional(page, { stepName: 'Прокрасться в дом', currentTexts: ['Прокрасться в дом', 'прокрасться в дом'] });
+    await tryPerformStepOptional(page, { stepName: 'Пройти в конец коридора', currentTexts: ['Пройти в конец коридора', 'пройти в конец коридора'] });
+
+    if (await existsAnyText(page, ['Пройти в дальнюю комнату', 'пройти в дальнюю комнату'])) {
+      break;
+    }
+
+    if (await existsAnyText(page, ['В бой!', 'в бой!'])) {
+      const preText = await getBodyText(page);
+      const preStats = parseStats(preText);
+      if (
+        typeof preStats.hpCurrent === 'number' &&
+        typeof preStats.hpMax === 'number' &&
+        preStats.hpMax > 0 &&
+        preStats.hpCurrent < preStats.hpMax * 0.7
+      ) {
+        console.log(`Assassin quest (картина): HP ${preStats.hpCurrent}/${preStats.hpMax} < 70% -> останавливаюсь перед боем с псом, продолжу позже ("Продолжить квест" сохранит прогресс).`);
+        return false;
+      }
+      console.log(`Assassin quest (картина): бой с боевым псом, попытка ${attempt}/${MAX_DOG_FIGHTS}`);
+      await fightLoop(page);
+      await pause(page, 800, 1500);
+    }
+  }
+
+  // НЕ трогать "Проверить сундучок" — не проверено, что оно даёт, идём сразу в дальнюю комнату.
+  await performStep(page, {
+    stepName: 'Пройти в дальнюю комнату',
+    currentTexts: ['Пройти в дальнюю комнату', 'пройти в дальнюю комнату'],
+    retries: 3,
+  });
+
+  console.log('Assassin quest (картина): проход завершён, "Старая картина" должна быть получена.');
+  return true;
+}
+
+async function progressAssassinMerchantQuest(page) {
+  await acceptAssassinGuildQuest(page, 1);
+  await goToAssassinGuildQuestSpot(page, 1);
+
+  if (await existsAnyText(page, ['Вы уже выполняли это задание сегодня'])) {
+    console.log('Assassin quest (торговец): "Вы уже выполняли это задание сегодня" — считаю сделанным.');
+    return true;
+  }
+
+  const text = await getBodyText(page);
+  if (!/торговый караван/i.test(text)) {
+    console.log('Assassin quest (торговец): каравана сейчас нет на этой клетке, попробую в следующий раз.');
+    return false;
+  }
+
+  const preStats = parseStats(text);
+  if (
+    typeof preStats.hpCurrent === 'number' &&
+    typeof preStats.hpMax === 'number' &&
+    preStats.hpMax > 0 &&
+    preStats.hpCurrent < preStats.hpMax * 0.7
+  ) {
+    console.log(`Assassin quest (торговец): HP ${preStats.hpCurrent}/${preStats.hpMax} < 70% -> откладываю бой с караваном (яд опаснее остальных боёв гильдии), попробую в следующем цикле.`);
+    return false;
+  }
+
+  await performStep(page, {
+    stepName: 'Напасть на караван',
+    currentTexts: ['Напасть на караван', 'напасть на караван'],
+    retries: 3,
+  });
+
+  console.log('Assassin quest (торговец): бой с торговцем (возможен урон от яда, было опаснее остальных)');
+  await fightLoop(page);
+
+  console.log('Assassin quest (торговец): проход завершён, "Четки торговца" должны быть получены.');
+  return true;
+}
+
+// Дневной диспетчер: гоняется из runDailyQuests/driver.js каждый цикл, сам решает, что ещё
+// не сделано сегодня, и делает ровно один шаг за вызов (не спамит все три подряд без пауз).
+async function runAssassinGuildQuestsIfAvailable(page) {
+  resetAssassinGuildDayIfNeeded();
+
+  if (!assassinGuildDoneToday.banker) {
+    const ok = await runQuestStepSafe(page, 'Гильдия асассинов: банкир', () => progressAssassinBankerQuest(page));
+    if (ok) {
+      assassinGuildDoneToday.banker = true;
+      persistDailyQuestState();
+      return true;
+    }
+  }
+
+  if (!assassinGuildDoneToday.painting) {
+    const ok = await runQuestStepSafe(page, 'Гильдия асассинов: картина', () => progressAssassinPaintingQuest(page));
+    if (ok) {
+      assassinGuildDoneToday.painting = true;
+      persistDailyQuestState();
+      return true;
+    }
+  }
+
+  if (!assassinGuildDoneToday.merchant && assassinMerchantAttemptsToday < ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY) {
+    assassinMerchantAttemptsToday += 1;
+    const ok = await runQuestStepSafe(page, 'Гильдия асассинов: торговец', () => progressAssassinMerchantQuest(page));
+    persistDailyQuestState();
+    if (ok) {
+      assassinGuildDoneToday.merchant = true;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// ===================================================================================
+// Галерея искусств / лазулиты (AI__): одноразовый (не дневной) квест. Пройден и
+// проверен вживую 14.09.2026 — маршрут ниже записан 1:1 по реальному прохождению,
+// см. LESSONS_AI_CHAR.md, раздел "Галерея искусств / лазулиты".
+// ===================================================================================
+
+function absUrl(href) {
+  return href.startsWith('http') ? href : (href.startsWith('/') ? 'http://lbast.ru' + href : 'http://lbast.ru/' + href);
+}
+
+async function findLinkHref(page, regex) {
+  return await page.evaluate((src) => {
+    const re = new RegExp(src, 'i');
+    const a = Array.from(document.querySelectorAll('a')).find((el) => re.test(el.textContent));
+    return a ? a.getAttribute('href') : null;
+  }, regex.source);
+}
+
+const FISH_VILLAGE_KONJ_URL = 'http://lbast.ru/location.php?mod=konj&lway=7';
+
+async function progressGalleryLazuliteQuest(page) {
+  await page.goto(FISH_VILLAGE_KONJ_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await waitOutHorseTravel(page, FISH_VILLAGE_KONJ_URL);
+
+  const galleryHref = await findLinkHref(page, /Галерея искусств/);
+  if (!galleryHref) {
+    console.log('Gallery quest: объект "Галерея искусств" не найден в Рыбацкой деревне.');
+    return false;
+  }
+  const galleryBase = absUrl(galleryHref);
+
+  await page.goto(`${galleryBase}&go=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 700, 1200);
+  await page.goto(`${galleryBase}&go=3`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  let text = await getBodyText(page);
+  if (/Благодарствую|Получено \d+ дин/i.test(text)) {
+    console.log('Gallery quest: лазулит уже был на руках, сдан Марсиусу — задание завершено.');
+    return true;
+  }
+
+  if (!/Задание получено|лазулит/i.test(text)) {
+    console.log('Gallery quest: неожиданный текст у Марсиуса, прекращаю:', text.slice(0, 300));
+    return false;
+  }
+
+  // Пешком с побережья: 2 клетки на запад от Рыбацкой деревни.
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  for (let i = 0; i < 2; i++) {
+    const westHref = await findLinkHref(page, /На запад|Идти на запад/);
+    if (!westHref) break;
+    await page.goto(absUrl(westHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 500, 900);
+  }
+
+  // Поиск лазулитов — случайные засады (боты) перед успехом, обычно 1-2 боя. Деремся
+  // через fightLoop и повторяем клик, пока не увидим текст с находкой (без "В бой!").
+  let found = false;
+  for (let attempt = 0; attempt < 6 && !found; attempt++) {
+    const lazuliteHref = await findLinkHref(page, /Искать лазулиты/);
+    if (!lazuliteHref) {
+      console.log('Gallery quest: объект "Искать лазулиты" не найден на клетке — маршрут сбился.');
+      return false;
+    }
+    await page.goto(absUrl(lazuliteHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
+    text = await getBodyText(page);
+
+    if (/В бой!/i.test(text)) {
+      console.log(`Gallery quest: засада на поиске лазулитов (попытка ${attempt + 1}), бой.`);
+      await fightLoop(page);
+    } else if (/лазулит/i.test(text)) {
+      console.log('Gallery quest: лазулит найден.');
+      found = true;
+    } else {
+      console.log('Gallery quest: непонятный ответ на поиске лазулитов:', text.slice(0, 300));
+      return false;
+    }
+    await pause(page, 900, 1500);
+  }
+
+  if (!found) {
+    console.log('Gallery quest: не удалось найти лазулит за отведённое число попыток сегодня.');
+    return false;
+  }
+
+  // Обратно: 2 клетки на восток до Рыбацкой деревни, сдать Марсиусу.
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  for (let i = 0; i < 2; i++) {
+    const eastHref = await findLinkHref(page, /Идти на восток|На восток/);
+    if (!eastHref) break;
+    await page.goto(absUrl(eastHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 500, 900);
+  }
+
+  const galleryHref2 = await findLinkHref(page, /Галерея искусств/);
+  if (!galleryHref2) {
+    console.log('Gallery quest: не нашёл галерею на обратном пути для сдачи.');
+    return false;
+  }
+  const galleryBase2 = absUrl(galleryHref2);
+  await page.goto(`${galleryBase2}&go=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 700, 1200);
+  await page.goto(`${galleryBase2}&go=3`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  text = await getBodyText(page);
+  if (/Благодарствую|Получено \d+ дин/i.test(text)) {
+    console.log('Gallery quest: лазулит сдан Марсиусу, задание завершено.');
+    return true;
+  }
+
+  console.log('Gallery quest: сдача не подтвердилась, текст:', text.slice(0, 300));
+  return false;
+}
+
+// Одноразовый квест — не дневной. Раньше сам открывал меню Q, чтобы проверить наличие
+// квеста, но это добавляло лишнюю навигацию/клик по "Q" ПЕРЕД тем, как runDailyQuests
+// делает то же самое, и путало состояние страницы (пустой список квестов на втором
+// клике). Теперь просто флаг galleryQuestDone: как только квест сдан один раз —
+// диспетчер больше никогда не ходит проверять Марсиуса.
+async function runGalleryQuestIfAvailable(page) {
+  if (galleryQuestDone) {
+    return false;
+  }
+
+  const GALLERY_QUEST = 'Галерея искусств';
+  const ok = await runQuestStepSafe(page, GALLERY_QUEST, () => progressGalleryLazuliteQuest(page));
+  if (ok) {
+    galleryQuestDone = true;
+    persistDailyQuestState();
+  }
+  return ok;
+}
+
+// ===================================================================================
+// "Орден Тригмагистров: Охота на демона" (Демон озера) — маршрут продиктован Пашей
+// 14.09.2026 (не проверен вживую, запускать первый раз с осторожностью, читать логи):
+//   Амулет -> Дорожный крест -> Цитадель Ордена Тригмагистров -> Получить задание ->
+//   В игру -> [инфо] у "Орден Тригмагистров: Охота на демона" -> "К озеру" -> ждать 7с/
+//   "В пути" -> "Поросль камышей" -> "Идти по левой" -> "Идти дальше" -> "В бой!"
+//   (обычный бой) -> Амулет -> Дорожный крест -> Цитадель Ордена Тригмагистров ->
+//   "Доложить о задании".
+// Обычный дневной квест (не одноразовый) - state с day-key, как Штольни/Харчевня.
+// ===================================================================================
+const DEMON_LAKE_FASTWAY_URL = 'http://lbast.ru/location.php?mod=fastway&lway=9'; // Дорожный крест
+
+async function progressDemonLakeQuest(page) {
+  const QUEST = 'Орден Тригмагистров: Охота на демона';
+
+  await page.goto(DEMON_LAKE_FASTWAY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await waitOutHorseTravel(page, DEMON_LAKE_FASTWAY_URL);
+
+  // Взять задание (безопасно, если уже взято - ссылка "Получить задание" просто не найдётся).
+  const enteredCitadel = await clickByTexts(page, ['Цитадель Ордена Тригмагистров'], 'Цитадель Ордена Тригмагистров');
+  if (enteredCitadel) {
+    await pause(page, 800, 1500);
+    await clickByTexts(page, ['Получить задание'], 'Получить задание');
+    await pause(page, 800, 1500);
+    await clickByTexts(page, ['В игру'], 'В игру');
+    await pause(page, 800, 1500);
+  }
+
+  // "В игру" lands on the regular location, not the quest board — clickInfoForQuest
+  // needs the "• Name [инфо]" list, which only renders on location.php?mod=quests.
+  // Found 15.09.2026: without this, clickInfoForQuest always failed ("Info link not
+  // found"), and the leftover page state then cascaded into Fish Eye/Tavern failures
+  // in the same cycle too.
+  const onQuestBoard = await openQuestsMenu(page);
+  if (!onQuestBoard) {
+    console.log('Demon lake quest: could not open quest board before info click.');
+    return false;
+  }
+
+  const infoOk = await clickInfoForQuest(page, QUEST);
+  if (!infoOk) {
+    console.log('Demon lake quest: could not open quest info.');
+    return false;
+  }
+
+  const wentToLake = await clickByTexts(page, ['К озеру', 'к озеру'], 'К озеру');
+  if (!wentToLake) {
+    console.log('Demon lake quest: "К озеру" link not found on quest info page.');
+    return false;
+  }
+  await pause(page, 6500, 7500);
+  await waitOutHorseTravel(page, page.url());
+
+  const reachedReeds = await clickByTexts(page, ['Поросль камышей'], 'Поросль камышей');
+  if (!reachedReeds) {
+    console.log('Demon lake quest: "Поросль камышей" not found - stopping, needs manual check.');
+    await appendDebugSnapshot('Demon lake: state after "К озеру" + travel wait, reeds step not found', {
+      label: 'demon_lake_no_reeds',
+      url: page.url(),
+      text: await getBodyText(page),
+    });
+    return false;
+  }
+  await pause(page, 800, 1500);
+
+  await clickByTexts(page, ['Идти по левой', 'идти по левой'], 'Идти по левой');
+  await pause(page, 800, 1500);
+
+  await clickByTexts(page, ['Идти дальше'], 'Идти дальше');
+  await pause(page, 800, 1500);
+
+  if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
+    await performStep(page, {
+      stepName: 'В бой!',
+      currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
+      retries: 4,
+    });
+    await fightLoop(page);
+  }
+
+  // Доложить о задании.
+  await page.goto(DEMON_LAKE_FASTWAY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await waitOutHorseTravel(page, DEMON_LAKE_FASTWAY_URL);
+  await clickByTexts(page, ['Цитадель Ордена Тригмагистров'], 'Цитадель Ордена Тригмагистров');
+  await pause(page, 800, 1500);
+  const reported = await clickByTexts(page, ['Доложить о задании'], 'Доложить о задании');
+
+  return Boolean(reported);
+}
+
+async function runDemonLakeQuestIfAvailable(page) {
+  const today = getDayKeyNow();
+  if (demonLakeDayKey !== today) {
+    demonLakeDayKey = today;
+    demonLakeDoneToday = false;
+  }
+  if (demonLakeDoneToday) {
+    return false;
+  }
+
+  const QUEST = 'Орден Тригмагистров: Охота на демона';
+  // 14.09.2026: диспетчер должен сам открыть меню квестов, а не проверять текст ТЕКУЩЕЙ
+  // страницы (обычно это location.php, там названий квестов нет) - иначе existsAnyText
+  // всегда false и квест никогда не запускается.
+  const menuOpened = await resetToQuestMenu(page);
+  if (!menuOpened) {
+    return false;
+  }
+  const qNamesNow = parseQuestNamesFromQMenuText(await getBodyText(page));
+  if (!isQuestInMenu(qNamesNow, QUEST)) {
+    return false;
+  }
+
+  const ok = await runNonQQuestSafe(page, 'Demon lake quest', () => progressDemonLakeQuest(page));
+  if (ok) {
+    demonLakeDoneToday = true;
+    persistDailyQuestState();
+  }
+  return Boolean(ok);
+}
+
+// ===================================================================================
+// "Кораблекрушение" — маршрут продиктован Пашей 14.09.2026 (не проверен вживую):
+//   [инфо] -> "К месту выполнения" -> ждать 7с / "В пути" -> Тещин маяк -> "Далее" x3 ->
+//   "По рукам, вези." -> "Столкнуть лодку в воду" -> "Далее" x3 -> "Ступить на борт
+//   корабля" -> "Идти в каюту капитана" -> "Напасть на них" -> "В бой!" (бой 1) ->
+//   "Вернуться" -> "Продолжить квест" -> "В бой!" (бой 2) -> "Продолжить квест" ->
+//   "Открыть сундук" -> "Взять деньги и вернуться на палубу" -> "Сесть за весла" ->
+//   "Причалить к берегу" -> "достать мешочек с монетами из кармана" -> задание завершено.
+// Обычный дневной квест (не одноразовый), появляется в Q без отдельного "взять задание".
+// ===================================================================================
+async function progressShipwreckQuest(page) {
+  const QUEST = 'Кораблекрушение';
+
+  const infoOk = await clickInfoForQuest(page, QUEST);
+  if (!infoOk) {
+    console.log('Shipwreck quest: could not open quest info.');
+    return false;
+  }
+
+  const travelOk = await clickByTexts(page, ['К месту выполнения'], 'К месту выполнения');
+  if (!travelOk) {
+    console.log('Shipwreck quest: "К месту выполнения" not found.');
+    return false;
+  }
+  await pause(page, 6500, 7500);
+  await waitOutHorseTravel(page, page.url());
+
+  const preFightSteps = [
+    'Далее', 'Далее', 'Далее',
+    'По рукам, вези.',
+    'Столкнуть лодку в воду',
+    'Далее', 'Далее', 'Далее',
+    'Ступить на борт корабля',
+    'Идти в каюту капитана',
+    'Напасть на них',
+  ];
+  for (const step of preFightSteps) {
+    await tryPerformStepOptional(page, { stepName: step, currentTexts: [step, step.toLowerCase()] });
+    await pause(page, 700, 1300);
+  }
+
+  if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
+    await performStep(page, {
+      stepName: 'В бой!',
+      currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
+      retries: 4,
+    });
+    await fightLoop(page);
+  }
+
+  await pause(page, 700, 1300);
+  await tryPerformStepOptional(page, { stepName: 'Вернуться', currentTexts: ['Вернуться', 'вернуться'] });
+  await pause(page, 700, 1300);
+  await tryPerformStepOptional(page, { stepName: 'Продолжить квест', currentTexts: ['Продолжить квест', 'продолжить квест'] });
+  await pause(page, 700, 1300);
+
+  if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
+    await performStep(page, {
+      stepName: 'В бой! (2)',
+      currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
+      retries: 4,
+    });
+    await fightLoop(page);
+  }
+
+  await pause(page, 700, 1300);
+  const postFightSteps = [
+    'Продолжить квест',
+    'Открыть сундук',
+    'Взять деньги и вернуться на палубу',
+    'Сесть за весла',
+    'Причалить к берегу',
+    'достать мешочек с монетами из кармана',
+  ];
+  for (const step of postFightSteps) {
+    const ok = await tryPerformStepOptional(page, { stepName: step, currentTexts: [step, step.toLowerCase()] });
+    if (ok) await pause(page, 700, 1300);
+  }
+
+  return true;
+}
+
+// ===================================================================================
+// "Травы" (Арайя/Шипы дикого кактуса/Кустарник травии/Дикий пустолист/Хмель/Пререя) -
+// 6 однотипных ежедневных квестов сбора трав, найдены и разобраны вживую 15.09.2026 по
+// прямой просьбе Паши ("можешь начать рвать траву") - подтвердил "трава это без боя,
+// можешь собирать при положительных резервах и хп", так что HP-гейта тут нет вообще.
+// Механика одинакова для всех шести (только разное имя квеста/локация):
+// [инфо] -> "К месту выполнения" (конь до нужного места, авто, без ручной навигации по
+// тексту "два раза на запад, четыре раза на юг" и т.п. - это просто флейвор, "К месту
+// выполнения" сам довозит) -> "Искать травы" -> сетка из 16 ссылок "*" (loc.php?...&
+// gamekl=N). Клик по любой "*" раскрывает число (промах, безопасно) или "#" с текстом
+// "Вы укололись о ядовитый шип и ничего не нашли!" (тоже безопасно - живьём подтверждено:
+// HP до и после теста не изменился, 87/340 -> 87/340) - оба исхода без урона, просто
+// одна попытка в день заканчивается либо травой, либо шипом. Не найдено способа предугадать
+// исход по числам-подсказкам за одну попытку в день - клик по первой доступной "*"
+// достаточен и ничем не хуже любой другой стратегии.
+// Квест сам пропадает из Q-меню после израсходованной на сегодня попытки (тот же сигнал,
+// что и у Кораблекрушения/Демон озера) - отдельный day-key в state.json не нужен.
+// ===================================================================================
+const HERB_QUEST_NAMES = [
+  'Травы: Арайя',
+  'Травы: Шипы дикого кактуса',
+  'Травы: Кустарник травии',
+  'Травы: Дикий пустолист',
+  'Травы: Хмель',
+  'Травы: Пререя',
+];
+
+async function progressHerbGatherQuest(page, questName) {
+  const infoOk = await clickInfoForQuest(page, questName);
+  if (!infoOk) return false;
+  await pause(page, 500, 900);
+
+  const travelOk = await clickByTexts(page, ['К месту выполнения'], 'К месту выполнения');
+  if (!travelOk) return false;
+
+  for (let i = 0; i < 10; i++) {
+    await pause(page, 1500, 2000);
+    const t = await getBodyText(page);
+    if (!/В пути ещ/i.test(t)) break;
+    await page.goto(page.url(), { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  }
+
+  const searchOk = await clickByTexts(page, ['Искать травы'], 'Искать травы');
+  if (!searchOk) {
+    console.log(`Herb quest "${questName}": "Искать травы" не найдено на месте - непредвиденный маршрут, пропускаю.`);
+    return false;
+  }
+  await pause(page, 800, 1200);
+
+  for (let round = 0; round < 20; round++) {
+    const links = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('a')).map((a) => ({ text: a.textContent.trim(), href: a.getAttribute('href') }))
+    );
+    const pick = links.find((l) => l.text === '*') || links.find((l) => l.text === 'Далее');
+    if (!pick) break;
+    const href = pick.href.startsWith('http') ? pick.href : `http://lbast.ru/${pick.href.replace(/^\//, '')}`;
+    await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await pause(page, 500, 900);
+  }
+
+  console.log(`Herb quest "${questName}": попытка на сегодня завершена.`);
+  return true;
+}
+
+async function runHerbQuestsIfAvailable(page) {
+  const menuOpened = await resetToQuestMenu(page);
+  if (!menuOpened) return false;
+  const qNames = parseQuestNamesFromQMenuText(await getBodyText(page));
+  for (const name of HERB_QUEST_NAMES) {
+    if (isQuestInMenu(qNames, name)) {
+      return await runNonQQuestSafe(page, `Herb: ${name}`, () => progressHerbGatherQuest(page, name));
+    }
+  }
+  return false;
+}
+
+async function runShipwreckQuestIfAvailable(page) {
+  const today = getDayKeyNow();
+  if (shipwreckDayKey !== today) {
+    shipwreckDayKey = today;
+    shipwreckDoneToday = false;
+  }
+  if (shipwreckDoneToday) {
+    return false;
+  }
+
+  const QUEST = 'Кораблекрушение';
+  // 14.09.2026: та же правка, что и для "Демон озера" - проверять список квестов через
+  // открытое меню Q, а не текст текущей (обычно location.php) страницы.
+  const menuOpened = await resetToQuestMenu(page);
+  if (!menuOpened) {
+    return false;
+  }
+  const qNamesNow = parseQuestNamesFromQMenuText(await getBodyText(page));
+  if (!isQuestInMenu(qNamesNow, QUEST)) {
+    return false;
+  }
+
+  const ok = await runNonQQuestSafe(page, 'Shipwreck quest', () => progressShipwreckQuest(page));
+  if (ok) {
+    // Не отмечаем сразу "сделано" — проверяем, что квест реально исчез из Q меню (тот же приём, что для Харчевни/Штолен/Корованов).
+    const menuOk = await resetToQuestMenu(page);
+    if (menuOk) {
+      const qNames = parseQuestNamesFromQMenuText(await getBodyText(page));
+      if (!isQuestInMenu(qNames, QUEST)) {
+        shipwreckDoneToday = true;
+        persistDailyQuestState();
+        console.log('Shipwreck quest: done today (confirmed gone from Q).');
+      } else {
+        console.log('Shipwreck quest: flow ran but quest still in Q -> will retry.');
+      }
+    } else {
+      shipwreckDoneToday = true;
+      persistDailyQuestState();
+    }
+  }
+  return Boolean(ok);
+}
+
+// ===================================================================================
+// "Рыбный ресторан Тёща Кумуса" (эскорт-квест с Яшкой/Гретхис) — источник: блог Dikaya в
+// игре (zhg_web.php?st_id=224300, st_id=225290), см. LESSONS_AI_CHAR.md "Рыбный ресторан".
+// НЕ проверено вживую - маршрут записан буквально по тексту гайда. Паша попросил проходить
+// награды журнала по порядку номеров (15.09.2026), начиная с №1.
+// ===================================================================================
+
+// 15.09.2026, первая живая попытка: простой заход пешком (fastway -> клик "Рыбный
+// ресторан") приводит только к NPC Гретхис, которая молча здоровается ("Уйти" —
+// единственный вариант) - без формального "взятия" квеста через Q-меню игра не
+// поднимает сценарий (то же самое, что и "Колодец Страха" - см. LESSONS_AI_CHAR.md).
+// Правильный вход - как у Кораблекрушения: [инфо] в Q-меню -> "К месту выполнения".
+// НО если квест уже взят и диалог на середине (Паша вручную прошёл начало живьём
+// 15.09.2026: Тёща Кумуса -> "Я насчет работы." -> Яшка спрашивает про мрамару ->
+// развилка Холмы/Болота/Опушка) - location.php показывает "Продолжить квест" наверху,
+// и заходить заново через [инфо] НЕЛЬЗЯ (потеряется прогресс диалога, тот же принцип,
+// что и для Штолен). Проверяем это первым делом.
+async function goToFishRestaurant(page) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 500, 1000);
+
+  if (await existsAnyText(page, ['Продолжить квест'])) {
+    await clickByTexts(page, ['Продолжить квест'], 'Продолжить квест');
+    await pause(page, 800, 1500);
+    return;
+  }
+
+  const QUEST = 'Рыбный ресторан';
+  const menuOk = await resetToQuestMenu(page);
+  if (!menuOk) {
+    throw new Error('Fish Restaurant: could not open quest menu.');
+  }
+  const infoOk = await clickInfoForQuest(page, QUEST);
+  if (!infoOk) {
+    throw new Error('Fish Restaurant: could not open quest info.');
+  }
+  const travelOk = await clickByTexts(page, ['К месту выполнения'], 'К месту выполнения');
+  if (!travelOk) {
+    throw new Error('Fish Restaurant: "К месту выполнения" not found.');
+  }
+  await pause(page, 6500, 7500);
+  await waitOutHorseTravel(page, page.url());
+
+  // Свежий заход: Форт Жженого листа -> "Рыбный ресторан" -> "Тёща Кумуса" -> "Я насчет
+  // работы." запускает цепочку диалога (Тёща Кумуса -> Яшка про мрамару -> развилка).
+  // Остальные реплики между ними - best-effort клики, не критичные (страница может
+  // проскочить их сама); если что-то не найдётся, просто идём дальше к развилке.
+  await performStep(page, { stepName: 'Рыбный ресторан (вход)', currentTexts: ['Рыбный ресторан', 'рыбный ресторан'], retries: 3 });
+  await performStep(page, { stepName: 'Тёща Кумуса', currentTexts: ['Тёща Кумуса', 'тёща кумуса'], retries: 3 });
+  await tryPerformStepOptional(page, { stepName: 'Я насчет работы.', currentTexts: ['Я насчет работы.'] });
+  await tryPerformStepOptional(page, { stepName: 'Скоро вернусь.', currentTexts: ['Скоро вернусь.'] });
+  await tryPerformStepOptional(page, { stepName: 'Ну рассказывай где искать мрамару?', currentTexts: ['Ну рассказывай где искать мрамару?'] });
+}
+
+// Одноразовый мини-квест: открывает "Журнал наград" у Тёщи Кумуса. Без него награды за
+// эскорт-квест не фиксируются (только дины). Безопасный бой с Учебным манекеном.
+async function progressFishRestaurantJournal(page) {
+  await goToFishRestaurant(page);
+
+  // 15.09.2026, живая проверка: физически придя в ресторан, объекта "Как быть
+  // продуктивным" на месте не оказалось (видно только "Тёща Кумуса"/"Турнир рыболовов"/
+  // "Уйти") - похоже, это ротирующееся/не всегда доступное объявление, а не постоянный
+  // объект. Не гадаем дальше и не долбим боем - мягко отступаем, попробуем в другой раз.
+  if (!(await existsAnyText(page, ['Как быть продуктивным', 'как быть продуктивным']))) {
+    console.log('Fish Restaurant journal: объявление "Как быть продуктивным" сейчас не на месте -> отступаю без боя.');
+    return false;
+  }
+
+  await performStep(page, {
+    stepName: 'Как быть продуктивным',
+    currentTexts: ['Как быть продуктивным', 'как быть продуктивным'],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: 'Уровень*100 дин?',
+    currentTexts: ['Уровень*100 дин? Надеюсь лекция того стоит, возьмите мои деньги.'],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: 'Лучше помнить где что полезное (до боя)',
+    currentTexts: ['Лучше помнить где что полезное можно найти на заданиях.'],
+    retries: 3,
+  });
+
+  console.log('Fish Restaurant journal: бой с Учебным манекеном (безопасный)');
+  await fightLoop(page);
+  await pause(page, 800, 1500);
+
+  await tryPerformStepOptional(page, {
+    stepName: 'Лучше помнить где что полезное (после боя)',
+    currentTexts: ['Лучше помнить где что полезное можно найти на заданиях.'],
+  });
+
+  await performStep(page, {
+    stepName: 'Молча уйти',
+    currentTexts: ['Молча уйти', 'молча уйти'],
+    retries: 3,
+  });
+
+  console.log('Fish Restaurant journal: открыт (навык ведения дневника наград получен).');
+  return true;
+}
+
+// goToFishRestaurant уже доводит диалог до развилки Холмы/Болота/Опушка (живьём
+// подтверждено 15.09.2026 - Паша прошёл начало вручную, "Продолжить квест" на
+// location.php вывел ровно на этот выбор). Здесь только сам выбор ветки.
+// Мягкий клик (tryPerformStepOptional), не жёсткий: если попытка на этой награде уже
+// прерывалась раньше (recovery), "Продолжить квест" может вернуть на середину маршрута
+// ПОСЛЕ развилки - тогда текста ветки уже не будет, и это нормально, а не ошибка.
+async function goToFishRestaurantBranch(page, branchStepName, branchTexts) {
+  await goToFishRestaurant(page);
+  await tryPerformStepOptional(page, {
+    stepName: branchStepName,
+    currentTexts: branchTexts,
+  });
+}
+
+// 15.09.2026, обнаружено на "Рыбном ресторане" (несколько живых прогонов подряд): между
+// ЛЮБЫМИ двумя реальными шагами сюжета игра может вставить переменное число (замечено от
+// 0 до 3+ подряд) экранов-виньеток случайного флейвор-текста ("Топи"/"На пути к болотам" и
+// т.п.), каждый ровно с одной ссылкой внутри `.bBorder` - гайд их все склеивает в один шаг,
+// поэтому хардкодить каждый текст по одному бессмысленно (тексты каждый раз разные и в
+// разном количестве). Вызывать перед каждым performStep реального шага - кликает виньетки,
+// если они есть, и молча ничего не делает, если цель уже видна.
+// Site-chrome link texts that are always present and must never be mistaken for a
+// vignette's "continue" link (top nav, header, footer).
+const VIGNETTE_EXCLUDE_TEXTS = new Set([
+  'Обновить', 'Чат', 'В игру', 'Q', 'Настройки', 'Выход', 'Друзья', 'Гильдия',
+  'Правила', 'Поддержка', 'Форум', 'Личные сообщения', 'Все квесты', 'Амулет',
+  'Магазин', 'Инвентарь', 'Карта', 'Почта',
+]);
+
+async function skipTravelVignettes(page, targetTexts, maxAttempts = 8) {
+  for (let i = 0; i < maxAttempts; i++) {
+    if (await existsAnyText(page, targetTexts)) return;
+    const clicked = await page.evaluate(() => {
+      const el = document.querySelector('.bBorder a');
+      if (!el) return false;
+      el.click();
+      return true;
+    }).catch(() => false);
+    if (clicked) {
+      await pause(page, 800, 1500);
+      continue;
+    }
+    // Some vignette screens don't use .bBorder at all, just a plain "Далее" link
+    // (same pattern used elsewhere, e.g. boat trip screens) - fall back to it.
+    const clickedNext = await clickByTexts(page, ['Далее', 'далее'], 'travel vignette (Далее)').catch(() => false);
+    if (clickedNext) {
+      await pause(page, 800, 1500);
+      continue;
+    }
+    // Last resort: vignette link text is unpredictable ("Возвращаться в форт" etc.), so
+    // if there is exactly ONE non-chrome link on the page, treat it as the vignette's
+    // single "continue" choice. Deliberately a no-op (returns false) when 0 or 2+ such
+    // links exist, so it never guesses on a real multi-option decision screen.
+    const excludeArr = Array.from(VIGNETTE_EXCLUDE_TEXTS);
+    const clickedLone = await page.evaluate((exclude) => {
+      const links = Array.from(document.querySelectorAll('a'))
+        .filter((a) => a.textContent && a.textContent.trim().length > 0)
+        .filter((a) => !exclude.includes(a.textContent.trim()));
+      if (links.length !== 1) return false;
+      links[0].click();
+      return true;
+    }, excludeArr).catch(() => false);
+    if (!clickedLone) return;
+    console.log('skipTravelVignettes: клик по единственной нечужой ссылке на экране (эвристика).');
+    await pause(page, 800, 1500);
+  }
+}
+
+// Награда №1: "Без награды" (только дины) - ветка "Болота", 3 нарастающих боя с призраком.
+async function progressFishRestaurantReward1(page) {
+  await goToFishRestaurantBranch(page, 'Болота', ['Веди-ка ты меня на болота']);
+
+  await skipTravelVignettes(page, ['Идти направо за Яшкой']);
+  await performStep(page, { stepName: 'Идти направо за Яшкой', currentTexts: ['Идти направо за Яшкой'], retries: 3 });
+
+  await skipTravelVignettes(page, ['Забрать налево']);
+  await performStep(page, { stepName: 'Забрать налево', currentTexts: ['Забрать налево'], retries: 3 });
+
+  await skipTravelVignettes(page, ['Шагнуть вперёд', 'Шагнуть вперед']);
+  await performStep(page, { stepName: 'Шагнуть вперёд', currentTexts: ['Шагнуть вперёд', 'Шагнуть вперед'], retries: 3 });
+
+  await skipTravelVignettes(page, ['Мы выберем то, что нам пригодится']);
+  await performStep(page, { stepName: 'Мы выберем то, что нам пригодится', currentTexts: ['Мы выберем то, что нам пригодится'], retries: 3 });
+
+  await skipTravelVignettes(page, ['Идти к лианам']);
+  await performStep(page, { stepName: 'Идти к лианам', currentTexts: ['Идти к лианам'], retries: 3 });
+
+  await skipTravelVignettes(page, ['Попробовать встать']);
+  await performStep(page, { stepName: 'Попробовать встать', currentTexts: ['Попробовать встать'], retries: 3 });
+
+  console.log('Fish Restaurant reward #1: бой 1/3 (Призрак в топях)');
+  await fightLoop(page);
+  await pause(page, 800, 1500);
+
+  await skipTravelVignettes(page, ['Напасть']);
+  await performStep(page, { stepName: 'Напасть (1)', currentTexts: ['Напасть'], retries: 3 });
+  console.log('Fish Restaurant reward #1: бой 2/3 (сложный Призрак в топях)');
+  await fightLoop(page);
+  await pause(page, 800, 1500);
+
+  await skipTravelVignettes(page, ['Напасть']);
+  await performStep(page, { stepName: 'Напасть (2)', currentTexts: ['Напасть'], retries: 3 });
+  console.log('Fish Restaurant reward #1: бой 3/3 (сложный Призрак в топях)');
+  await fightLoop(page);
+
+  console.log('Fish Restaurant reward #1: проход завершён.');
+  return true;
+}
+
+const FISH_RESTAURANT_REWARD_HANDLERS = {
+  1: progressFishRestaurantReward1,
+};
+
+async function runFishRestaurantQuestIfAvailable(page) {
+  const today = getDayKeyNow();
+  if (fishRestaurantDayKey !== today) {
+    fishRestaurantDayKey = today;
+    fishRestaurantDoneToday = false;
+  }
+  if (fishRestaurantDoneToday) {
+    return false;
+  }
+
+  const QUEST = 'Рыбный ресторан';
+  const menuOpened = await resetToQuestMenu(page);
+  if (!menuOpened) {
+    return false;
+  }
+  const qNamesNow = parseQuestNamesFromQMenuText(await getBodyText(page));
+  if (!isQuestInMenu(qNamesNow, QUEST)) {
+    // 15.09.2026, живой баг: формальный accept ("К месту выполнения") убирает квест из
+    // общего Q-меню (как и другие "эксклюзивные" квесты - Харчевня/Штольни), но это НЕ
+    // значит "недоступен на сегодня" - если предыдущая попытка упала на середине маршрута
+    // (напр. на виньетке), квест остаётся в процессе и ждёт "Продолжить квест" на
+    // location.php. Раньше это молча трактовалось как "квест недоступен" и весь день
+    // пропадал без единой попытки резюме - проверяем эту возможность явно перед сдачей.
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    const locText = await getBodyText(page);
+    if (!/Продолжить квест/i.test(locText)) {
+      return false;
+    }
+    console.log('Fish Restaurant: не в Q-меню, но есть "Продолжить квест" - квест в процессе, резюмирую.');
+  }
+
+  // Журнал наград - опционален (без него награда за проход просто дины, а не предмет),
+  // НЕ обязателен для самого эскорт-квеста (живьём подтверждено 15.09.2026 - Паша дошёл
+  // до развилки Холмы/Болота/Опушка, не открывая журнал вовсе). Поэтому сначала пробуем
+  // сегодняшнюю пронумерованную награду (она ограничена одной попыткой в день), а журнал -
+  // только если наградный проход на сегодня уже сделан (не мешает ему, не блокирует его).
+  const handler = FISH_RESTAURANT_REWARD_HANDLERS[fishRestaurantNextRewardNumber];
+  if (handler) {
+    const ok = await runNonQQuestSafe(page, `Fish Restaurant reward #${fishRestaurantNextRewardNumber}`, () => handler(page));
+    if (ok) {
+      fishRestaurantDoneToday = true;
+      fishRestaurantNextRewardNumber += 1;
+      persistDailyQuestState();
+    }
+    return Boolean(ok);
+  }
+  console.log(`Fish Restaurant: нет закодированного маршрута для награды №${fishRestaurantNextRewardNumber} - остановлено, ждёт ручного добавления.`);
+
+  if (!fishRestaurantJournalOpened) {
+    const ok = await runNonQQuestSafe(page, 'Fish Restaurant journal', () => progressFishRestaurantJournal(page));
+    if (ok) {
+      fishRestaurantJournalOpened = true;
+      persistDailyQuestState();
+      return true;
+    }
+    return Boolean(ok);
+  }
+
+  return false;
+}
+
+// ===================================================================================
+// "Рыбий глаз" (Fish Eye) для AI__ — идентично Tsunami: тот же неQ-механизм
+// (canRunFishEyeFightNow/canRunFishEyeRewardNow + runFishEyeFight/tryClaimFishEyeReward),
+// который у Tsunami вызывается из doScenario. driver.js AI__ вызывает runDailyQuests
+// напрямую, минуя doScenario, поэтому Fish Eye никогда не запускался — обёртка ниже
+// вызывает тот же код явно, каждый цикл, независимо от Q.
+// ===================================================================================
+async function runFishEyeIfDue(page) {
+  let didAnything = false;
+
+  if (canRunFishEyeRewardNow()) {
+    const rewardResult = await runNonQQuestSafe(page, 'Fish Eye reward', () => tryClaimFishEyeReward(page));
+    if (rewardResult === null) {
+      lastFishEyeRunAt = Date.now();
+    } else if (rewardResult) {
+      didAnything = true;
+    }
+  }
+
+  if (canRunFishEyeFightNow()) {
+    const fightResult = await runNonQQuestSafe(page, 'Fish Eye fight', () => runFishEyeFight(page));
+    if (fightResult === null) {
+      lastFishEyeRunAt = Date.now();
+    } else if (fightResult) {
+      didAnything = true;
+    }
+  }
+
+  if (didAnything) {
+    persistDailyQuestState();
+  }
+
+  return didAnything;
+}
+
+// ===================================================================================
+// "Подвалы" (Южные ворота Стоунгарда) — альтернативная фарм-точка для AI__ (крысы/слизняки),
+// найдена и задокументирована 14.09.2026 в LESSONS_AI_CHAR.md. В отличие от Fish Eye/гильдии
+// это НЕ уникальный игровой механизм, а обычный repeat-farm объект — используется просто как
+// "чем заняться, когда с квестами/Fish Eye на этот цикл всё сделано".
+// ===================================================================================
+// 15.09.2026, Паша: "не нравится что при не сделаных квестах АИ бежит фармить подвалы" —
+// живой случай: вошли в Подвалы на HP>=50%, один бой (даже с сработавшим эликсиром) снёс
+// HP до 34/340 (10%) - после этого ассасин(70%)/Рыбный ресторан/Рыбий глаз(50%) блокировались
+// много циклов подряд, пока HP медленно (16/мин) восстанавливалось - выглядело как "бот
+// бросил квесты и фармит", хотя на самом деле сам фарм и съел HP, нужный квестам. Подняли
+// порог до 0.7 (тот же вывод, что и для банкира/Рыбьего глаза) и срезали число боёв за
+// раунд до 1, чтобы Подвалы не могли утащить HP ниже уровня, нужного реальным квестам.
+const PODVALY_HP_SAFETY_FRACTION = 0.7; // не начинать новый бой ниже этой доли от макс. HP
+const PODVALY_MAX_FIGHTS_PER_ROUND = 1; // не более N боёв за один вызов из driver.js
+// "Штольни" требуют SHTOLNI_MIN_HP_FRACTION=0.99 - если Подвалы фармят всё, что выше 70%,
+// они постоянно сбивают HP обратно вниз и не дают дойти до 99%, из-за чего Штольни для
+// AI__ фактически никогда не запускались. Верхний потолок резервирует "почти полное" HP
+// именно для таких требовательных квестов вместо того, чтобы тратить его на обычный фарм.
+const PODVALY_HP_CEILING_FRACTION = 0.9; // не фармить выше этой доли - беречь HP для Штолен
+
+async function enterPodvaly(page) {
+  const stoneUrl = 'http://lbast.ru/location.php?mod=konj&lway=1';
+  await page.goto(stoneUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await waitOutHorseTravel(page, stoneUrl);
+
+  let text = await getBodyText(page);
+  if (!/подвал/i.test(text)) {
+    await page.goto('http://lbast.ru/location.php?idem=1', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    text = await getBodyText(page);
+  }
+
+  if (!(await existsAnyText(page, ['В подвалы']))) {
+    console.log('Podvaly farm: "В подвалы" не найдено на этой клетке.');
+    return false;
+  }
+
+  await clickByTexts(page, ['В подвалы'], 'В подвалы');
+  await pause(page, 800, 1400);
+  return true;
+}
+
+async function runPodvalyFarmRound(page) {
+  // A prior dispatcher (Demon Lake, Shipwreck, ...) may have left us on location.php?mod=quests,
+  // whose header doesn't render the "Name (HP/HPMax)" tuple parseStats expects — reading stats
+  // straight off whatever page we inherited silently returns null/null and skips farming for the
+  // whole cycle. Found 14.09.2026 after AI__ stood idle for over an hour with full HP available.
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const stats0 = parseStats(await getBodyText(page));
+  if (
+    typeof stats0.hpCurrent !== 'number' ||
+    typeof stats0.hpMax !== 'number' ||
+    stats0.hpCurrent <= 0 ||
+    stats0.hpCurrent < stats0.hpMax * PODVALY_HP_SAFETY_FRACTION
+  ) {
+    return false;
+  }
+  if (stats0.hpCurrent >= stats0.hpMax * PODVALY_HP_CEILING_FRACTION) {
+    console.log(`Podvaly farm: HP ${stats0.hpCurrent}/${stats0.hpMax} уже близко к максимуму - берегу для Штолен, не фармлю.`);
+    return false;
+  }
+
+  const entered = await enterPodvaly(page);
+  if (!entered) return false;
+
+  let didAnything = false;
+  for (let i = 0; i < PODVALY_MAX_FIGHTS_PER_ROUND; i++) {
+    const stats = parseStats(await getBodyText(page));
+    if (typeof stats.hpCurrent !== 'number' || typeof stats.hpMax !== 'number') break;
+    if (stats.hpCurrent <= 0) break;
+    if (stats.hpCurrent < stats.hpMax * PODVALY_HP_SAFETY_FRACTION) break;
+
+    const okOsmotret = await clickByTexts(page, ['Осмотреть подвалы'], 'Осмотреть подвалы');
+    if (!okOsmotret) break;
+    await pause(page, 700, 1200);
+
+    const okAttack = await clickByTexts(page, ['Атаковать'], 'Атаковать');
+    if (!okAttack) {
+      await pause(page, 800, 1400);
+      continue;
+    }
+
+    const won = await fightLoop(page).catch((e) => {
+      console.log('Podvaly farm: fightLoop error:', e.message);
+      return null;
+    });
+    console.log('Podvaly farm: fightLoop result:', won);
+    didAnything = true;
+    await pause(page, 800, 1400);
+  }
+
+  return didAnything;
+}
+
+// ===================================================================================
+// Гарпия — новая фарм-точка вместо Подвалов (15.09.2026, Паша: "меняем точку фарма, вместо
+// подвала - гарпия"). Маршрут продиктован Пашей: Конь -> Горы Дарии -> Запад -> Гнёзда гарпии.
+// "Горы Дарии" - тот же перекрёсток, что и в goRouteToGoblins выше, только оттуда нужно на
+// запад, а не на север. Бой ни разу не проверен вживую -> держим консервативный floor (как
+// у Подвалов), пока не увидим реальный урон. НЕТ ceiling-гейта: тот был нужен только чтобы
+// беречь HP для Штолен, а Штольни отложены (SHTOLNI_ENABLED_FOR_AI=false, см. Пашу
+// 15.09.2026 "штольни мы отложили на потом, их пока не делаем") - резервировать HP для
+// квеста, который не запускается, только мешает нормально фармить. Если Штольни когда-то
+// включат обратно, вернуть ceiling здесь тогда же.
+// ===================================================================================
+// Снижено 0.7->0.55 (15.09.2026, прямая просьба Паши после замера урона ниже). Риск
+// осознан и явно проговорён: при входе на 55% (187/340) и повторении уже виденного удара
+// в 172 останется ~15 HP (4%) - почти без запаса. Решение всё равно принято сознательно,
+// не менять обратно без явной новой просьбы.
+const HARPY_HP_SAFETY_FRACTION = 0.55;
+// Замерено вживую 15.09.2026 (Паша просил прикинуть "оптимальный отдых"): 2 боя подряд
+// дали урон 12 и 172 (!) - разброс огромный, 172 - это больше половины макс. HP (340) за
+// ОДИН бой, при входе на честных 70%. Фиксированного "оптимального числа боёв подряд" не
+// существует - урон гарпии слишком нестабилен (тот же паттерн бёрст-урона, что уже ломал
+// 50%- и 70%-гейты у Fish Eye/ассасинов, см. память). Единственная реальная защита -
+// floor (сейчас 0.55) проверяется ПЕРЕД каждым боем, а не только один раз на весь раунд.
+// Число боёв в день теперь берётся из HARPY_HUNTS_PER_DAY (см. выше в файле, порт с
+// Цунами commit fb9dea7, 16.09.2026) вместо фиксированного числа за раунд.
+
+function isHarpyLocation(text) {
+  // Real location name is "Кровавый пик" (confirmed live 15.09.2026), which has a
+  // "Гнезда гарпий" link - NOT "Гнёзда гарпии"/"Гнезда гарпии" as first guessed from
+  // Pasha's spoken route, which caused the first live attempt to fail with
+  // fight_not_reached (route walked fine up to here, then found no matching link/fight).
+  return /Кровавый пик/i.test(String(text || '')) || /Гнезда гарпий/i.test(String(text || ''));
+}
+
+async function goRouteToHarpy(page) {
+  const HORSE = 'Конь';
+  const DARIA = 'Горы Дарии';
+  const V_PUTI = 'В пути';
+  const V_PUTI_ESHE = 'В пути еще';
+  const V_PUTI_ESHYO = 'В пути ещё';
+  const WEST = 'Идти на запад';
+  const NESTS = 'Гнезда гарпий';
+  const UDAR = 'Ударить';
+  const DONE = 'Бой завершен!';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [DARIA, DARIA.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: DARIA,
+    currentTexts: [DARIA, DARIA.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_ESHE, V_PUTI_ESHE.toLowerCase(),
+      V_PUTI_ESHYO, V_PUTI_ESHYO.toLowerCase(),
+      WEST, WEST.toLowerCase(),
+      NESTS, NESTS.toLowerCase(),
+      UDAR, UDAR.toLowerCase(),
+      DONE,
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_ESHE, V_PUTI_ESHE.toLowerCase(),
+      V_PUTI_ESHYO, V_PUTI_ESHYO.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [WEST, WEST.toLowerCase(), NESTS, NESTS.toLowerCase(), UDAR, UDAR.toLowerCase(), DONE],
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: WEST,
+    currentTexts: [WEST, WEST.toLowerCase()],
+    nextTexts: [NESTS, NESTS.toLowerCase(), UDAR, UDAR.toLowerCase(), DONE],
+  });
+
+  await pause(page, 800, 1600);
+}
+
+async function openHarpyFight(page) {
+  const NESTS = 'Гнезда гарпий';
+  const V_BOY = 'В бой!';
+  const UDAR = 'Ударить';
+  const DONE = 'Бой завершен!';
+
+  const text = await getBodyText(page);
+  if (!new RegExp(UDAR, 'i').test(text) && !new RegExp(DONE, 'i').test(text)) {
+    await tryPerformStepOptional(page, {
+      stepName: NESTS,
+      currentTexts: [NESTS, NESTS.toLowerCase()],
+      nextTexts: [V_BOY, V_BOY.toLowerCase(), 'В бой', 'в бой', UDAR, UDAR.toLowerCase(), DONE],
+    });
+  }
+
+  const textAfter = await getBodyText(page);
+  if ((/В бой!/i.test(textAfter) || /В бой\b/i.test(textAfter)) && !new RegExp(UDAR, 'i').test(textAfter)) {
+    await performStep(page, {
+      stepName: V_BOY,
+      currentTexts: [
+        V_BOY, V_BOY.toLowerCase(),
+        'В бой', 'в бой',
+        'Вступить в бой', 'вступить в бой',
+        'Принять бой', 'принять бой',
+      ],
+      nextTexts: [UDAR, UDAR.toLowerCase(), DONE],
+      retries: 4,
+    });
+  }
+
+  await pause(page, 1000, 2000);
+}
+
+async function runHarpyFarmRound(page, buffed = false) {
+  if (getWeekday() !== HARPY_HUNT_WEEKDAY) {
+    return false; // сегодня не вторник - гарпии не дейлик, а не "уже сделано"
+  }
+  resetHuntStateIfNewDay();
+  if (harpyHuntFightsToday >= HARPY_HUNTS_PER_DAY) {
+    return false;
+  }
+
+  const floor = buffed ? HP_FLOOR_WITH_BUFF : HARPY_HP_SAFETY_FRACTION;
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const stats0 = parseStats(await getBodyText(page));
+  if (
+    typeof stats0.hpCurrent !== 'number' ||
+    typeof stats0.hpMax !== 'number' ||
+    stats0.hpCurrent <= 0 ||
+    stats0.hpCurrent < stats0.hpMax * floor
+  ) {
+    return false;
+  }
+  const text0 = await getBodyText(page);
+  if (!isHarpyLocation(text0)) {
+    await goRouteToHarpy(page).catch((e) => {
+      console.log('Harpy farm: маршрут не пройден:', e.message);
+    });
+  }
+
+  let didAnything = false;
+  for (let i = harpyHuntFightsToday; i < HARPY_HUNTS_PER_DAY; i++) {
+    const stats = parseStats(await getBodyText(page));
+    if (typeof stats.hpCurrent !== 'number' || typeof stats.hpMax !== 'number') break;
+    if (stats.hpCurrent <= 0) break;
+    if (stats.hpCurrent < stats.hpMax * floor) break;
+
+    const hpBefore = stats.hpCurrent;
+    await openHarpyFight(page).catch((e) => {
+      console.log('Harpy farm: не удалось начать бой:', e.message);
+    });
+
+    let won;
+    try {
+      won = await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Harpy farm: гарпии ещё на кулдауне (${waitMinutes} мин, сделано ${i}/${HARPY_HUNTS_PER_DAY}) -> отложу оставшиеся бои до следующего цикла`);
+        harpyHuntFightsToday = i;
+        persistDailyQuestState();
+        return didAnything;
+      }
+      console.log('Harpy farm: fightLoop error:', e.message);
+      won = null;
+    }
+
+    const statsAfter = parseStats(await getBodyText(page));
+    const hpAfter = typeof statsAfter.hpCurrent === 'number' ? statsAfter.hpCurrent : null;
+    const delta = hpAfter !== null ? hpBefore - hpAfter : null;
+    console.log(`Harpy farm: fight #${i + 1}/${HARPY_HUNTS_PER_DAY} result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
+    didAnything = true;
+    harpyHuntFightsToday = i + 1;
+    persistDailyQuestState();
+    await pause(page, 800, 1400);
+  }
+
+  return didAnything;
+}
+
+// ===================================================================================
+// Бизон — новая фарм-точка вместо Гарпии (15.09.2026, Паша: "меняем точку фарма на
+// бизона", маршрут: Амулет -> Дорожный крест -> Восток -> Восток -> Охотиться). Реальный
+// текст проверен read-only диагностикой (тот же урок, что и с Гарпией - не доверять
+// пересказу дословно без проверки): "Дорожный крест" -> "Идти на восток" -> "Дорога" ->
+// "Идти на восток" -> "Поле" (описание про диких бизонов) -> "Охотиться". Клик "Амулет"
+// не используется намеренно (известный баг с латинской "A", см. LESSONS/память) - вместо
+// этого прямой fastway URL lway=9 (тот же, что уже был у Demon Lake - DEMON_LAKE_FASTWAY_URL).
+// Урон бизона НЕ известен вообще (0 замеров) -> начинаем с консервативного floor 0.7, как
+// начинали с Гарпией, пока не наберётся статистика.
+// ===================================================================================
+const BISON_HP_SAFETY_FRACTION = 0.7;
+// Число боёв в день берётся из BISON_HUNTS_PER_DAY (см. выше в файле, порт с Цунами
+// commit fb9dea7, 16.09.2026) вместо фиксированного числа за раунд.
+
+function isBisonLocation(text) {
+  return /Поле/i.test(String(text || '')) && /бизон/i.test(String(text || ''));
+}
+
+async function goRouteToBison(page) {
+  await page.goto(DEMON_LAKE_FASTWAY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 500, 900);
+
+  // skipIfNextVisible:false обязателен здесь: и текущий, и следующий шаг называются
+  // одинаково ("Идти на восток"), а этот текст уже виден на "Дорожный крест" ДО клика -
+  // с дефолтным skipIfNextVisible=true шаг ложно считал себя уже пройденным и не кликал
+  // вообще, оставляя маршрут на один хоп короче ("Дорога" вместо "Поле", fight_not_reached
+  // при попытке "Охотиться"). Обнаружено вживую 16.09.2026.
+  await performStep(page, {
+    stepName: 'Идти на восток (1)',
+    currentTexts: ['Идти на восток', 'идти на восток'],
+    nextTexts: ['Охотиться', 'охотиться'],
+    skipIfNextVisible: false,
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: 'Идти на восток (2)',
+    currentTexts: ['Идти на восток', 'идти на восток'],
+    nextTexts: ['Охотиться', 'охотиться'],
+    retries: 3,
+  });
+
+  await pause(page, 800, 1600);
+}
+
+async function openBisonFight(page) {
+  const HUNT = 'Охотиться';
+  const V_BOY = 'В бой!';
+  const UDAR = 'Ударить';
+  const DONE = 'Бой завершен!';
+
+  const text = await getBodyText(page);
+  if (!new RegExp(UDAR, 'i').test(text) && !new RegExp(DONE, 'i').test(text)) {
+    await tryPerformStepOptional(page, {
+      stepName: HUNT,
+      currentTexts: [HUNT, HUNT.toLowerCase()],
+      nextTexts: [V_BOY, V_BOY.toLowerCase(), 'В бой', 'в бой', UDAR, UDAR.toLowerCase(), DONE],
+    });
+  }
+
+  const textAfter = await getBodyText(page);
+  if ((/В бой!/i.test(textAfter) || /В бой\b/i.test(textAfter)) && !new RegExp(UDAR, 'i').test(textAfter)) {
+    await performStep(page, {
+      stepName: V_BOY,
+      currentTexts: [
+        V_BOY, V_BOY.toLowerCase(),
+        'В бой', 'в бой',
+        'Вступить в бой', 'вступить в бой',
+        'Принять бой', 'принять бой',
+      ],
+      nextTexts: [UDAR, UDAR.toLowerCase(), DONE],
+      retries: 4,
+    });
+  }
+
+  await pause(page, 1000, 2000);
+}
+
+// 16.09.2026, Паша (после ручного прохождения дневной нормы бизона): "продолжай фарм на
+// бизоне и кабане (теперь это обычный фарм)" - за пределами дневного бонуса (среда x2/
+// воскресенье x3, см. HARPY/BISON_HUNT_WEEKDAYS выше) бизон и кабан остаются обычными
+// фармящимися мобами без ограничения по числу боёв - единственный реальный гейт это
+// игровой кулдаун по цели (fight_target_cooldown, тот же механизм). Дневной счётчик/гейт
+// по дню недели больше НЕ применяется к фарму - вызывается каждый цикл как обычный
+// repeat-farm (1 бой за вызов, как Подвалы раньше).
+async function runBisonFarmRound(page, buffed = false) {
+  const floor = buffed ? HP_FLOOR_WITH_BUFF : BISON_HP_SAFETY_FRACTION;
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const stats0 = parseStats(await getBodyText(page));
+  if (
+    typeof stats0.hpCurrent !== 'number' ||
+    typeof stats0.hpMax !== 'number' ||
+    stats0.hpCurrent <= 0 ||
+    stats0.hpCurrent < stats0.hpMax * floor
+  ) {
+    return false;
+  }
+
+  const text0 = await getBodyText(page);
+  if (!isBisonLocation(text0)) {
+    await goRouteToBison(page).catch((e) => {
+      console.log('Bison farm: маршрут не пройден:', e.message);
+    });
+  }
+
+  const stats = parseStats(await getBodyText(page));
+  if (
+    typeof stats.hpCurrent !== 'number' ||
+    typeof stats.hpMax !== 'number' ||
+    stats.hpCurrent <= 0 ||
+    stats.hpCurrent < stats.hpMax * floor
+  ) {
+    return false;
+  }
+
+  const hpBefore = stats.hpCurrent;
+  await openBisonFight(page).catch((e) => {
+    console.log('Bison farm: не удалось начать бой:', e.message);
+  });
+
+  let won;
+  try {
+    won = await fightLoop(page);
+  } catch (e) {
+    const waitMinutes = parseCooldownError(e);
+    if (waitMinutes !== null) {
+      console.log(`Bison farm: бизон ещё на кулдауне (${waitMinutes} мин) -> попробую в следующем цикле`);
+      return false;
+    }
+    console.log('Bison farm: fightLoop error:', e.message);
+    won = null;
+  }
+
+  const statsAfter = parseStats(await getBodyText(page));
+  const hpAfter = typeof statsAfter.hpCurrent === 'number' ? statsAfter.hpCurrent : null;
+  const delta = hpAfter !== null ? hpBefore - hpAfter : null;
+  console.log(`Bison farm: fight result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
+  return true;
+}
+
+// Кабан (общий репит-фарм, 16.09.2026, порт маршрута с Цунами commit fb9dea7): Конь ->
+// Леса Эльсены -> (В пути) -> Запад -> Юг -> Напасть на кабана. ВАЖНО: "Юг" ведёт к волчьей
+// поляне и виден на промежуточной странице ДО клика "Запад" - skipIfNextVisible обязан
+// быть false на шаге "Запад", иначе ложно пропустит клик и уведёт к волкам вместо кабана
+// (тот же класс бага, что уже чинили для Бизона).
+const BOAR_HP_SAFETY_FRACTION = 0.7; // урон не измерен - консервативно, как стартовые Гарпия/Бизон
+
+function isBoarLocation(text) {
+  return /Напасть на кабана/i.test(String(text || ''));
+}
+
+async function goRouteToBoar(page) {
+  const HORSE = 'Конь';
+  const ELSENA = 'Леса Эльсены';
+  const V_PUTI = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const WEST = 'Запад';
+  const SOUTH = 'Юг';
+  const ATTACK_BOAR = 'Напасть на кабана';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [ELSENA, ELSENA.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ELSENA,
+    currentTexts: [ELSENA, ELSENA.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      WEST, WEST.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [WEST, WEST.toLowerCase()],
+  });
+
+  await performStep(page, {
+    stepName: WEST,
+    currentTexts: [WEST, WEST.toLowerCase()],
+    nextTexts: [SOUTH, SOUTH.toLowerCase()],
+    retries: 3,
+    skipIfNextVisible: false,
+  });
+
+  await performStep(page, {
+    stepName: SOUTH,
+    currentTexts: [SOUTH, SOUTH.toLowerCase()],
+    nextTexts: [ATTACK_BOAR, ATTACK_BOAR.toLowerCase()],
+    retries: 3,
+  });
+
+  await pause(page, 800, 1600);
+}
+
+async function openBoarFight(page) {
+  const ATTACK_BOAR = 'Напасть на кабана';
+  const V_BOY = 'В бой!';
+  const UDAR = 'Ударить';
+  const DONE = 'Бой завершен!';
+
+  const text = await getBodyText(page);
+  if (!new RegExp(UDAR, 'i').test(text) && !new RegExp(DONE, 'i').test(text)) {
+    await tryPerformStepOptional(page, {
+      stepName: ATTACK_BOAR,
+      currentTexts: [ATTACK_BOAR, ATTACK_BOAR.toLowerCase()],
+      nextTexts: [V_BOY, V_BOY.toLowerCase(), 'В бой', 'в бой', UDAR, UDAR.toLowerCase(), DONE],
+    });
+  }
+
+  const textAfter = await getBodyText(page);
+  if ((/В бой!/i.test(textAfter) || /В бой\b/i.test(textAfter)) && !new RegExp(UDAR, 'i').test(textAfter)) {
+    await performStep(page, {
+      stepName: V_BOY,
+      currentTexts: [
+        V_BOY, V_BOY.toLowerCase(),
+        'В бой', 'в бой',
+        'Вступить в бой', 'вступить в бой',
+        'Принять бой', 'принять бой',
+      ],
+      nextTexts: [UDAR, UDAR.toLowerCase(), DONE],
+      retries: 4,
+    });
+  }
+
+  await pause(page, 1000, 2000);
+}
+
+async function runBoarFarmRound(page, buffed = false) {
+  const floor = buffed ? HP_FLOOR_WITH_BUFF : BOAR_HP_SAFETY_FRACTION;
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const stats0 = parseStats(await getBodyText(page));
+  if (
+    typeof stats0.hpCurrent !== 'number' ||
+    typeof stats0.hpMax !== 'number' ||
+    stats0.hpCurrent <= 0 ||
+    stats0.hpCurrent < stats0.hpMax * floor
+  ) {
+    return false;
+  }
+
+  const text0 = await getBodyText(page);
+  if (!isBoarLocation(text0)) {
+    await goRouteToBoar(page).catch((e) => {
+      console.log('Boar farm: маршрут не пройден:', e.message);
+    });
+  }
+
+  const stats = parseStats(await getBodyText(page));
+  if (
+    typeof stats.hpCurrent !== 'number' ||
+    typeof stats.hpMax !== 'number' ||
+    stats.hpCurrent <= 0 ||
+    stats.hpCurrent < stats.hpMax * floor
+  ) {
+    return false;
+  }
+
+  const hpBefore = stats.hpCurrent;
+  await openBoarFight(page).catch((e) => {
+    console.log('Boar farm: не удалось начать бой:', e.message);
+  });
+
+  let won;
+  try {
+    won = await fightLoop(page);
+  } catch (e) {
+    const waitMinutes = parseCooldownError(e);
+    if (waitMinutes !== null) {
+      console.log(`Boar farm: кабан ещё на кулдауне (${waitMinutes} мин) -> попробую в следующем цикле`);
+      return false;
+    }
+    console.log('Boar farm: fightLoop error:', e.message);
+    won = null;
+  }
+
+  const statsAfter = parseStats(await getBodyText(page));
+  const hpAfter = typeof statsAfter.hpCurrent === 'number' ? statsAfter.hpCurrent : null;
+  const delta = hpAfter !== null ? hpBefore - hpAfter : null;
+  console.log(`Boar farm: fight result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
+  return true;
+}
+
+// ===== Чат: раса/фракция собеседника, публичные и личные сообщения =====
+// 16.09.2026, Паша: "цель сделать автономного персонажа" - в постоянном коде, не как
+// одноразовый _tmp-скрипт (см. LORE_ARDEN.md для полного контекста лора и персонажа AI__).
+
+// Клик по нику в любой комнате чата ведёт на chat.php?mod=infa&userlogin=<ник> - страница
+// профиля с полями "Раса:" и либо "Мировоззрение:" (нейтральное/тёмный - для тех, кто не в
+// формальном государстве), либо "Государство:" (Империя/Сариматское Братство и т.п.).
+// ВАЖНО (обнаружено живьём 16.09.2026): раса и фракция независимы друг от друга - например
+// орк может состоять в Государстве Империя, а не быть автоматически Тьмой/нейтральным по
+// расе. Нельзя выводить фракцию из расы, только парсить оба поля отдельно.
+async function getPlayerRaceAndFaction(page, nick) {
+  const currentUrl = page.url();
+  try {
+    await page.goto(
+      `http://lbast.ru/chat.php?mod=infa&userlogin=${encodeURIComponent(nick)}&room=1&sm=`,
+      { waitUntil: 'domcontentloaded', timeout: 60000 }
+    );
+    const text = await getBodyText(page);
+
+    const raceMatch = text.match(/Раса:\s*([^\s,]+)/i);
+    const worldviewMatch = text.match(/Мировоззрение:\s*([^\s,]+)/i);
+    const stateMatch = text.match(/Государство:\s*([^\s,]+)/i);
+    const clanMatch = text.match(/Клан:\s*([^\n]+?)(?=\s{2,}|Статус:|Ролевой портрет|$)/i);
+
+    return {
+      race: raceMatch ? raceMatch[1] : null,
+      worldview: worldviewMatch ? worldviewMatch[1] : null,
+      state: stateMatch ? stateMatch[1] : null,
+      clan: clanMatch ? clanMatch[1].trim() : null,
+    };
+  } finally {
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  }
+}
+
+// 16.09.2026, Паша: "у Цунами есть как использовать статую... раз в 12 часов". Логика
+// runStatueOfGloryTask/isStatueOfGloryDue/scheduleNextStatueOfGlory уже существовала в этом
+// файле (видимо, портирована раньше вместе с остальным кодом Цунами), но жила только внутри
+// doScenario() - функции, которую driver.js для AI__ НИКОГДА не вызывает (у него свой
+// собственный цикл шагов). Получается, статуя не работала для AI__ ни разу, пока не вступили
+// в клан и её вообще не заметили. Обёртка ниже - тонкий адаптер для прямого вызова из
+// driver.js, без изменения самой логики маршрута/интервала.
+async function runStatueOfGloryIfDue(page) {
+  if (!isStatueOfGloryDue()) {
+    return false;
+  }
+  console.log('Статуя славы: подошёл интервал 12-14 часов, выполняю маршрут');
+  try {
+    await runStatueOfGloryTask(page);
+  } catch (e) {
+    console.log(`Статуя славы: не удалось (${e.message}) -> пропускаю, продолжаю цикл`);
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  }
+  scheduleNextStatueOfGlory();
+  return true;
+}
+
+// Отправка сообщения в общий чат комнаты (по умолчанию room=1 = Городская площадь).
+async function postChatMessage(page, message, room = 1) {
+  await page.goto(`http://lbast.ru/chat.php?room=${room}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const textarea = page.locator('textarea#msgbody');
+  await textarea.fill(message);
+  await page.locator('input#send').click({ timeout: 8000 });
+  await pause(page, 800, 1500);
+}
+
+// Читает последние сообщения комнаты как {nick, text} - используется, чтобы заметить чей-то
+// ответ на сообщение AI__ (сопоставление по нику из ссылки mod=infa рядом с текстом сообщения).
+async function getRecentChatMessages(page, room = 1) {
+  await page.goto(`http://lbast.ru/chat.php?room=${room}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const text = await getBodyText(page);
+  return text;
+}
+
+// Живой факт (16.09.2026): полный текст страницы чата всегда меняется между опросами даже
+// без новых сообщений - в шапке есть текущее время ("14:19:47, Ср.") и HP/кулдаун персонажа
+// ("AI__ (200/340) (40)"), которые тикают каждую минуту сами по себе. Diff по ПОЛНОМУ тексту
+// (как было в первой версии runChatMonitorCycle) ложно срабатывал почти на каждом опросе для
+// каждой комнаты, независимо от реальной активности - шум забивал сигнал. Вырезаем только
+// секцию с реальными сообщениями (между "Смайлы" и футером "Вперед - Обновить"/"Заметки -")
+// и сравниваем именно её.
+function extractChatMessagesSection(fullText) {
+  const marker = 'Смайлы';
+  const startIdx = fullText.indexOf(marker);
+  let section = startIdx >= 0 ? fullText.slice(startIdx + marker.length) : fullText;
+  const endMarkers = ['Вперед - Обновить', 'Заметки -'];
+  let endIdx = section.length;
+  for (const m of endMarkers) {
+    const idx = section.indexOf(m);
+    if (idx >= 0 && idx < endIdx) endIdx = idx;
+  }
+  return section.slice(0, endIdx).trim();
+}
+
+// Список комнат чата (найдено живьём 16.09.2026, chat.php лобби) - Паша попросил
+// активность сразу в нескольких, не только на Городской площади.
+const CHAT_ROOMS = [
+  { room: 1, name: 'Городская площадь' },
+  { room: 2, name: 'Сады Афродиты' },
+  { room: 3, name: 'Вопросы по игре' },
+  { room: 4, name: 'Эльфийская деревня' },
+  { room: 5, name: 'Торба на круче' },
+  { room: 6, name: 'Казармы орков' },
+  { room: 7, name: 'Пещера гномов' },
+  { room: 200, name: 'Таверна' },
+  { room: 300, name: 'Ролевая' },
+  // Появились после вступления AI__ в клан "Боги войны" 16.09.2026 - см. LORE_ARDEN.md.
+  // Паша, 17.09.2026: "давай ты всегда будешь держать открытым клан зал и мониторить? если
+  // никого нет раз в 20 минут" - явный idlePollMs, отдельный от дефолта для остальных комнат
+  // (клан зал важнее держать "на связи" реже долбить, но не пропустить разговор).
+  { room: 12, name: 'Клановый зал', idlePollMs: 20 * 60_000 },
+  { room: 51, name: 'Имперский зал' },
+];
+
+// Адаптивный опрос (16.09.2026, Паша: "обновляй чаще, если в комнате пошло общение можешь ее
+// обновлять раз в 30 сек" - до этого все 9 комнат опрашивались одинаково раз в CHAT_POLL_INTERVAL_MS
+// целиком, что и медленно реагирует на живой разговор, и просто лишний трафик для тихих комнат).
+// Комната считается "активной" ACTIVE_WINDOW_MS после последнего замеченного изменения - в этом
+// окне она проверяется каждые ACTIVE_POLL_MS, иначе раз в IDLE_POLL_MS (или в room.idlePollMs,
+// если для комнаты задан отдельный интервал - см. Клановый зал выше).
+const CHAT_ACTIVE_POLL_MS = 30_000;
+const CHAT_IDLE_POLL_MS = 3 * 60_000;
+const CHAT_ACTIVE_WINDOW_MS = 5 * 60_000;
+
+// state: {[room]: {lastText, lastChangeAt, lastCheckedAt}} - переиспользуется между вызовами,
+// начать с {}. Каждый вызов проверяет только те комнаты, чей интервал уже истёк (не долбит все
+// 9 комнат разом каждый раз), с паузой между реальными проверками внутри одного тика.
+async function runChatMonitorCycle(chatPage, state) {
+  const now = Date.now();
+  const changed = [];
+  let didAnyFetch = false;
+  for (const { room, name, idlePollMs } of CHAT_ROOMS) {
+    const s = state[room] || { lastText: undefined, lastChangeAt: 0, lastCheckedAt: 0 };
+    const isActive = now - s.lastChangeAt < CHAT_ACTIVE_WINDOW_MS;
+    const intervalMs = isActive ? CHAT_ACTIVE_POLL_MS : (idlePollMs || CHAT_IDLE_POLL_MS);
+    if (now - s.lastCheckedAt < intervalMs) {
+      state[room] = s;
+      continue;
+    }
+    if (didAnyFetch) {
+      await pause(chatPage, 3000, 6000);
+    }
+    const text = await getRecentChatMessages(chatPage, room).catch((e) => {
+      console.log(`Chat monitor: ошибка чтения комнаты "${name}" (room=${room}):`, e.message);
+      return null;
+    });
+    didAnyFetch = true;
+    s.lastCheckedAt = now;
+    if (text === null) {
+      state[room] = s;
+      continue;
+    }
+    const messagesOnly = extractChatMessagesSection(text);
+    if (s.lastText !== undefined && s.lastText !== messagesOnly) {
+      changed.push({ room, name, text });
+      s.lastChangeAt = now;
+    }
+    s.lastText = messagesOnly;
+    state[room] = s;
+  }
+  return changed;
+}
+
+// "Отвечаешь лично" - личное письмо конкретному игроку (letters.php, отдельная от чата
+// система - на lbast.ru нет отдельного real-time приватного чата с конкретным игроком,
+// только это). Форма подтверждена живьём 16.09.2026: textarea#msgbody, submit #send.
+async function sendPrivateLetter(page, nick, message) {
+  await page.goto(
+    `http://lbast.ru/letters.php?mod=write&room=1&userlogin=${encodeURIComponent(nick)}&privat=2&fromchat=1`,
+    { waitUntil: 'domcontentloaded', timeout: 60000 }
+  );
+  const textarea = page.locator('textarea#msgbody');
+  await textarea.fill(message);
+  await page.locator('input#send').click({ timeout: 8000 });
+  await pause(page, 800, 1500);
+}
+
+// ===================================================================================
+// "Довольствие" - короткий ежедневный квест без боя, продиктован Пашей 17.09.2026:
+// Амулет -> Дорожный крест -> Казначейство Тригмагистрата -> Получить довольствие -> В игру.
+// Не проверено вживую (продиктовано по памяти, как Демон озера/Кораблекрушение до первого
+// реального прогона) - verify live перед тем как доверять маршруту полностью.
+// ===================================================================================
+async function progressDovolstvieQuest(page) {
+  await clickByTexts(page, ['Амулет', 'Aмулет'], 'Довольствие: Амулет');
+  await pause(page, 800, 1200);
+  await clickByTexts(page, ['Дорожный крест'], 'Довольствие: Дорожный крест');
+  await pause(page, 1500, 2500);
+
+  const treasuryOk = await clickByTexts(page, ['Казначейство Тригмагистрата'], 'Довольствие: Казначейство Тригмагистрата');
+  if (!treasuryOk) {
+    console.log('Довольствие: "Казначейство Тригмагистрата" не найдено рядом с Дорожным крестом - маршрут не подтверждён, нужна проверка вживую.');
+    return false;
+  }
+  await pause(page, 800, 1200);
+
+  const claimOk = await clickByTexts(page, ['Получить довольствие'], 'Довольствие: Получить довольствие');
+  if (!claimOk) {
+    console.log('Довольствие: "Получить довольствие" не найдено - возможно, уже получено сегодня или незнакомый экран.');
+    return false;
+  }
+  await pause(page, 800, 1200);
+
+  await tryPerformStepOptional(page, { stepName: 'В игру', currentTexts: ['В игру', 'в игру'] });
+  await pause(page, 500, 900);
+  return true;
+}
+
+async function runDovolstvieIfAvailable(page) {
+  const today = getDayKeyNow();
+  if (dovolstvieDayKey !== today) {
+    dovolstvieDayKey = today;
+    dovolstvieDoneToday = false;
+    persistDailyQuestState();
+  }
+  if (dovolstvieDoneToday) return false;
+
+  const ok = await runNonQQuestSafe(page, 'Довольствие quest', () => progressDovolstvieQuest(page));
+  if (ok) {
+    dovolstvieDoneToday = true;
+    persistDailyQuestState();
+  }
+  return Boolean(ok);
+}
+
+// ===================================================================================
+// "Шепот" - взят у "Кулак Хаоса", раз в МЕСЯЦ (Паша, 16.09.2026: "запомни как делается он
+// периодический"). Гайд Kate2008 (zhg_web.php?st_id=122225), но живой прогон 16.09.2026 разошёлся
+// с текстом гайда в нескольких местах - код ниже использует ПОДТВЕРЖДЁННЫЙ живьём маршрут
+// (см. aichar_shepot_quest.md), а не гайд буквально:
+//   - вместо "К месту выполнения" (просто показывает текущую локацию, не запускает сцену) -
+//     Амулет -> Кулак Хаоса -> "К себе в дом".
+//   - вместо долгого морского маршрута до Глинбага - "Пристань" -> лодка (15 дин), см. stage 3.
+//   - фигура в церкви: трогаем ЗВЕЗДУ (подтверждено Пашей для мировоззрения AI__), не круг/треугольник.
+//   - реальная кнопка на утёсе - "Пройтись по утесу" (не "Прогуляться", как в гайде).
+//
+// КРИТИЧЕСКИ ВАЖНЫЙ УРОК (инцидент 17.09.2026): на экране "В бой!" сайт временно перестаёт
+// показывать HP (parseStats -> null/null) до разрешения боя. Первая версия этого кода проверяла
+// HP только НЕПОСРЕДСТВЕННО перед кликом "В бой!" и, если parseStats возвращал null, тупо
+// пропускала проверку порога вместо того чтобы её заблокировать - это позволило войти во второй
+// бой гаунтлета при HP 210/380 (55%, уже ниже 70%) и уйти в минус (-8/380, фактическая "смерть").
+// Отсюда два жёстких правила ниже:
+//   1) shepotCheckHpFloorOrStop читает HP на СТАБИЛЬНОМ экране (там, где статы гарантированно
+//      видны - "К себе в дом", "Продолжить квест" и т.п.), НИКОГДА на экране "В бой!" самом.
+//   2) Если HP не читается (null) - код ОСТАНАВЛИВАЕТСЯ, а не пропускает проверку.
+//   3) Гаунтлет из 4 боёв (stage 5) делает РОВНО ОДИН бой за вызов и возвращается - следующий
+//      бой начнётся только на следующий вызов функции (следующий цикл driver.js), давая время
+//      на естественное восстановление HP между боями вместо слепого чейна всех 4 подряд.
+//
+// Стадии (shepotStage, персистится в state.json - переживает рестарт процесса):
+//   0 - интро (свинья/бабка/кошмары) в Кулак Хаоса, не пройдено вживую подряд в этом коде -
+//       используется clickOnlySensibleOption как основной механизм (чисто линейные экраны).
+//   1 - церковь (первый визит) -> бар -> соглашение принести сталь+мёд.
+//   2 - маршрут на Каменный утёс, бой с Духом гнома (сталь).
+//   3 - маршрут на Глинбаг (лодка) -> Лес -> бой с Троллем (мёд).
+//   4 - возврат в бар, сдача стали+мёда Фра Станьоле.
+//   5 - гаунтлет у Кулак Хаоса: ударить свинью/"Продолжить квест" -> определить, какой монстр
+//       появился (Нежить/Нечисть/Призрак/ведьма) -> использовать СООТВЕТСТВУЮЩИЙ предмет ->
+//       один бой -> return. Стадия не увеличивается, пока не пройдены все 4 монстра (гейт по
+//       диалогу "Гильдия вичхантеров" в тексте страницы).
+//   6 - сдача квеста в Гильдии вичхантеров (маршрут до гильдии НЕ проверен вживую - см. заметку
+//       внутри, verify live перед первым использованием этой стадии).
+// ===================================================================================
+
+const SHEPOT_HP_FLOOR = 0.7;
+
+function hpFraction(stats) {
+  if (!stats || stats.hpCurrent == null || stats.hpMax == null || stats.hpMax === 0) return null;
+  return stats.hpCurrent / stats.hpMax;
+}
+
+// Единственное место, где код решает "можно ли в бой" - читает HP ИМЕННО СЕЙЧАС (вызывающий
+// обязан звать это на стабильном экране, не на "В бой!"). null (не прочитали) тоже блокирует -
+// это и есть исправление бага 17.09.2026, где null ошибочно пропускал проверку.
+async function shepotCheckHpFloorOrStop(page, label) {
+  const stats = parseStats(await getBodyText(page));
+  const frac = hpFraction(stats);
+  console.log(`Шепот (${label}): HP ${stats.hpCurrent}/${stats.hpMax}`);
+  if (frac == null) {
+    console.log(`Шепот (${label}): HP не читается - на всякий случай СТОП, не рискую (см. инцидент 17.09.2026).`);
+    return false;
+  }
+  if (frac < SHEPOT_HP_FLOOR) {
+    console.log(`Шепот (${label}): HP ${Math.round(frac * 100)}% ниже порога ${SHEPOT_HP_FLOOR * 100}% - жду восстановления, бой не начинаю.`);
+    return false;
+  }
+  return true;
+}
+
+// Линейные повествовательные экраны (интро, видение в церкви) - используем
+// clickOnlySensibleOption, чтобы не перечислять вручную формулировки каждой кнопки (гайд и
+// живой текст расходятся в мелочах). Останавливается на реальных развилках/боях/целевом экране.
+async function shepotBlastThroughNarrative(page, { stopTexts = [], maxSteps = 30, label = '' } = {}) {
+  for (let i = 0; i < maxSteps; i++) {
+    if (await existsAnyText(page, stopTexts)) {
+      return { reachedStop: true, steps: i };
+    }
+    if (await existsAnyText(page, ['Ответить "да"'])) {
+      await clickByTexts(page, ['Ответить "да"'], `Шепот/${label}: Ответить "да"`);
+      await pause(page, 800, 1500);
+      continue;
+    }
+    if (await existsAnyText(page, ['Коснуться звезды'])) {
+      await clickByTexts(page, ['Коснуться звезды'], `Шепот/${label}: Коснуться звезды`);
+      await pause(page, 800, 1500);
+      continue;
+    }
+    if (await existsAnyText(page, ['В бой!', 'В бой'])) {
+      return { reachedFight: true, steps: i };
+    }
+    const result = await clickOnlySensibleOption(page, `Шепот/${label} шаг ${i}`);
+    if (result.clicked) {
+      await pause(page, 800, 1500);
+      continue;
+    }
+    if (result.reason === 'no_candidates' && (await existsAnyText(page, ['Уйти']))) {
+      await clickByTexts(page, ['Уйти'], `Шепот/${label}: Уйти`);
+      await pause(page, 800, 1500);
+      continue;
+    }
+    console.log(`Шепот/${label}: застрял на шаге ${i} (${result.reason}), кандидаты: ${JSON.stringify(result.candidates)}`);
+    return { stuck: true, reason: result.reason, candidates: result.candidates, steps: i };
+  }
+  return { maxStepsReached: true };
+}
+
+// Церковь -> звезда -> переулок -> бар. Общий кусок для stage 1 (первый визит) и stage 4
+// (возврат со сталью/мёдом) - подтверждено живьём 16-17.09.2026 (возврат), первый визит из
+// более ранней сессии (не в этом транскрипте, но тот же одноразовый сценарий).
+async function shepotChurchToBar(page) {
+  await clickByTexts(page, ['Конь'], 'Шепот: Конь');
+  await pause(page, 800, 1200);
+  await clickByTexts(page, ['Таможенный пост'], 'Шепот: Таможенный пост');
+  await pause(page, 8000, 9000);
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 500, 800);
+
+  for (const dir of ['Идти на запад', 'Идти на запад', 'Идти на север']) {
+    await clickByTexts(page, [dir], `Шепот: ${dir}`);
+    await pause(page, 800, 1200);
+  }
+
+  if (await existsAnyText(page, ['Продолжить квест'])) {
+    await clickByTexts(page, ['Продолжить квест'], 'Шепот: Продолжить квест (церковь)');
+    await pause(page, 800, 1200);
+  } else if (await existsAnyText(page, ['Зайти в церковь'])) {
+    await clickByTexts(page, ['Зайти в церковь'], 'Шепот: Зайти в церковь');
+    await pause(page, 800, 1200);
+  }
+
+  const result = await shepotBlastThroughNarrative(page, {
+    stopTexts: ['Зайти в Бар', 'Зайти в бар'],
+    maxSteps: 30,
+    label: 'церковь->бар',
+  });
+  if (!result.reachedStop) {
+    console.log('Шепот: не дошёл до бара автоматически - см. лог выше, нужна ручная проверка.');
+    return false;
+  }
+
+  await clickByTexts(page, ['Зайти в Бар'], 'Шепот: Зайти в Бар');
+  await pause(page, 800, 1200);
+  if (await existsAnyText(page, ['Спросить про знахаря'])) {
+    await clickByTexts(page, ['Спросить про знахаря'], 'Шепот: Спросить про знахаря');
+    await pause(page, 800, 1500);
+  }
+  // Первый визит (обещание принести предметы) и возврат (сдача предметов) продолжаются разным
+  // диалогом - добиваем что осталось через общий помощник, он сам остановится на "Уйти"/пустоте.
+  await shepotBlastThroughNarrative(page, { stopTexts: [], maxSteps: 10, label: 'бар-диалог' });
+  return true;
+}
+
+async function shepotRunOneFight(page, label) {
+  if (!(await shepotCheckHpFloorOrStop(page, label))) return false;
+  await clickByTexts(page, ['В бой!', 'В бой'], `Шепот: В бой! (${label})`);
+  const won = await fightLoop(page);
+  const after = parseStats(await getBodyText(page));
+  console.log(`Шепот: бой "${label}" завершён, won=${won}, HP после: ${after.hpCurrent}/${after.hpMax}`);
+  return true;
+}
+
+// ===================================================================================
+// Гаунтлет "Шепота" - НЕПРЕРЫВНЫЙ прогон (17.09.2026, после 5 неудачных попыток подряд).
+// Установленный живьём факт: гаунтлет это ОДНА непрерывная сцена. После "Бой завершен!"
+// следующий монстр появляется на ТОМ ЖЕ экране ("Из тумана перед вами появляется нечисть!").
+// Если уйти со сцены (навигация, закрытие браузера) - цепочка теряется целиком: "Продолжить
+// квест" на форпосте НЕ появляется, а повторный вход "К себе в дом" + "Ударить свинью"
+// начинает всё заново с нежити. Именно поэтому 5 попыток подряд дрались с нежитью.
+// Второй установленный факт: экраны внутри дома не показывают шапку со статами (HP = null),
+// поэтому HP читается с ОТДЕЛЬНОЙ вкладки (hpPage) - основная вкладка со сценой не трогается.
+// Предметы ("отвар арайи"/"рябина"/"святая вода") - это кнопки сцены, а НЕ предметы
+// инвентаря (проверено: в инвентаре их нет вообще), поэтому "кончились" тут невозможно.
+// ===================================================================================
+const SHEPOT_MONSTER_ITEMS = [
+  { re: /нежить/i, item: 'Использовать отвар арайи', name: 'Нежить' },
+  { re: /нечисть/i, item: 'Использовать рябину', name: 'Нечисть' },
+  { re: /призрак/i, item: 'Использовать святую воду', name: 'Призрак' },
+  { re: /ведьм/i, item: null, name: 'Старая ведьма' },
+];
+
+function shepotSnap(t, n = 900) {
+  return String(t || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+}
+
+async function shepotReadHpFrom(hpPage) {
+  await hpPage.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return parseStats(await getBodyText(hpPage));
+}
+
+// Ждёт восстановления HP, НЕ трогая вкладку со сценой. null (не прочитали) - это СТОП,
+// а не "пропустить проверку" (инцидент 17.09.2026, см. feedback_shtolni_debugging_mistakes).
+async function shepotWaitForHp(hpPage, floor, label, maxWaitMs = 90 * 60 * 1000) {
+  const started = Date.now();
+  for (;;) {
+    const stats = await shepotReadHpFrom(hpPage);
+    const frac = hpFraction(stats);
+    if (frac == null) {
+      console.log(`Шепот/${label}: HP не читается даже на отдельной вкладке -> СТОП.`);
+      return false;
+    }
+    if (frac >= floor) {
+      console.log(`Шепот/${label}: HP ${stats.hpCurrent}/${stats.hpMax} (${Math.round(frac * 100)}%) - можно в бой.`);
+      return true;
+    }
+    if (Date.now() - started > maxWaitMs) {
+      console.log(`Шепот/${label}: HP не восстановилось за ${Math.round(maxWaitMs / 60000)} мин -> СТОП.`);
+      return false;
+    }
+    console.log(`Шепот/${label}: HP ${stats.hpCurrent}/${stats.hpMax} (${Math.round(frac * 100)}%) < ${Math.round(floor * 100)}% - жду 2 мин, сцену не трогаю.`);
+    await new Promise((r) => setTimeout(r, 120000));
+  }
+}
+
+// maxSteps, а не maxFights: итерации цикла тратятся и на не-боевые экраны (Продолжить квест,
+// промежуточные виньетки), поэтому запас должен быть заметно больше числа боёв (их 4).
+async function runShepotGauntletContinuous(page, hpPage, { maxFights = 24, hpFloor = SHEPOT_HP_FLOOR } = {}) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 500, 800);
+
+  if (!(await shepotWaitForHp(hpPage, hpFloor, 'перед входом в дом'))) return false;
+
+  // Паша, 17.09.2026: "на второй бой надо будет выпить эль вырви глаз". Пьём с ОТДЕЛЬНОЙ
+  // вкладки - tryDrinkBuffAle ходит в pers.php/inv.php и вернул бы основную вкладку по URL,
+  // а это увело бы нас со сцены.
+  await tryDrinkBuffAle(hpPage, 'Эль "Вырви глаз"').catch((e) => {
+    console.log('Шепот: эль не выпит -', e.message);
+    return false;
+  });
+
+  await clickByTexts(page, ['Амулет', 'Aмулет'], 'Шепот: Амулет');
+  await pause(page, 800, 1200);
+  await clickByTexts(page, ['Кулак Хаоса'], 'Шепот: Кулак Хаоса');
+  await pause(page, 1500, 2500);
+
+  if (await existsAnyText(page, ['Продолжить квест'])) {
+    await clickByTexts(page, ['Продолжить квест'], 'Шепот: Продолжить квест (гаунтлет)');
+    await pause(page, 800, 1200);
+  } else if (await existsAnyText(page, ['К себе в дом'])) {
+    await clickByTexts(page, ['К себе в дом'], 'Шепот: К себе в дом (гаунтлет)');
+    await pause(page, 800, 1200);
+  }
+
+  let text = String((await getBodyText(page)) || '');
+  const monsterOnScreen = SHEPOT_MONSTER_ITEMS.some(({ re }) => re.test(text));
+  if (!monsterOnScreen && (await existsAnyText(page, ['Ударить свинью']))) {
+    await clickByTexts(page, ['Ударить свинью'], 'Шепот: Ударить свинью (старт гаунтлета, один раз)');
+    await pause(page, 800, 1500);
+  }
+
+  for (let i = 0; i < maxFights; i++) {
+    text = String((await getBodyText(page)) || '');
+    console.log(`\nШепот/гаунтлет, экран ${i + 1}: ${shepotSnap(text)}`);
+
+    if (/Гильдия вичхантеров|Спросить орка Хрыга/i.test(text)) {
+      console.log('Шепот: гаунтлет пройден! Дальше сдача в Гильдии вичхантеров (stage 6).');
+      shepotStage = 6;
+      shepotGauntletFightsDone = 0;
+      persistDailyQuestState();
+      return true;
+    }
+
+    const match = SHEPOT_MONSTER_ITEMS.find(({ re }) => re.test(text));
+    if (!match) {
+      // Живой факт 17.09.2026: после КАЖДОГО боя игра сама выбрасывает обратно на форпост
+      // "Кулак Хаоса", но сцена гаунтлета остаётся ПОДВЕШЕННОЙ - в шапке появляется
+      // "Продолжить квест". Следующий монстр выходит именно по этой ссылке. Раньше цикл её
+      // между боями не проверял и вставал на "ambiguous" (на форпосте десяток обычных ссылок).
+      if (await existsAnyText(page, ['Продолжить квест'])) {
+        await clickByTexts(page, ['Продолжить квест'], 'Шепот: Продолжить квест (следующий монстр)');
+        await pause(page, 800, 1500);
+        continue;
+      }
+      // Подвешенной сцены нет - значит цепочка потеряна (вероятно, протухла за время ожидания
+      // регенерации HP). Тогда гаунтлет начинается заново, с нежити - это не ошибка, просто
+      // дороже по HP.
+      if (await existsAnyText(page, ['К себе в дом'])) {
+        console.log('Шепот: "Продолжить квест" нет - сцена потеряна, захожу в дом заново (гаунтлет начнётся с нежити).');
+        await clickByTexts(page, ['К себе в дом'], 'Шепот: К себе в дом (рестарт гаунтлета)');
+        await pause(page, 800, 1500);
+        continue;
+      }
+      if (await existsAnyText(page, ['Ударить свинью'])) {
+        await clickByTexts(page, ['Ударить свинью'], 'Шепот: Ударить свинью');
+        await pause(page, 800, 1500);
+        continue;
+      }
+      const stepped = await clickOnlySensibleOption(page, `Шепот/гаунтлет промежуточный экран ${i + 1}`);
+      if (stepped.clicked) {
+        await pause(page, 800, 1500);
+        continue;
+      }
+      console.log(`Шепот: монстра на экране нет и линейного перехода нет (${stepped.reason}, кандидаты ${JSON.stringify(stepped.candidates)}) -> СТОП.`);
+      return false;
+    }
+
+    if (!(await shepotWaitForHp(hpPage, hpFloor, `перед боем с "${match.name}"`))) return false;
+
+    if (match.item) {
+      if (!(await clickByTexts(page, [match.item], `Шепот: ${match.item} (${match.name})`))) {
+        console.log(`Шепот: кнопка "${match.item}" не найдена -> СТОП.`);
+        return false;
+      }
+    } else if (!(await clickByTexts(page, ['Атаковать ведьму'], 'Шепот: Атаковать ведьму!'))) {
+      console.log('Шепот: "Атаковать ведьму" не найдено -> СТОП.');
+      return false;
+    }
+    await pause(page, 800, 1500);
+
+    if (!(await existsAnyText(page, ['В бой!', 'В бой']))) {
+      console.log('Шепот: после предмета нет "В бой!" -> СТОП. Экран:');
+      console.log(shepotSnap(await getBodyText(page), 1200));
+      return false;
+    }
+    await clickByTexts(page, ['В бой!', 'В бой'], `Шепот: В бой! (${match.name})`);
+
+    let won = false;
+    try {
+      won = await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Шепот: игровой кулдаун цели ${waitMinutes} мин -> жду на месте, сцену не покидаю.`);
+        await new Promise((r) => setTimeout(r, (waitMinutes + 1) * 60000));
+        continue;
+      }
+      console.log('Шепот: бой сорвался -', e.message);
+      return false;
+    }
+
+    shepotGauntletFightsDone += 1;
+    persistDailyQuestState();
+    const hpAfter = await shepotReadHpFrom(hpPage);
+    console.log(`Шепот: бой с "${match.name}" завершён (won=${won}), HP теперь ${hpAfter.hpCurrent}/${hpAfter.hpMax}`);
+    await pause(page, 800, 1500);
+  }
+
+  console.log('Шепот: лимит боёв за один прогон исчерпан - выхожу, прогресс сохранён.');
+  return true;
+}
+
+async function progressShepotQuestStage(page) {
+  // Баг найден 17.09.2026: runShepotQuestIfAvailable вызывает эту функцию сразу после
+  // resetToQuestMenu() (страница - меню квестов Q, там нет "Амулет"/"Конь"), а не после
+  // возврата на location.php. Каждая стадия начинается с элементов location.php (Амулет/Конь/
+  // "К себе в дом" и т.п.) - явно переходим туда в начале, не полагаясь на то, с какой страницы
+  // нас позвали.
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 500, 800);
+
+  if (shepotStage === 0) {
+    await clickByTexts(page, ['Амулет', 'Aмулет'], 'Шепот: Амулет');
+    await pause(page, 800, 1200);
+    await clickByTexts(page, ['Кулак Хаоса'], 'Шепот: Кулак Хаоса');
+    await pause(page, 1500, 2500);
+    if (await existsAnyText(page, ['К себе в дом'])) {
+      await clickByTexts(page, ['К себе в дом'], 'Шепот: К себе в дом');
+      await pause(page, 800, 1200);
+    }
+    const result = await shepotBlastThroughNarrative(page, {
+      stopTexts: ['Зайти в церковь', 'Конь'],
+      maxSteps: 30,
+      label: 'интро',
+    });
+    if (result.reachedStop || result.maxStepsReached) {
+      shepotStage = 1;
+      persistDailyQuestState();
+      return true;
+    }
+    console.log('Шепот stage 0 (интро): не завершилось само - нужна ручная проверка.');
+    return false;
+  }
+
+  if (shepotStage === 1) {
+    const ok = await shepotChurchToBar(page);
+    if (ok) {
+      shepotStage = 2;
+      persistDailyQuestState();
+    }
+    return ok;
+  }
+
+  if (shepotStage === 2) {
+    await clickByTexts(page, ['Конь'], 'Шепот: Конь');
+    await pause(page, 800, 1200);
+    await clickByTexts(page, ['Горы Дарии'], 'Шепот: Горы Дарии');
+    await pause(page, 8000, 9000);
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await pause(page, 500, 800);
+    for (const dir of ['Идти на запад', 'Идти на юг', 'Идти на запад', 'Идти на запад', 'Идти на север', 'Идти на север', 'Идти на север']) {
+      await clickByTexts(page, [dir], `Шепот: ${dir}`);
+      await pause(page, 800, 1200);
+    }
+    await clickByTexts(page, ['Пройтись по утесу', 'Прогуляться по утесу'], 'Шепот: Пройтись по утесу');
+    await pause(page, 800, 1200);
+    if (!(await existsAnyText(page, ['В бой!', 'В бой']))) {
+      console.log('Шепот stage 2: "В бой!" не найдено на утёсе - незнакомое состояние.');
+      return false;
+    }
+    if (!(await shepotRunOneFight(page, 'Дух гнома'))) return false;
+    await shepotBlastThroughNarrative(page, { stopTexts: [], maxSteps: 5, label: 'утёс-после-боя' });
+    shepotStage = 3;
+    persistDailyQuestState();
+    return true;
+  }
+
+  if (shepotStage === 3) {
+    await clickByTexts(page, ['Амулет', 'Aмулет'], 'Шепот: Амулет');
+    await pause(page, 800, 1200);
+    await clickByTexts(page, ['Девтаун'], 'Шепот: Девтаун');
+    await pause(page, 1500, 2500);
+    for (const dir of ['Идти на восток', 'Идти на восток']) {
+      await clickByTexts(page, [dir], `Шепот: ${dir}`);
+      await pause(page, 800, 1200);
+    }
+    await clickByTexts(page, ['Пристань'], 'Шепот: Пристань');
+    await pause(page, 800, 1200);
+    await clickByTexts(page, ['Взять лодку до острова Глинбаг'], 'Шепот: лодка до Глинбага (15 дин)');
+    await pause(page, 800, 1200);
+    await clickByTexts(page, ['Далее'], 'Шепот: Далее (после лодки)');
+    await pause(page, 800, 1200);
+
+    const glinbagRoute = [
+      'Выйти на набережную',
+      'Идти на север', 'Идти на север',
+      'Идти на восток', 'Идти на восток', 'Идти на восток', 'Идти на восток',
+      'Идти на юг', 'Идти на юг', 'Идти на юг',
+      'Идти на запад',
+      'Идти на юг',
+      'Идти на запад',
+      'Идти на север', 'Идти на север',
+      'Идти на запад',
+    ];
+    for (const step of glinbagRoute) {
+      await clickByTexts(page, [step], `Шепот: ${step}`);
+      await pause(page, 700, 1100);
+    }
+
+    if (await existsAnyText(page, ['Пасечник'])) {
+      await clickByTexts(page, ['Пасечник'], 'Шепот: Пасечник');
+      await pause(page, 800, 1200);
+    }
+    await shepotBlastThroughNarrative(page, { stopTexts: ['В бой!', 'В бой'], maxSteps: 10, label: 'пасечник-диалог' });
+    if (!(await existsAnyText(page, ['В бой!', 'В бой']))) {
+      console.log('Шепот stage 3: "В бой!" (Тролль) не найдено - незнакомое состояние.');
+      return false;
+    }
+    if (!(await shepotRunOneFight(page, 'Тролль'))) return false;
+    if (await existsAnyText(page, ['Вернуться'])) {
+      await clickByTexts(page, ['Вернуться'], 'Шепот: Вернуться (после Тролля)');
+      await pause(page, 800, 1200);
+    }
+    shepotStage = 4;
+    persistDailyQuestState();
+    return true;
+  }
+
+  if (shepotStage === 4) {
+    const ok = await shepotChurchToBar(page);
+    if (ok) {
+      shepotStage = 5;
+      persistDailyQuestState();
+    }
+    return ok;
+  }
+
+  if (shepotStage === 5) {
+    // 17.09.2026: гаунтлет обязан идти ОДНОЙ непрерывной сценой - подробности и причины
+    // в комментарии над runShepotGauntletContinuous. Вторая вкладка нужна только для чтения
+    // HP и питья эля, основная вкладка со сценой не покидается никогда.
+    const hpPage = await page.context().newPage();
+    try {
+      return await runShepotGauntletContinuous(page, hpPage);
+    } finally {
+      await hpPage.close().catch(() => {});
+    }
+  }
+
+  if (shepotStage === 6) {
+    // НЕ ПРОВЕРЕНО ВЖИВУЮ: маршрут до Гильдии вичхантеров ни разу не пройден (квест прервался
+    // раньше на гаунтлете). Гайд не даёт явного пути, только "нужно попасть в Гильдию
+    // вичхантеров" - clickOnlySensibleOption как лучшая попытка, verify live перед доверием.
+    const result = await shepotBlastThroughNarrative(page, {
+      stopTexts: ['Спросить орка Хрыга'],
+      maxSteps: 20,
+      label: 'путь в гильдию (НЕ ПРОВЕРЕНО)',
+    });
+    if (!result.reachedStop) {
+      console.log('Шепот stage 6: не нашёл гильдию автоматически - НУЖНА ручная разведка маршрута (не проверено вживую).');
+      return false;
+    }
+    await clickByTexts(page, ['Спросить орка Хрыга'], 'Шепот: Спросить орка Хрыга');
+    await pause(page, 800, 1500);
+    await shepotBlastThroughNarrative(page, { stopTexts: [], maxSteps: 10, label: 'сдача квеста' });
+    shepotStage = 0;
+    shepotDoneThisMonth = true;
+    persistDailyQuestState();
+    return true;
+  }
+
+  console.log(`Шепот: неизвестная стадия ${shepotStage} - сбрасываю на 0.`);
+  shepotStage = 0;
+  persistDailyQuestState();
+  return false;
+}
+
+// Точка входа для driver.js: гейтит по разу-в-месяц и по наличию квеста в Q-меню (когда
+// stage=0, т.е. квест ещё не в процессе), делает ОДИН логический шаг за вызов (не весь квест
+// разом) - специально, чтобы driver.js мог продолжать обычный цикл (фарм/другие квесты/чат)
+// между шагами, и чтобы HP-гейты внутри имели шанс сработать между вызовами, а не в одном
+// монолитном забеге.
+async function runShepotQuestIfAvailable(page) {
+  const month = getMonthKeyNow();
+  if (shepotMonthKey !== month) {
+    shepotMonthKey = month;
+    shepotDoneThisMonth = false;
+    persistDailyQuestState();
+  }
+  if (shepotDoneThisMonth) return false;
+
+  if (shepotStage === 0) {
+    const menuOpened = await resetToQuestMenu(page);
+    if (!menuOpened) return false;
+    const qNames = parseQuestNamesFromQMenuText(await getBodyText(page));
+    if (!isQuestInMenu(qNames, 'Шепот')) return false;
+  }
+
+  return await runNonQQuestSafe(page, 'Шепот quest', () => progressShepotQuestStage(page));
+}
 
 module.exports = {
   doScenario,
@@ -5562,4 +8639,32 @@ module.exports = {
   progressLifeTreeQuest,
   progressFisherFoodQuest,
   resetToQuestMenu,
+  clickInfoForQuest,
+  existsAnyText,
+  runAssassinGuildQuestsIfAvailable,
+  runGalleryQuestIfAvailable,
+  runFishEyeIfDue,
+  runPodvalyFarmRound,
+  runHarpyFarmRound,
+  runBisonFarmRound,
+  runBoarFarmRound,
+  runDemonLakeQuestIfAvailable,
+  runShipwreckQuestIfAvailable,
+  runFishRestaurantQuestIfAvailable,
+  handleIncomingAttackIfAny,
+  ensureHealingGearEquipped,
+  ensureBuffAlesActive,
+  isAnyBuffAleActive,
+  runHerbQuestsIfAvailable,
+  getPlayerRaceAndFaction,
+  postChatMessage,
+  getRecentChatMessages,
+  extractChatMessagesSection,
+  sendPrivateLetter,
+  CHAT_ROOMS,
+  runChatMonitorCycle,
+  runStatueOfGloryIfDue,
+  clickOnlySensibleOption,
+  runShepotQuestIfAvailable,
+  runDovolstvieIfAvailable,
 };
