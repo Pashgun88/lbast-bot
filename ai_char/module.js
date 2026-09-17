@@ -9083,6 +9083,88 @@ async function sendPrivateLetter(page, nick, message) {
   await pause(page, 800, 1500);
 }
 
+// Ответ В ТОЙ ЖЕ переписке. Паша, 17.09.2026: "письма это тригер и отвечай так же как в чате".
+// Отличается от sendPrivateLetter выше: тот бьёт в mod=write&fromchat=1 - путь личного письма
+// ИЗ ЧАТА, он заводит новую переписку, а не продолжает цепочку.
+// Проверено вживую 17.09.2026, игра подтвердила: "Письмо для Tsunami отправлено."
+// Две ловушки, обе стоили мне неудачных попыток:
+//  1) У ссылки "Ответить" ПУСТОЙ href - это не навигация, а JS-тумблер видимости формы.
+//     Скрипт, ищущий href, находит пустоту и решает, что ответить нельзя.
+//  2) Форма ответа уже лежит на странице письма, но скрыта (display:none). Пока тумблер не
+//     нажат, Playwright отказывается заполнять поле: "element is not visible". Наличие поля
+//     в разметке не означает, что с ним можно работать.
+// Нонс r= у формы СВОЙ, отличный от нонса страницы, поэтому жмём саму форму, а не строим URL.
+async function replyToLetter(page, nick, message) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 700, 1200);
+
+  let inboxHref = await page.evaluate(() => {
+    const a = Array.from(document.querySelectorAll('a')).find((x) => (x.getAttribute('href') || '').includes('letters.php'));
+    return a ? a.getAttribute('href') : null;
+  }).catch(() => null);
+  if (!inboxHref) {
+    console.log('Ответ на письмо: иконка почты на локации не найдена.');
+    return false;
+  }
+  if (!inboxHref.includes('mod=inbox')) inboxHref += '&mod=inbox';
+
+  await page.goto(`http://lbast.ru/${inboxHref.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 600, 1000);
+
+  const letterHref = await page.evaluate((who) => {
+    const a = Array.from(document.querySelectorAll('a')).find(
+      (x) => (x.getAttribute('href') || '').includes('mod=readletter') && (x.innerText || '').includes(who),
+    );
+    return a ? a.getAttribute('href') : null;
+  }, nick).catch(() => null);
+  if (!letterHref) {
+    console.log(`Ответ на письмо: переписка с "${nick}" не найдена во входящих.`);
+    return false;
+  }
+
+  await page.goto(`http://lbast.ru/${letterHref.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 700, 1200);
+
+  const toggled = await page.evaluate(() => {
+    const a = Array.from(document.querySelectorAll('a')).find((x) => (x.innerText || '').trim() === 'Ответить');
+    if (!a) return false;
+    a.click();
+    return true;
+  }).catch(() => false);
+  if (!toggled) {
+    console.log('Ответ на письмо: тумблер "Ответить" не найден.');
+    return false;
+  }
+
+  const area = page.locator('#msgbody');
+  try {
+    await area.waitFor({ state: 'visible', timeout: 15000 });
+  } catch (e) {
+    console.log('Ответ на письмо: поле ввода так и не стало видимым.');
+    return false;
+  }
+  await area.fill(message);
+
+  const submit = page.locator('input[type=submit][value="Ответить"]');
+  if ((await submit.count().catch(() => 0)) === 0) {
+    console.log('Ответ на письмо: кнопка отправки не найдена.');
+    return false;
+  }
+  await Promise.all([
+    page.waitForLoadState('domcontentloaded'),
+    submit.first().click({ timeout: 15000 }),
+  ]);
+  await pause(page, 900, 1500);
+
+  // Не верим клику на глаз: игра прямо пишет "Письмо для <ник> отправлено."
+  const after = await getBodyText(page).catch(() => '');
+  const ok = /Письмо для .* отправлено/i.test(after);
+  console.log(ok
+    ? `Ответ на письмо: отправлено "${nick}".`
+    : `Ответ на письмо: подтверждения отправки не увидел, считаю неудачей ("${nick}").`);
+  return ok;
+}
+
 // ===================================================================================
 // "Довольствие" - короткий ежедневный квест без боя, продиктован Пашей 17.09.2026:
 // Амулет -> Дорожный крест -> Казначейство Тригмагистрата -> Получить довольствие -> В игру.
@@ -9750,6 +9832,7 @@ module.exports = {
   runFishRestaurantQuestIfAvailable,
   handleIncomingAttackIfAny,
   ensureHealingGearEquipped,
+  replyToLetter,
   ensureBuffAlesActive,
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
