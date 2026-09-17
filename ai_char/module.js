@@ -264,6 +264,36 @@ const THURSDAY_WEEKDAY = 4;
 let thursdayDailiesDayKey = '';
 let thursdayDailiesDone = { gravedigger: false, butcher: false, deadend: false };
 
+// Квесты, которые мы РЕАЛЬНО умеем проходить и в которых есть бои. Нужны, чтобы решать, можно
+// ли сейчас тратить HP на ферму. Штольни СОЗНАТЕЛЬНО не включены: квест выключен
+// (SHTOLNI_ENABLED_FOR_AI = false) и висит в Q-меню всегда - иначе ферма выключилась бы навсегда.
+const IMPLEMENTED_FIGHT_QUESTS = [
+  'Харчевня',
+  'Камни Драбаса',
+  'Грабим корованы',
+  'Кузница Рума',
+  'Еда для рыбака',
+  'Рыбный ресторан',
+  'Трактир «Рыбий глаз»',
+  'Гильдия асассинов: Убить торговца',
+  'Гильдия асассинов: Убить банкира',
+];
+
+// Последний разобранный список Q-меню. runDailyQuests идёт в цикле ПОСЛЕ фарма, поэтому
+// решение про ферму принимается по списку из предыдущего цикла - для этого и кэш.
+let lastListedQuestNames = null;
+
+// Паша, 17.09.2026: "квесты важнее фарма". Одного порога HP мало: живой замер показал, что
+// ОДИН бой с бизоном снимает 186 HP (49% от максимума 380). То есть даже стартовав с 70%,
+// после фарма персонаж оказывается на ~29% и ни один квест с боем уже не проходит.
+// Поэтому ферма ждёт, пока сегодняшние квесты с боями не будут закрыты.
+function hasPendingFightQuests() {
+  // null = Q-меню в этом процессе ещё ни разу не видели. Считаем, что квесты есть: пропустить
+  // один круг фарма дешевле, чем сточить HP и потерять дейлик, который пропадёт вместе с днём.
+  if (lastListedQuestNames === null) return true;
+  return IMPLEMENTED_FIGHT_QUESTS.some((q) => isQuestInMenu(lastListedQuestNames, q));
+}
+
 // "Дейлик" гарпии — бонусный бой привязан к конкретному дню недели с фиксированным числом
 // боёв, один в один как у Цунами (порт commit fb9dea7, 16.09.2026, EXTRA_DAILY_TASKS/
 // getDay()). Date.getDay(): 0=Вс,1=Пн,2=Вт,3=Ср,4=Чт,5=Пт,6=Сб. Гарпия: только вторник (2),
@@ -1900,6 +1930,7 @@ async function runDailyQuests(page, stats) {
   const menuText = await getBodyText(page);
   let listedQuests = parseQuestNamesFromQMenuText(menuText);
   console.log('Q menu quest names:', JSON.stringify(listedQuests));
+  lastListedQuestNames = listedQuests; // кэш для решения "можно ли фармить" в следующем цикле
   if (listedQuests.length === 0) {
     appendDebugSnapshot('Q menu parse returned empty list', { label: 'q_menu_empty_parse', url: page.url(), text: menuText });
   }
@@ -9309,6 +9340,7 @@ module.exports = {
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
+  hasPendingFightQuests,
   getPlayerRaceAndFaction,
   postChatMessage,
   getRecentChatMessages,

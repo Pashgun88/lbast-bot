@@ -30,6 +30,7 @@ const {
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
+  hasPendingFightQuests,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -351,9 +352,19 @@ async function loginIfNeeded(page) {
       // ИЗЛИШЕК сверх квестового порога: ниже 70% не фармим, даже с элем.
       // Привязывать фарм к "есть ли невыполненные квесты" нельзя: в Q-меню всегда висят
       // Штольни (выключены) и другие незакодированные квесты - фарм отключился бы навсегда.
-      const farmAllowed = hasEnoughHpForOptionalFight(stats);
-      if (!farmAllowed) {
+      // Два условия, и оба обязательны.
+      // 1) HP выше квестового порога - иначе ферма добивает то, что нужно квестам.
+      // 2) Нет невыполненных квестов с боями. Одного порога мало: живой замер 17.09.2026
+      //    показал, что ОДИН бой с бизоном снимает 186 HP (49% от максимума 380). Стартуя
+      //    даже с 70%, после фарма мы оказываемся на ~29%, и дейлики с боями срываются -
+      //    ровно то, на чём Паша меня и поймал ("эти квесты не сделаны а ты на бизона пошел").
+      const hpOkForFarm = hasEnoughHpForOptionalFight(stats);
+      const questsPending = hasPendingFightQuests();
+      const farmAllowed = hpOkForFarm && !questsPending;
+      if (!hpOkForFarm) {
         console.log(`Ферма пропущена: HP ${stats.hpCurrent}/${stats.hpMax} < ${OPTIONAL_FIGHT_MIN_HP_FRACTION * 100}% - это HP нужно квестам.`);
+      } else if (questsPending) {
+        console.log('Ферма пропущена: есть невыполненные квесты с боями - HP берегу под них.');
       }
 
       r = await runCycleStep(page, 'Harpy hunt (вторник)', () => {
