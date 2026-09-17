@@ -5230,6 +5230,42 @@ async function tryUseHealingElixir(page) {
   }
 }
 
+// Надеть следующий эликсир СРАЗУ ПОСЛЕ использования. Паша, 17.09.2026: "пояс не пустой
+// потому что я экипировал. А ты сделай автоэкипировку после использования".
+// Дыра была в моменте: ensureHealingGearEquipped вызывается раз в цикл, в самом его начале,
+// то есть уже ПОСЛЕ боя. Использовав эликсир в бою, персонаж оставался с пустым подсумком до
+// конца боя - хотя в инвентаре лежали ещё две штуки. Чинить надо там, где слот пустеет.
+// Берём предмет из Избранного: Паша завёл его туда специально ("в инвентаре в избранное внёс,
+// как зайдёшь - кликнешь на предмет и он оденется"), и ссылка там сразу ведёт на mod=put_on,
+// без обхода страниц invMod=3 с их постраничностью.
+// ВАЖНО: перед уходом в инвентарь запоминаем URL боя и возвращаемся на него, иначе бой
+// останется висеть (см. LESSONS: читающая функция обязана вернуть страницу обратно).
+async function equipNextHealingElixir(page) {
+  const backUrl = page.url();
+  try {
+    await page.goto('http://lbast.ru/inv.php?mod=starred', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const href = await page.evaluate(() => {
+      const a = Array.from(document.querySelectorAll('a')).find(
+        (x) => (x.getAttribute('href') || '').includes('mod=put_on')
+          && /Эликсир лечения/i.test(x.textContent || ''),
+      );
+      return a ? a.getAttribute('href') : null;
+    });
+    if (!href) {
+      console.log('Эликсир лечения: в Избранном надеть нечего (закончились?).');
+      return false;
+    }
+    await page.goto(`http://lbast.ru/${href.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    console.log('Эликсир лечения: надел следующий из Избранного.');
+    return true;
+  } catch (e) {
+    console.log('equipNextHealingElixir error:', e.message);
+    return false;
+  } finally {
+    await page.goto(backUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  }
+}
+
 // Временные усилители из инвентаря (не боевые предметы, расходники) - дают бафф к статам
 // на ограниченное время, статус виден в pers.php как "<название> ещё N мин." (подтверждено
 // live 15-16.09.2026: "Состояние AI__: вырви глаз" уже был виден на боевом экране, значит
@@ -5431,6 +5467,8 @@ async function fightLoop(page) {
       const usedElixir = await tryUseHealingElixir(page);
       if (usedElixir) {
         elixirUsesThisFight += 1;
+        // Подсумок только что опустел - сразу заряжаем следующий, не дожидаясь конца боя.
+        await equipNextHealingElixir(page).catch(() => false);
         stuck = 0;
         await pause(page, 800, 1600);
         continue;
