@@ -7691,9 +7691,22 @@ async function progressButcherHouse(page) {
     currentTexts: ['Войти в желтую дверь', 'Войти в жёлтую дверь'],
     retries: 3,
   });
+  // Разведано живьём 17.09.2026: за жёлтой дверью "Желтая комната" с полуистлевшим трупом в
+  // мясницком фартуке, и выбора там всего два - "Выскочить из комнаты" и "Атаковать".
+  // Ссылки "Мясник" НЕТ: "Мясник" из гайда - это и есть босс, то есть дейлик боевой.
+  // Паша: "Пока только без боя" -> не атакуем. Уходим через "Выскочить из комнаты", чтобы не
+  // оставлять за собой экран с активной кнопкой боя (иначе его подберёт другой обработчик -
+  // ровно так 17.09.2026 начался бой с корованом мимо всех гейтов).
+  if (await existsAnyText(page, ['Атаковать'])) {
+    console.log('Четверг/мясник: за жёлтой дверью только "Атаковать" - дейлик боевой, а бои тут пока запрещены. Ухожу из комнаты.');
+    await clickByTexts(page, ['Выскочить из комнаты'], 'Выскочить из комнаты').catch(() => {});
+    await pause(page, 600, 1200);
+    return 'needs_fight';
+  }
+
   const ok = await clickByTexts(page, ['Мясник', 'мясник'], 'Мясник');
   if (!ok) {
-    console.log('Четверг/мясник: "Мясник" не найден - возможно, уже сделано сегодня.');
+    console.log('Четверг/мясник: ни "Атаковать", ни "Мясник" не найдены - похоже, на сегодня уже сделано.');
     return false;
   }
   await pause(page, 800, 1500);
@@ -7750,6 +7763,17 @@ async function runThursdayDailiesIfAvailable(page) {
   for (const [key, label, fn] of TASKS) {
     if (thursdayDailiesDone[key]) continue;
     const ok = await runNonQQuestSafe(page, `Четверг: ${label}`, () => fn(page));
+
+    // 'needs_fight' - маршрут упирается в босса, а бои тут пока запрещены. Записываем это
+    // прямо в флаг выполнения (строкой, а не true - в state.json видно причину), чтобы не
+    // гонять весь маршрут заново каждые две минуты. Снимется само со сменой дня.
+    if (ok === 'needs_fight') {
+      thursdayDailiesDone[key] = 'needs_fight';
+      persistDailyQuestState();
+      console.log(`Четверг: "${label}" упирается в бой -> пропускаю на сегодня.`);
+      continue;
+    }
+
     if (ok) {
       thursdayDailiesDone[key] = true;
       persistDailyQuestState();
