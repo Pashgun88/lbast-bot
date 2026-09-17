@@ -7874,6 +7874,14 @@ async function readDailyTasksProgress(page) {
     if (!m) continue;
     tasks.push({ done: Number(m[1]), total: Number(m[2]), title: m[3].trim() });
   }
+
+  // ОБЯЗАТЕЛЬНО вернуться на локацию. Живой баг 17.09.2026: функция оставляла страницу на
+  // меню дейликов, и следующий же маршрут падал на первом шаге - "Не найден шаг Мисттоун
+  // (url=...&mod=daily)", потому что ссылки "Конь" в меню нет. Первый маршрут срывался,
+  // второй проходил только потому, что после recoverToCity мы случайно оказывались в городе.
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 300, 700);
+
   return tasks;
 }
 
