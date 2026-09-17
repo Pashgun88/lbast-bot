@@ -7727,7 +7727,12 @@ async function progressButcherHouse(page) {
   // иначе маршрут сюда придётся идти заново. Если в бой всё же нельзя - уходим из комнаты,
   // чтобы не оставить за собой активную кнопку "Атаковать".
   if (await existsAnyText(page, ['Атаковать'])) {
-    if (!(await questFightHpGate(page, 'Четверг: мясник (Желтая комната)', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+    // Паша, 17.09.2026: "то что без боя можно не ждать восстановления хп и делай пока резервы
+    // есть чтобы не простаивать зря". Поэтому НЕ ждём лечения внутри маршрута: ожидание
+    // держало весь цикл (живьём - 7 минут на одном боссе), пока рядом стояли доступные
+    // безбоевые дела. Гейт остаётся, но при нехватке HP просто выходим и вернёмся в
+    // следующем цикле - маршрут сюда дешёвый (конь + пара кликов).
+    if (!(await questFightHpGate(page, 'Четверг: мясник (Желтая комната)'))) {
       await clickByTexts(page, ['Выскочить из комнаты'], 'Выскочить из комнаты').catch(() => {});
       return false;
     }
@@ -7785,7 +7790,9 @@ async function progressGravediggerBoss(page) {
   await performStep(page, { stepName: 'Идти в правую дверь', currentTexts: ['Идти в правую дверь'], retries: 3 });
   await performStep(page, { stepName: 'Спуститься в чулан', currentTexts: ['Спуститься в чулан'], retries: 3 });
 
-  if (!(await questFightHpGate(page, 'Четверг: призрак тёщи могильщика', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+  // Без ожидания лечения - см. комментарий у мясника: простой всего цикла дороже, чем
+  // повторная поездка сюда в следующем заходе.
+  if (!(await questFightHpGate(page, 'Четверг: призрак тёщи могильщика'))) {
     return false;
   }
   console.log('Четверг/могильщик: бой с призраком тёщи (ожидается "Ржавая сковорода").');
@@ -7816,7 +7823,8 @@ async function progressDeadEndBoss(page) {
   await performStep(page, { stepName: 'Войти в комнату', currentTexts: ['Войти в комнату'], retries: 3 });
   await performStep(page, { stepName: 'Идти в глубь комнаты', currentTexts: ['Идти в глубь комнаты'], retries: 3 });
 
-  if (!(await questFightHpGate(page, 'Четверг: призрачная ведьма', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+  // Без ожидания лечения - см. комментарий у мясника.
+  if (!(await questFightHpGate(page, 'Четверг: призрачная ведьма'))) {
     return false;
   }
   console.log('Четверг/тупик: бой с призрачной ведьмой (ожидается "Коготь ведьмы").');
