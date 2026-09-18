@@ -78,6 +78,74 @@ function hasEnoughHpForOptionalFight(stats) {
 // ошибку шага, логирует HP после успешного шага, и если оно упало до 0 - сразу уходит в
 // waitForHeal вместо того, чтобы гонять дальше по остальным шагам цикла вслепую.
 // Раньше этот блок (try/catch + чтение HP + сравнение) был вручную скопирован 8 раз.
+// Фарм-сессия. Паша, 18.09.2026: "ты не бегай по 1 бою на бизона и кабана, можешь по часам
+// как-то или по полдня". Раньше каждый цикл делал ОДИН бой и потом целый круг проверок квестов,
+// статуи, писем, лечения - боёв выходило 4-8 в час. Когда боевые квесты на сегодня закрыты,
+// крутим только ферму: бизон, кабан, при HP ниже 70% - лечение в Кулаке Хаоса (там дом) до 95%.
+// Длина сессии - AI_FARM_SESSION_MIN (по умолчанию 60 мин, для "полдня" - 360).
+const FARM_SESSION_MIN = Number(process.env.AI_FARM_SESSION_MIN || 60);
+const FARM_HEAL_TARGET = 0.95;
+
+async function readLocationStats(page) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return parseStats(await getBodyText(page).catch(() => ''));
+}
+
+async function runFarmSession(page) {
+  const deadline = Date.now() + FARM_SESSION_MIN * 60_000;
+  let fights = 0;
+  let lastMailAt = Date.now();
+  console.log(`Фарм-сессия: ${FARM_SESSION_MIN} мин (до ${new Date(deadline).toLocaleTimeString('ru-RU')}).`);
+  while (Date.now() < deadline) {
+    let st = await readLocationStats(page);
+    if (typeof st.hpCurrent !== 'number') {
+      // висящий бой или залипшая сцена - разбираем здесь же, не выходя из сессии
+      if (await resolvePendingFightIfAny(page).catch(() => false)) continue;
+      await escapeStuckSceneIfAny(page).catch(() => false);
+      st = await readLocationStats(page);
+      if (typeof st.hpCurrent !== 'number') {
+        console.log('Фарм-сессия: HP не читается -> пауза минута.');
+        await new Promise((r) => setTimeout(r, 60_000));
+        continue;
+      }
+    }
+    if (st.hpCurrent <= 0) {
+      await waitForHeal(page);
+      continue;
+    }
+    if (st.hpCurrent < st.hpMax * 0.7) {
+      // лечимся в Кулаке Хаоса до 95%, замер раз в 2 минуты
+      const here = await getBodyText(page).catch(() => '');
+      if (!/Кулак Хаоса/i.test(here)) {
+        await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      }
+      console.log(`Фарм-сессия: HP ${st.hpCurrent}/${st.hpMax} -> лечусь в Кулаке Хаоса до ${Math.round(FARM_HEAL_TARGET * 100)}%.`);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 120_000));
+        const h = await readLocationStats(page);
+        if (typeof h.hpCurrent !== 'number') break;
+        if (h.hpCurrent >= h.hpMax * FARM_HEAL_TARGET || Date.now() >= deadline) break;
+      }
+      continue;
+    }
+    if (Date.now() - lastMailAt > 15 * 60_000) {
+      lastMailAt = Date.now();
+      await handleUnreadMailIfAny(page).catch(() => {});
+    }
+    const buffed = await isAnyBuffAleActive(page).catch(() => false);
+    const b = await runBisonFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: бизон:', e.message); return false; });
+    if (b) fights += 1;
+    const k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
+    if (k) fights += 1;
+    if (!b && !k) {
+      // обе цели на кулдауне или маршрут не прошёл - не долбим сервер, ждём минуту
+      await new Promise((r) => setTimeout(r, 60_000));
+    }
+  }
+  console.log(`Фарм-сессия окончена: ${fights} боёв.`);
+  return fights > 0;
+}
+
 async function runCycleStep(page, label, fn) {
   const didAnything = await fn().catch((e) => {
     console.log(`${label} error:`, e.message);
@@ -465,6 +533,15 @@ async function loginIfNeeded(page) {
       });
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
+
+      // Боевые квесты на сегодня закрыты -> длинная фарм-сессия вместо одного боя за цикл.
+      if (!hasPendingFightQuests() && process.env.AI_DISABLE_PODVALY !== '1') {
+        const farmed = await runFarmSession(page).catch((e) => {
+          console.log('Фарм-сессия упала:', e.message);
+          return false;
+        });
+        didAnything = didAnything || farmed;
+      }
 
       if (Number.isFinite(stats.questsAvailable) && stats.questsAvailable > 0) {
         const result = await runDailyQuests(page, stats);
