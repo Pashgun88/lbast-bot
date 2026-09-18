@@ -6271,14 +6271,16 @@ async function leaveFishingResultToGame(page) {
 // Живой прогон 18.09.2026: после подсечки бывает ещё экран "Что-то не клюет, но вы же терпеливый
 // рыбак, подождем… Ждать" без отсчёта — жмём "Ждать", пока он есть (до 8 раз), без отсчёта ждём 3 с.
 async function finishFishingBiteWait(page) {
-  for (let i = 0; i < 8; i++) {
+  // 4, не 8: круг "не клюет" -> отсчёт ~115 с повторяется, 8 кругов держали драйвер 16 минут без
+  // улова. Удочка остаётся заброшенной, следующий заход продолжит ожидание (alreadyCast).
+  for (let i = 0; i < 4; i++) {
     const text = await getBodyText(page);
     if (/вытаскиваете из воды/i.test(text)) return;
     const mm = text.match(/Подождем еще\s*(\d+)\s*сек/i);
     const waitingScreen = mm || /подсекай|не клюет|подождем/i.test(text);
     if (!waitingScreen) return;
     const secs = mm ? Number(mm[1]) + 1 : 3;
-    console.log(`Рыбалка: жду поклёва ${secs} сек, потом "Ждать" (${i + 1}/8).`);
+    console.log(`Рыбалка: жду поклёва ${secs} сек, потом "Ждать" (${i + 1}/4).`);
     await page.waitForTimeout(secs * 1000);
     const href = await page.evaluate(() => {
       const a = Array.from(document.querySelectorAll('a')).find((x) => /^Ждать$/i.test((x.innerText || '').trim()));
