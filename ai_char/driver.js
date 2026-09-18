@@ -91,7 +91,23 @@ async function readLocationStats(page) {
   return parseStats(await getBodyText(page).catch(() => ''));
 }
 
+// Паша, 18.09.2026: "копи, и смотри, выгоднее всего если кож будет равное количество" (кожи
+// под будущий дубильный набор). На старте было 17 кож бизона и 2 кабана. Считаем их по
+// инвентарю (не каждый бой даёт кожу) и не ходим на бизона, пока его кож больше кабаньих.
+async function readHideCounts(page) {
+  await page.goto('http://lbast.ru/inv.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const text = await getBodyText(page).catch(() => '');
+  const num = (re) => { const m = text.match(re); return m ? Number(m[1]) : 0; };
+  if (!/У вас\s+\d+\s+дин/i.test(text)) return null; // инвентарь не открылся - счёт неизвестен
+  return {
+    boar: num(/Кожа дикого кабана\s+(\d+)/i),
+    bison: num(/Кожа дикого бизона\s+(\d+)/i),
+  };
+}
+
 async function runFarmSession(page) {
+  let hides = await readHideCounts(page);
+  if (hides) console.log(`Фарм-сессия: кожи бизон ${hides.bison}, кабан ${hides.boar}.`);
   const deadline = Date.now() + FARM_SESSION_MIN * 60_000;
   let fights = 0;
   let lastMailAt = Date.now();
@@ -131,12 +147,21 @@ async function runFarmSession(page) {
     if (Date.now() - lastMailAt > 15 * 60_000) {
       lastMailAt = Date.now();
       await handleUnreadMailIfAny(page).catch(() => {});
+      const h = await readHideCounts(page);
+      if (h) {
+        hides = h;
+        console.log(`Фарм-сессия: кожи бизон ${hides.bison}, кабан ${hides.boar}.`);
+      }
     }
     const buffed = await isAnyBuffAleActive(page).catch(() => false);
-    const b = await runBisonFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: бизон:', e.message); return false; });
-    if (b) fights += 1;
+    // Кабан первым; бизон - только пока его кож не больше кабаньих (счёт неизвестен - бьём обоих).
     const k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
     if (k) fights += 1;
+    let b = false;
+    if (!hides || hides.bison <= hides.boar) {
+      b = await runBisonFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: бизон:', e.message); return false; });
+      if (b) fights += 1;
+    }
     if (!b && !k) {
       // обе цели на кулдауне или маршрут не прошёл - не долбим сервер, ждём минуту
       await new Promise((r) => setTimeout(r, 60_000));
