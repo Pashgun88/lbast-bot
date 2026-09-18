@@ -6338,7 +6338,9 @@ async function castFishingRodAndDetectCatch(page) {
     persistDailyQuestState();
     console.log(`Рыбалка: поймали карася (${fishingCatchesToday}/${FISHING_DAILY_CATCH_LIMIT} today)`);
   } else {
-    console.log('Рыбалка: не повезло в этот раз');
+    // Текст результата в лог: проверка улова стала строгой ("вытаскиваете из воды"), и если игра
+    // пишет улов иначе, это должно быть видно, а не молча считаться промахом.
+    console.log(`Рыбалка: не повезло в этот раз ("${snapshotText(resultText, 200)}")`);
   }
 
   // The result (catch or miss) is usually a separate confirmation screen with "В игру", but the
