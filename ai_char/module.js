@@ -283,8 +283,7 @@ const IMPLEMENTED_FIGHT_QUESTS = [
   'Еда для рыбака',
   'Рыбный ресторан',
   'Трактир «Рыбий глаз»',
-  'Гильдия асассинов: Убить торговца',
-  'Гильдия асассинов: Убить банкира',
+  // Асассины выключены (мораль в минус) и ферму не держат - см. ASSASSIN_QUESTS_ENABLED.
 ];
 
 // Последний разобранный список Q-меню. runDailyQuests идёт в цикле ПОСЛЕ фарма, поэтому
@@ -7108,7 +7107,12 @@ const ASSASSIN_GUILD_QUESTS = [
   { key: 'merchant', re: /торгов/i, label: 'Гильдия асассинов: торговец', run: (p) => progressAssassinMerchantQuest(p) },
 ];
 
+// Паша, 18.09.2026: "квесты асассинов - это прокачка морали в минус. Нам нужны квесты
+// Ордена". Выключено. Включить обратно: AI_ASSASSIN_QUESTS=1.
+const ASSASSIN_QUESTS_ENABLED = process.env.AI_ASSASSIN_QUESTS === '1';
+
 async function runAssassinGuildQuestsIfAvailable(page) {
+  if (!ASSASSIN_QUESTS_ENABLED) return false;
   resetAssassinGuildDayIfNeeded();
 
   if (!(await resetToQuestMenu(page))) {
