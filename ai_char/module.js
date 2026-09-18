@@ -284,6 +284,8 @@ const IMPLEMENTED_FIGHT_QUESTS = [
   'Рыбный ресторан',
   'Трактир «Рыбий глаз»',
   // Асассины выключены (мораль в минус) и ферму не держат - см. ASSASSIN_QUESTS_ENABLED.
+  'Ордо экзекуторс: Уничтожить главаря банды',
+  'Ордо экзекуторс: Уничтожить банду',
 ];
 
 // Последний разобранный список Q-меню. runDailyQuests идёт в цикле ПОСЛЕ фарма, поэтому
@@ -1913,6 +1915,8 @@ const QUEUE_GATED_FIGHT_QUESTS = new Set([
   'Гильдия асассинов: картина',
   'Гильдия асассинов: торговец',
   'Demon lake quest',
+  'Ордо: главарь банды',
+  'Ордо: банда',
   'Shipwreck quest',
 ]);
 
@@ -7444,6 +7448,95 @@ async function demonLakeAwaitsReport(page) {
   return Boolean(m && /Ивового озера/i.test(m[1]));
 }
 
+// ===================================================================================
+// Ордо Экзекуторс - квесты на мораль в ПЛЮС (Паша, 18.09.2026: "асассинов больше не делаем,
+// нам нужны квесты ордо... как поймёшь - заскриптуй и выполняй, как только появятся в меню").
+// Оба задания пройдены вживую 18.09.2026 (Медальон бандита, Костяная цепь бандита).
+// Официальный гайд: library/help/index.php?mod=102.
+//  - Взять: Стоунгард -> Южные ворота -> Идти на юг -> Идти на восток -> Башня Ордо Экзекуторс
+//    -> "Уничтожить главаря банды" (zad=1) / "Уничтожить банду" (zad=2).
+//  - Главарь: конь lway=q2001_1 (Рыбацкая деревня) -> Идти за скальную гряду -> Идти по ТРОПЕ
+//    (по дороге - охрана с паролем) -> Идти дальше (не "Спрыгнуть на него") -> Залезть в люк ->
+//    Прокрасться (мимо двоих у костра) -> Идти дальше -> Напасть -> бой. После - час запрета.
+//  - Банда: конь lway=q2001_2 (Пещера бандитов, горы Дарии) -> Добить бандитов -> В бой!
+//  - Доклад (go=2) - только с 6 уровня: "А пока копите предметы задания, вам их нужно 56".
+//    Пока просто копим предметы; задание само освобождает слот после победы.
+// ===================================================================================
+const ORDO_TOWER_OBJ = 5100;
+const ORDO_QUESTS = [
+  { zad: 1, label: 'Ордо: главарь банды', menu: 'Ордо экзекуторс: Уничтожить главаря банды', take: 'Уничтожить главаря банды' },
+  { zad: 2, label: 'Ордо: банда', menu: 'Ордо экзекуторс: Уничтожить банду', take: 'Уничтожить банду' },
+];
+// Выбор на каждом экране миссии, по порядку предпочтения. "Сдаться", "Спрыгнуть на него",
+// "Идти по дороге", "Слезть к пещере" и драка с двумя у костра сюда НЕ входят намеренно.
+const ORDO_MISSION_STEPS = [
+  'Идти за скальную гряду', 'Идти по тропе', 'Залезть в люк', 'Прокрасться', 'Идти дальше',
+  'Добить бандитов', 'Напасть', 'В бой!',
+];
+
+async function walkToOrdoTower(page) {
+  await page.goto('http://lbast.ru/location.php?mod=fastway&lway=2', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await waitOutHorseTravel(page, 'http://lbast.ru/location.php');
+  for (const step of ['Южные ворота', 'Идти на юг', 'Идти на восток', 'Башня Ордо Экзекуторс']) {
+    await performStep(page, { stepName: step, currentTexts: [step], retries: 3 });
+  }
+}
+
+async function progressOrdoQuest(page, q) {
+  if (!(await preTripHpGate(page, q.label))) return false;
+
+  await walkToOrdoTower(page);
+  await clickByTexts(page, [q.take], q.take);
+  await pause(page, 800, 1500);
+  const takeText = await getBodyText(page);
+  if (!/Задание принято/i.test(takeText) && !hasAlreadyHasQuestText(takeText)) {
+    console.log(`${q.label}: задание не выдали: ${snapshotText(takeText, 200)}`);
+    return false;
+  }
+
+  const horse = `http://lbast.ru/location.php?mod=konj&lway=q2001_${q.zad}`;
+  await page.goto(horse, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await waitOutHorseTravel(page, 'http://lbast.ru/location.php');
+
+  let fought = false;
+  for (let i = 0; i < 14; i++) {
+    const text = await getBodyText(page);
+    if (/Ударить/i.test(text)) {
+      await fightLoop(page);
+      fought = true;
+      await pause(page, 800, 1500);
+      // После победы нас выкидывает на локацию, где снова виден ВХОД в миссию - не начинать
+      // её по второму кругу. Бой посреди пути (заметили у костра) входа не показывает.
+      const after = await getBodyText(page);
+      if (after.includes('Идти за скальную гряду') || after.includes('Добить бандитов')) break;
+      continue;
+    }
+    const next = ORDO_MISSION_STEPS.find((s) => text.includes(s));
+    if (!next) break; // миссия кончилась - обычная локация
+    await clickByTexts(page, [next], `${q.label}: ${next}`);
+    await pause(page, 800, 1500);
+  }
+  if (!fought) {
+    console.log(`${q.label}: до боя не дошёл - решит меню Q в следующем цикле.`);
+    return false;
+  }
+  console.log(`${q.label}: бой пройден, предмет задания должен быть в инвентаре (доклад - с 6 уровня).`);
+  return true;
+}
+
+async function runOrdoQuestsIfAvailable(page) {
+  if (!(await resetToQuestMenu(page))) return false;
+  await pause(page, 700, 1300);
+  const names = parseQuestNamesFromQMenuText(await getBodyText(page));
+  let did = false;
+  for (const q of ORDO_QUESTS) {
+    if (!isQuestInMenu(names, q.menu)) continue;
+    const ok = await runNonQQuestSafe(page, q.label, () => progressOrdoQuest(page, q));
+    if (ok) did = true;
+  }
+  return did;
+}
+
 async function runDemonLakeQuestIfAvailable(page) {
   const today = getDayKeyNow();
   if (demonLakeDayKey !== today) {
@@ -10177,6 +10270,7 @@ module.exports = {
   hasPendingFightQuests,
   resolvePendingFightIfAny,
   runFishingIfDue,
+  runOrdoQuestsIfAvailable,
   escapeStuckSceneIfAny,
   readDailyTasksProgress,
   getPlayerRaceAndFaction,

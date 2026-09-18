@@ -42,6 +42,7 @@ const {
   escapeStuckSceneIfAny,
   resolvePendingFightIfAny,
   runFishingIfDue,
+  runOrdoQuestsIfAvailable,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -457,6 +458,11 @@ async function loginIfNeeded(page) {
       // (Подвалы) -> Q-меню (Штольни и т.п.) ниже. Каждый шаг - один вызов runCycleStep,
       // который сам ловит ошибку, логирует HP и уходит в waitForHeal при падении в 0.
       r = await runCycleStep(page, 'assassin quest step', () => runAssassinGuildQuestsIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Ордо Экзекуторс: мораль в плюс, предметы копим до 6 уровня (Паша, 18.09.2026).
+      r = await runCycleStep(page, 'Ордо экзекуторс', () => runOrdoQuestsIfAvailable(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
