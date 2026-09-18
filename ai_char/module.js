@@ -2982,22 +2982,24 @@ async function progressCaravanRobberyQuest(page) {
 }
 
 async function readHpFromLocationInNewTab(page) {
+  // 18.09.2026: клик по песчаннику УЖЕ открывает бой, а гейт с ожиданием стоит после него.
+  // Пока бой висит, location.php отдаёт голый "В бой!" без статов -> здесь был null каждую
+  // минуту, ожидание 40 минут крутилось вслепую без единой строки в логе. Анкета (pers.php)
+  // показывает "(HP/max)" даже в висящем бою - она запасной источник.
+  // Вкладка закрывается в finally: раньше при обрыве goto она оставалась открытой навсегда.
+  let temp = null;
   try {
-    const ctx = page.context();
-    const temp = await ctx.newPage();
-
-    await temp.goto('http://lbast.ru/location.php', {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000,
-    });
-
-    const text = await temp.locator('body').innerText().catch(() => '');
-    const stats = parseStats(text);
-
-    await temp.close().catch(() => {});
-    return stats.hpCurrent;
+    temp = await page.context().newPage();
+    await temp.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const stats = parseStats(await temp.locator('body').innerText().catch(() => ''));
+    if (typeof stats.hpCurrent === 'number') return stats.hpCurrent;
+    await temp.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const m = (await temp.locator('body').innerText().catch(() => '')).match(/\((-?\d+)\s*\/\s*(\d+)\)/);
+    return m ? Number(m[1]) : null;
   } catch (e) {
     return null;
+  } finally {
+    if (temp) await temp.close().catch(() => {});
   }
 }
 
