@@ -2921,6 +2921,12 @@ async function progressCaravanRobberyQuest(page) {
     return false;
   }
 
+  // Гейт ДО дороги. 18.09.2026: он стоял после "Я хочу грабить корован!", а этот клик уже
+  // запирает в бою (2 охранника, ссылки выхода нет). Гейт отказал на 64%, персонаж остался
+  // на экране боя, и следующий цикл всё равно полез драться - вышел живым на 68/380.
+  // Отказываться можно только здесь, на карточке задания, пока никуда не пошли.
+  if (!(await questFightHpGate(page, '\u0413\u0440\u0430\u0431\u0438\u043c \u043a\u043e\u0440\u043e\u0432\u0430\u043d\u044b'))) return false;
+
   const travelText = '\u041a \u043c\u0435\u0441\u0442\u0443 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f';
   await tryPerformStepOptional(page, {
     stepName: travelText,
@@ -2944,8 +2950,6 @@ async function progressCaravanRobberyQuest(page) {
     currentTexts: ['\u042f \u0445\u043e\u0447\u0443 \u0433\u0440\u0430\u0431\u0438\u0442\u044c \u043a\u043e\u0440\u043e\u0432\u0430\u043d!', '\u044f \u0445\u043e\u0447\u0443 \u0433\u0440\u0430\u0431\u0438\u0442\u044c \u043a\u043e\u0440\u043e\u0432\u0430\u043d!'],
     nextTexts: ['\u0412 \u0431\u043e\u0439!', '\u0432 \u0431\u043e\u0439!'],
   });
-
-  if (!(await questFightHpGate(page, '\u0413\u0440\u0430\u0431\u0438\u043c \u043a\u043e\u0440\u043e\u0432\u0430\u043d\u044b'))) return false;
 
   await tryPerformStepOptional(page, {
     stepName: '\u0412 \u0431\u043e\u0439!',
