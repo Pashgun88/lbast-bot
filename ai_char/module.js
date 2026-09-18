@@ -8156,6 +8156,44 @@ async function readDailyTasksProgress(page) {
 // идти через questFightHpGate, а не через "нажми хоть что-нибудь".
 const STUCK_SCENE_EXITS = ['Убежать', 'Выскочить из комнаты', 'Выйти из дома', 'Вернуться', 'Уйти'];
 
+// Висящий бой посреди цикла. Симптом: location.php отдаёт голый "В бой!" со ссылкой boj=,
+// статов нет, Q-меню нет - и весь остаток цикла идёт вслепую (null/null). 18.09.2026 так
+// запирало игру трижды за утро (Харчевня, Корованы, засада Телохранителя у банкира), и каждый
+// раз вытаскивал вручную. Вариантов у такого экрана ровно два:
+//  - бой уже ЗАВЕРШЁН, но итог не подтверждён (игра держит персонажа, HP не растёт) -> подтвердить;
+//  - бой идёт -> только довести. Отказаться нельзя, а ждать HP бессмысленно: в бою оно почти
+//    не растёт (+18 за 40 минут). fightLoop сам пьёт эликсиры с пояса при низком HP.
+async function resolvePendingFightIfAny(page) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const boj = await page.evaluate(() => {
+    const a = Array.from(document.querySelectorAll('a')).find((x) => (x.getAttribute('href') || '').includes('boj='));
+    return a ? a.getAttribute('href') : null;
+  }).catch(() => null);
+  if (!boj) return false;
+
+  await page.goto(`http://lbast.ru/${boj.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const text = await getBodyText(page);
+  if (/Бой завершен/i.test(text)) {
+    console.log('Висящий бой: он уже завершён, подтверждаю итог.');
+    await clickByTexts(page, ['Бой завершен!', 'Бой завершен'], 'Бой завершен (подтверждение итога)').catch(() => {});
+    return true;
+  }
+  if (!/Ударить/i.test(text)) {
+    console.log('Висящий бой: экран боя без "Ударить" и без итога - не понимаю, что это, не трогаю.');
+    return false;
+  }
+  // Нападение живого игрока (латинский ник) отдаём handleIncomingAttackIfAny - там оповещение.
+  const foe = (text.match(/VS\.\s*\n\s*([^\n\[]+?)\s*\[\d+\]/) || [])[1] || '';
+  if (/^[A-Za-z0-9_.-]+$/.test(foe)) {
+    console.log(`Висящий бой: противник похож на игрока (${foe}) -> отдаю обработчику нападений.`);
+    return false;
+  }
+  const me = text.match(/AI__\s*\[\d+\]\s*\((-?\d+)\s*\/\s*(\d+)\)/);
+  console.log(`Висящий бой: идёт (HP ${me ? me[1] + '/' + me[2] : '?'}) -> довожу, другого выхода из него нет.`);
+  await fightLoop(page);
+  return true;
+}
+
 async function escapeStuckSceneIfAny(page) {
   const text = await getBodyText(page);
   if (isBattleScreenText(text)) return false; // это бой - им занимается другой код
@@ -9929,6 +9967,7 @@ module.exports = {
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
   hasPendingFightQuests,
+  resolvePendingFightIfAny,
   escapeStuckSceneIfAny,
   readDailyTasksProgress,
   getPlayerRaceAndFaction,

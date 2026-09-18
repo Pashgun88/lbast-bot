@@ -40,6 +40,7 @@ const {
   runThursdayDailiesIfAvailable,
   hasPendingFightQuests,
   escapeStuckSceneIfAny,
+  resolvePendingFightIfAny,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -98,6 +99,18 @@ async function runCycleStep(page, label, fn) {
   // не читается, ферма пропускается, и так до конца цикла. Так отравил цикл шаг
   // "кораблекрушение". escapeStuckSceneIfAny вызывался ТОЛЬКО в начале цикла, то есть
   // проверял ровно то место, где проблемы ещё нет. Пробуем выбраться там, где симптом виден.
+  if (typeof afterStats.hpCurrent !== 'number') {
+    // Сначала висящий бой: escapeStuckSceneIfAny боевые экраны обходит намеренно.
+    const fought = await resolvePendingFightIfAny(page).catch((e) => {
+      console.log(`${label}: разбор висящего боя упал: ${e.message}`);
+      return false;
+    });
+    if (fought) {
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      afterStats = parseStats(await getBodyText(page));
+      console.log(`${label}: висящий бой разобран -> HP ${afterStats.hpCurrent}/${afterStats.hpMax}`);
+    }
+  }
   if (typeof afterStats.hpCurrent !== 'number') {
     const escaped = await escapeStuckSceneIfAny(page).catch(() => false);
     if (escaped) {
@@ -241,6 +254,10 @@ async function loginIfNeeded(page) {
       // Персонаж мог остаться внутри квестовой сцены (живой случай: Чулан дома могильщика).
       // Тогда location.php отдаёт экран сцены без шапки и без Q, и весь цикл ниже сыплется
       // в null/null. Выходим из сцены ДО всех проверок.
+      await resolvePendingFightIfAny(page).catch((e) => {
+        console.log('Pending fight resolve error:', e.message);
+      });
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       await escapeStuckSceneIfAny(page).catch((e) => {
         console.log('Escape stuck scene error:', e.message);
       });
