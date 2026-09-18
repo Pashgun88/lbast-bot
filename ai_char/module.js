@@ -7376,14 +7376,33 @@ async function progressDemonLakeQuest(page) {
     await fightLoop(page);
   }
 
-  // Доложить о задании.
+  return reportDemonLakeQuest(page);
+}
+
+async function reportDemonLakeQuest(page) {
   await page.goto(DEMON_LAKE_FASTWAY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitOutHorseTravel(page, DEMON_LAKE_FASTWAY_URL);
   await clickByTexts(page, ['Цитадель Ордена Тригмагистров'], 'Цитадель Ордена Тригмагистров');
   await pause(page, 800, 1500);
   const reported = await clickByTexts(page, ['Доложить о задании'], 'Доложить о задании');
-
+  if (reported) {
+    await pause(page, 800, 1500);
+    console.log(`Demon lake quest: доклад -> ${snapshotText(await getBodyText(page), 160)}`);
+    await clickByTexts(page, ['В игру'], 'В игру').catch(() => {});
+  }
   return Boolean(reported);
+}
+
+// 18.09.2026, живой случай: демона убил обработчик висящего боя (гейт квеста отказал уже у
+// демона), до "Доложить о задании" код квеста не дошёл, а взятое задание из меню Q пропадает.
+// Итог - слот задания висел с "Принесите доказательства найденного", и гильдия асассинов
+// отвечала торговцу "У вас уже есть задание" весь день. Источник истины - анкета: если там
+// висит задание про Ивовое озеро, едем докладывать.
+async function demonLakeAwaitsReport(page) {
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const text = await getBodyText(page).catch(() => '');
+  const m = text.match(/Текущее задание:\s*([\s\S]*?)\s*-\s*отказаться/i);
+  return Boolean(m && /Ивового озера/i.test(m[1]));
 }
 
 async function runDemonLakeQuestIfAvailable(page) {
@@ -7406,7 +7425,14 @@ async function runDemonLakeQuestIfAvailable(page) {
   }
   const qNamesNow = parseQuestNamesFromQMenuText(await getBodyText(page));
   if (!isQuestInMenu(qNamesNow, QUEST)) {
-    return false;
+    if (!(await demonLakeAwaitsReport(page))) return false;
+    console.log('Demon lake quest: в меню Q нет, но в анкете висит задание Ордена -> еду докладывать.');
+    const reported = await runNonQQuestSafe(page, 'Demon lake report', () => reportDemonLakeQuest(page));
+    if (reported) {
+      demonLakeDoneToday = true;
+      persistDailyQuestState();
+    }
+    return Boolean(reported);
   }
 
   const ok = await runNonQQuestSafe(page, 'Demon lake quest', () => progressDemonLakeQuest(page));
