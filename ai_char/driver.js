@@ -479,6 +479,10 @@ async function loginIfNeeded(page) {
       }
     } catch (e) {
       console.log('Cycle error:', e.message);
+      // 18.09.2026: прерывистые таймауты location.php (1 цикл из 3-6) - автобан или сеть? Без
+      // снимка экрана это гадание. Пишем, где стоит вкладка и что на ней видно.
+      const snap = await page.evaluate(() => document.body && document.body.innerText).catch(() => null);
+      console.log(`Cycle error snapshot: url=${page.url()} text=${String(snap || '(нет)').replace(/\s+/g, ' ').slice(0, 300)}`);
     }
 
     if (didAnything) {
