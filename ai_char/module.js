@@ -307,8 +307,14 @@ function hasPendingFightQuests() {
   // 30 минут после "каравана нет" торговец ферму не держит (сам он пробуется каждый цикл).
   const merchantOut = assassinMerchantAttemptsToday >= ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY
     || Date.now() - assassinMerchantNoCaravanAt < 30 * 60 * 1000;
+  // Ещё два квеста висят в Q ВСЕГДА и потому держали ферму вечно: выключенный Рыбный
+  // ресторан (FISH_RESTAURANT_ENABLED) и Рыбий глаз - он повторяется каждые 25 минут и в
+  // цикле всё равно идёт РАНЬШЕ фермы, когда подходит его очередь.
+  const skip = (q) => (merchantOut && /торгов/i.test(q))
+    || (!FISH_RESTAURANT_ENABLED && q === 'Рыбный ресторан')
+    || (q === 'Трактир «Рыбий глаз»' && !canRunFishEyeFightNow());
   return IMPLEMENTED_FIGHT_QUESTS
-    .filter((q) => !(merchantOut && /торгов/i.test(q)))
+    .filter((q) => !skip(q))
     .some((q) => isQuestInMenu(lastListedQuestNames, q));
 }
 
