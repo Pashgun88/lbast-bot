@@ -186,6 +186,23 @@ async function loginIfNeeded(page) {
   });
   const page = context.pages()[0] || (await context.newPage());
 
+  // 18.09.2026, Паша: "у тебя автобан часто выходит, сделай задержку между кликами".
+  // Паузы были разбросаны по шагам вручную, а многие переходы (page.goto, замеры HP во
+  // второй вкладке, вкладка чата) шли вообще без них. Поэтому ограничитель стоит на уровне
+  // браузера: КАЖДАЯ загрузка страницы lbast.ru - клик, переход, любая вкладка - встаёт в
+  // общую очередь и уходит не раньше чем через MIN_GAP (+ случайные 0-1 с) после предыдущей.
+  // Картинки/стили не трогаем - это не действия игрока.
+  const MIN_GAP_MS = Number(process.env.AI_MIN_REQUEST_GAP_MS || 2500);
+  let nextDocSlot = 0;
+  await context.route(/lbast\.ru/, async (route) => {
+    if (route.request().resourceType() !== 'document') return route.continue().catch(() => {});
+    const now = Date.now();
+    const at = Math.max(now, nextDocSlot);
+    nextDocSlot = at + MIN_GAP_MS + Math.floor(Math.random() * 1000);
+    if (at > now) await new Promise((r) => setTimeout(r, at - now));
+    return route.continue().catch(() => {});
+  });
+
   await loginIfNeeded(page);
 
   // 16.09.2026, Паша: "можешь в одном окне фармить а в другом держать чат открытым... нужна
