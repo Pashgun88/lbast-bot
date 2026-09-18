@@ -9052,6 +9052,19 @@ async function postChatMessage(page, message, room = 1) {
 
 // Читает последние сообщения комнаты как {nick, text} - используется, чтобы заметить чей-то
 // ответ на сообщение AI__ (сопоставление по нику из ссылки mod=infa рядом с текстом сообщения).
+// Смайлы в чате - это картинки <img src="smile/pivo.gif" title=".pivo.">, и innerText их просто
+// выбрасывает. Паша, 18.09.2026: "а смайлики ты почему-то не видишь" - реплики Galla "AI__, [пиво]"
+// доходили как пустое "AI__,". Подменяем каждую картинку-смайл её кодом (.pivo.), тогда код
+// виден в тексте, а в ответ можно поставить смайл тем же кодом. Полный список кодов -
+// ai_char/SMILES_AI_CHAR.txt (снят со страницы "Справка: смайлы").
+async function getChatTextWithSmileys(page) {
+  await page.evaluate(() => {
+    document.querySelectorAll('img[src*="smile/"]').forEach((im) => {
+      im.replaceWith(document.createTextNode(` ${im.getAttribute('title') || '.smile.'} `));
+    });
+  }).catch(() => {});
+  return getBodyText(page);
+}
 async function getRecentChatMessages(page, room = 1) {
   const url = `http://lbast.ru/chat.php?room=${room}`;
   const alreadyInRoom = String(page.url() || '').includes(`chat.php?room=${room}`);
@@ -9064,14 +9077,14 @@ async function getRecentChatMessages(page, room = 1) {
     const refreshed = await clickByTexts(page, ['Обновить'], `Обновить чат (room=${room})`).catch(() => false);
     if (refreshed) {
       await pause(page, 500, 900);
-      return await getBodyText(page);
+      return await getChatTextWithSmileys(page);
     }
   }
 
   // Первый заход в комнату (или "Обновить" не нашлась) - обычная навигация.
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   await pause(page, 400, 800);
-  return await getBodyText(page);
+  return await getChatTextWithSmileys(page);
 }
 
 // Живой факт (16.09.2026): полный текст страницы чата всегда меняется между опросами даже
