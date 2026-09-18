@@ -41,6 +41,7 @@ const {
   hasPendingFightQuests,
   escapeStuckSceneIfAny,
   resolvePendingFightIfAny,
+  runFishingIfDue,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -153,6 +154,8 @@ async function runFarmSession(page) {
         console.log(`Фарм-сессия: кожи бизон ${hides.bison}, кабан ${hides.boar}.`);
       }
     }
+    // Рыбалка между боями: попытка раз в 2 минуты, до 6 карасей в день.
+    await runFishingIfDue(page).catch((e) => console.log('Фарм-сессия: рыбалка:', e.message));
     const buffed = await isAnyBuffAleActive(page).catch(() => false);
     // Кабан первым; бизон - только пока его кож не больше кабаньих (счёт неизвестен - бьём обоих).
     const k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
@@ -507,6 +510,11 @@ async function loginIfNeeded(page) {
       // три ниже как параметр buffed.
       // Дейлики по дню недели (сейчас четверг: могильщик/мясник/дом в тупике) - идут ДО
       // фарма: это квесты, а они в приоритете.
+      // Рыбалка: караси под будущую кухню в доме (Паша, 18.09.2026). Лимит/кулдаун внутри.
+      r = await runCycleStep(page, 'Рыбалка', () => runFishingIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
       r = await runCycleStep(page, 'Дейлики по дню недели', () => runThursdayDailiesIfAvailable(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;

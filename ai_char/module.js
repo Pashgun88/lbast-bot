@@ -6324,6 +6324,15 @@ async function castFishingRodAndDetectCatch(page) {
 // Used between quests: full route there, fish once, return to the city.
 // castFishingRodAndDetectCatch already clicks "В игру" at the end, landing back on the main
 // location page.
+// 18.09.2026, Паша: "первым в дом купим кухню... там можно будет жарить рыбу и продавать,
+// можешь включить рыбалку". Маршрут и счётчики рыбалки жили только в doScenario (коде
+// Tsunami), а драйвер AI__ его не вызывает - рыбалка у AI__ не шла ни разу. Эта обёртка
+// сама проверяет дневной лимит (6 карасей) и кулдаун (2 мин).
+async function runFishingIfDue(page) {
+  if (!canRunFishingNow()) return false;
+  await runFishingTask(page);
+  return true;
+}
 async function runFishingTask(page) {
   console.log('Рыбалка: начинаю маршрут Конь -> Клановый замок -> В пути -> Идти на север -> Рыбачить -> Забросить удочку -> В игру');
 
@@ -10121,6 +10130,7 @@ module.exports = {
   runThursdayDailiesIfAvailable,
   hasPendingFightQuests,
   resolvePendingFightIfAny,
+  runFishingIfDue,
   escapeStuckSceneIfAny,
   readDailyTasksProgress,
   getPlayerRaceAndFaction,
