@@ -9108,8 +9108,10 @@ const CHAT_REVIVAL_MIN_MESSAGES = 2;
 // "Развлекательный момент" (Паша: "я хочу чтобы ты сам писал, отталкиваясь от характера
 // персонажа") - повод заговорить первым в давно молчащей комнате, но не чаще раза в 3 часа,
 // иначе это уже не характер, а спам.
-const CHAT_INITIATIVE_QUIET_MS = 90 * 60_000;
-const CHAT_INITIATIVE_COOLDOWN_MS = 3 * 60 * 60_000;
+// Паша, 18.09.2026: "пиши иногда в клановом зале, заводи беседу". При 90 мин тишины и
+// раз в 3 часа инициатива почти не срабатывала.
+const CHAT_INITIATIVE_QUIET_MS = 30 * 60_000;
+const CHAT_INITIATIVE_COOLDOWN_MS = 90 * 60_000;
 const CHAT_GREETING_RE = /(^|\s)(привет\w*|здаров\w*|здорово|здравствуй\w*|доброго|добрый\s+(?:день|вечер)|доброе\s+утро|салют|хай|ку)(\s|[,!.?)]|$)/i;
 
 // Решает, есть ли повод вмешаться. Возвращает список триггеров; пустой список = молчим.
@@ -9216,7 +9218,40 @@ function noteChatMessageSent(room) {
 // state: {[room]: {lastText, lastChangeAt, lastCheckedAt}} - переиспользуется между вызовами,
 // начать с {}. Каждый вызов проверяет только те комнаты, чей интервал уже истёк (не долбит все
 // 9 комнат разом каждый раз), с паузой между реальными проверками внутри одного тика.
+// Исходящие реплики. Реплику пишет Claude (драйвер сам не разговаривает), но профиль браузера
+// занят драйвером, и отправка из разового скрипта означала бы останавливать фарм. Поэтому:
+// Claude кладёт реплики в chat_outbox.json ([{room, text}]), вкладка чата отправляет их на
+// ближайшем опросе и очищает файл. Файл в .gitignore.
+const CHAT_OUTBOX_FILE = path.join(__dirname, 'chat_outbox.json');
+
+async function flushChatOutbox(chatPage) {
+  let items;
+  try {
+    items = JSON.parse(fs.readFileSync(CHAT_OUTBOX_FILE, 'utf8'));
+  } catch (e) {
+    return 0; // файла нет или он пуст - нечего отправлять
+  }
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  // Очищаем ДО отправки: лучше потерять реплику при сбое, чем повторить её в чат дважды.
+  fs.writeFileSync(CHAT_OUTBOX_FILE, '[]');
+  let sent = 0;
+  for (const it of items) {
+    const text = String((it && it.text) || '').trim().slice(0, 500);
+    const room = Number((it && it.room) || 12);
+    if (!text) continue;
+    try {
+      await postChatMessage(chatPage, text, room);
+      console.log(`CHAT_SENT room=${room}: ${text}`);
+      sent += 1;
+    } catch (e) {
+      console.log(`CHAT_SEND_FAILED room=${room}: ${e.message}`);
+    }
+  }
+  return sent;
+}
+
 async function runChatMonitorCycle(chatPage, state) {
+  await flushChatOutbox(chatPage).catch((e) => console.log('Chat outbox error:', e.message));
   const now = Date.now();
   const changed = [];
   let didAnyFetch = false;

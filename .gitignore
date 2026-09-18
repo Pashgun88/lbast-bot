@@ -35,3 +35,6 @@ page_text.txt
 
 # OS
 Thumbs.db
+
+# AI__ chat outbox (lines Claude queues for the driver to post)
+ai_char/chat_outbox.json
