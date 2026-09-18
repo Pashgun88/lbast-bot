@@ -9304,7 +9304,12 @@ async function runChatMonitorCycle(chatPage, state) {
     const triggers = detectChatTriggers({ room, name }, s.lastMsgs || [], nextMsgs, {
       // null, а не Infinity: пока мы не видели ни одного изменения, про длину тишины ничего
       // не известно - "мы только что пришли" это не "комната давно молчит".
-      quietForMs: s.lastChangeAt ? now - s.lastChangeAt : null,
+      // После перезапуска lastChangeAt нет, и раньше тишина считалась неизвестной до первого
+      // изменения - в молчащем зале инициатива не срабатывала никогда. Время самого свежего
+      // сообщения в ленте даёт честную длину тишины и без этого.
+      quietForMs: s.lastChangeAt
+        ? now - s.lastChangeAt
+        : (nextMsgs.length ? chatMessageAgeMinutes(nextMsgs[0], new Date(now)) * 60_000 : null),
       lastInitiativeAt: s.lastInitiativeAt || 0,
       now,
     });
