@@ -152,7 +152,18 @@ async function waitForHeal(page) {
 }
 
 async function loginIfNeeded(page) {
-  await page.goto('http://lbast.ru/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // 18.09.2026: один прерванный переход (net::ERR_ABORTED - те же прерывистые сбои, что и в
+  // циклах) ронял драйвер ещё на старте. Три попытки с паузой, потом уже честная ошибка.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await page.goto('http://lbast.ru/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      break;
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      console.log(`Старт: переход на lbast.ru не удался (${e.message.split('\n')[0]}), попытка ${attempt}/3 - повторю через 10 с.`);
+      await new Promise((r) => setTimeout(r, 10_000));
+    }
+  }
   const loginInput = page.locator('input[name="login"]');
   if ((await loginInput.count().catch(() => 0)) > 0) {
     if (!LOGIN || !PASS) {
