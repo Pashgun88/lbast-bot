@@ -16,12 +16,36 @@ async function readHpFromAnketa(page) {
   return m ? { current: Number(m[1]), max: Number(m[2]) } : null;
 }
 
+async function ackFinishedFightIfAny(page) {
+  await page.goto("http://lbast.ru/location.php", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+  const boj = await page.evaluate(() => {
+    const a = Array.from(document.querySelectorAll("a")).find((x) => (x.getAttribute("href") || "").includes("boj="));
+    return a ? a.getAttribute("href") : null;
+  }).catch(() => null);
+  if (!boj) return false;
+  await page.goto("http://lbast.ru/" + (boj[0] === "/" ? boj.slice(1) : boj), { waitUntil: "domcontentloaded", timeout: 60000 });
+  const text = await getBodyText(page);
+  if (!/Бой завершен/i.test(text)) return false;
+  await clickByTexts(page, ["Бой завершен!", "Бой завершен"], "Бой завершен (подтверждение итога)").catch(() => {});
+  return true;
+}
+
 (async () => {
   const ctx = await chromium.launchPersistentContext(path.join(process.cwd(), 'chrome-profile-ai-char'), {
     headless: false,
     viewport: null,
   });
   const page = ctx.pages()[0] || (await ctx.newPage());
+
+  // 18.09.2026: голый "В бой!" на локации бывает не висящим, а УЖЕ ЗАВЕРШЁННЫМ боем, итог
+  // которого просто не подтвердили. Игра держит персонажа на экране итога, и HP при этом НЕ
+  // восстанавливается. Раньше скрипт сначала ждал HP - и прождал впустую 15 часов на 0/380,
+  // хотя разблокировка была одним заходом на экран боя. Поэтому сначала смотрим экран боя.
+  if (await ackFinishedFightIfAny(page)) {
+    console.log("Бой был уже завершён - итог подтверждён, игра свободна.");
+    await ctx.close();
+    return;
+  }
 
   let hp = await readHpFromAnketa(page);
   if (!hp) {
