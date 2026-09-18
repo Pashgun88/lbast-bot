@@ -7535,7 +7535,10 @@ async function progressOrdoQuest(page, q) {
   await pause(page, 800, 1500);
   const takeText = await getBodyText(page);
   if (!/Задание принято/i.test(takeText) && !hasAlreadyHasQuestText(takeText)) {
-    console.log(`${q.label}: задание не выдали: ${snapshotText(takeText, 200)}`);
+    // Начало страницы башни — одно описание Ордена; причина отказа ниже, в списке заданий
+    // и строке "Текущее задание" (19.09.2026 лог обрезался ровно перед ней).
+    const at = takeText.search(/Задания:|Выполняйте задания|Текущее задание/);
+    console.log(`${q.label}: задание не выдали: ${snapshotText(at >= 0 ? takeText.slice(at) : takeText, 600)}`);
     return false;
   }
 
