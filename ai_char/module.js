@@ -1601,6 +1601,18 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
 
     console.log(`Tavern quest: bot ${nextIndex}/${BOT_LIMIT} -> ${matched.npc}`);
 
+    // Гейт перед боем с ботом - ДО дороги к нему. 18.09.2026: гейт стоял после клика по
+    // "Песчанник греется на солнце", а этот клик УЖЕ открывает бой. Персонаж на 56/380 висел в
+    // бою больше 40 минут, "ожидая HP", которое в бою почти не растёт (+18 за 40 мин). Решать,
+    // идти ли в бой, можно только пока в него ещё не вошли - на экране задания, а не у бота.
+    // waitForRecovery: Харчевню не бросаем на полпути - ждём подлечивания и добиваем ботов.
+    if (!(await questFightHpGate(
+      page,
+      `Харчевня (бой ${nextIndex}/${BOT_LIMIT})`,
+      QUEST_FIGHT_HP_FLOOR,
+      { waitForRecovery: true },
+    ))) return false;
+
     await performStep(page, {
       stepName: matched.travelTexts[0],
       currentTexts: matched.travelVariants,
@@ -1630,16 +1642,6 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
       continue;
     }
 
-    // Гейт перед боем с ботом. Именно здесь 17.09.2026 драйвер водил уже мёртвого персонажа по
-    // трём целям: проверки не было вообще. Страница NPC шапку со статами обычно рендерит, так
-    // что чтение честное; если нет - hpFractionForGate возьмёт последний замер, а null запретит.
-    // waitForRecovery: Харчевню не бросаем на полпути - ждём подлечивания и добиваем ботов.
-    if (!(await questFightHpGate(
-      page,
-      `Харчевня (бой ${kills + 1}/${BOT_LIMIT})`,
-      QUEST_FIGHT_HP_FLOOR,
-      { waitForRecovery: true },
-    ))) return false;
 
     await performStep(page, {
       stepName: '\u0412 \u0431\u043e\u0439!',
