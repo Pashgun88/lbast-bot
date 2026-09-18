@@ -1802,6 +1802,10 @@ async function questFightHpGate(
   const text = await getBodyText(page).catch(() => '');
   const stats = parseStats(text);
   noteHpFromPageText(text, `${label}: перед боем`);
+  // 18.09.2026: после перезапуска драйвера последнего замера нет, а экран у Демона озера статов
+  // не рендерит -> гейт отказал вслепую при реальных 334/380, уже стоя у демона. Нет статов на
+  // экране - меряем во второй вкладке, а не объявляем HP неизвестным.
+  if (typeof stats.hpCurrent !== 'number') await readHpFromLocationInNewTab(page);
   const frac = hpFractionForGate(stats);
 
   // Паша, 17.09.2026: "ты не выполнил харчевню а уже идешь выполнять другое задание, нужно
@@ -1903,9 +1907,8 @@ async function lowHpBeforeFightQuest(page, label) {
   // обновляется только на страницах со статами. Живой случай 18.09.2026: HP уже 110/380, гейт
   // всё твердил "25%" (замер 96), и так заблокировал бы боевые квесты навсегда. Поэтому без
   // статов на экране меряем свежо во второй вкладке (Q-меню не трогаем).
-  if (typeof stats.hpCurrent !== 'number' && lastKnownHp.max > 0) {
-    const fresh = await readHpFromLocationInNewTab(page);
-    if (typeof fresh === 'number') lastKnownHp = { current: fresh, max: lastKnownHp.max, at: Date.now() };
+  if (typeof stats.hpCurrent !== 'number') {
+    await readHpFromLocationInNewTab(page); // сам обновляет lastKnownHp (текущее и максимум)
   }
   const frac = hpFractionForGate(stats);
   if (frac === null || frac >= QUEST_FIGHT_HP_FLOOR) return false;
@@ -3035,10 +3038,15 @@ async function readHpFromLocationInNewTab(page) {
     temp = await page.context().newPage();
     await temp.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     const stats = parseStats(await temp.locator('body').innerText().catch(() => ''));
-    if (typeof stats.hpCurrent === 'number') return stats.hpCurrent;
+    if (typeof stats.hpCurrent === 'number') {
+      if (typeof stats.hpMax === 'number') lastKnownHp = { current: stats.hpCurrent, max: stats.hpMax, at: Date.now() };
+      return stats.hpCurrent;
+    }
     await temp.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     const m = (await temp.locator('body').innerText().catch(() => '')).match(/\((-?\d+)\s*\/\s*(\d+)\)/);
-    return m ? Number(m[1]) : null;
+    if (!m) return null;
+    lastKnownHp = { current: Number(m[1]), max: Number(m[2]), at: Date.now() };
+    return Number(m[1]);
   } catch (e) {
     return null;
   } finally {
