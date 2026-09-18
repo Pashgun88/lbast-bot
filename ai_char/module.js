@@ -9182,9 +9182,16 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   // quietForMs обязан быть КОНЕЧНЫМ числом: при первом наблюдении комнаты истории тишины нет
   // (lastChangeAt = 0), и старое условие давало "молчит Infinity мин" - initiative срабатывал
   // сразу на каждом запуске драйвера. Живой случай 17.09.2026, сразу после включения триггеров.
+  // Пауза между инициативами считается и по САМОЙ ЛЕНТЕ: lastInitiativeAt живёт в памяти и
+  // обнуляется при каждом перезапуске драйвера. 18.09.2026 после рестарта пришёл сигнал
+  // "заговорить первым" через 40 минут после моей последней реплики - а до неё было пять
+  // подряд. Последнее сообщение AI__ в ленте переживает любые перезапуски.
+  const ownLast = nextMsgs.find((m) => AI_SELF_NICK_RE.test(m.nick));
+  const ownLastAgoMs = ownLast ? chatMessageAgeMinutes(ownLast, nowDate) * 60_000 : Infinity;
   if (!firstObservation && fresh.length === 0
       && Number.isFinite(quietForMs) && quietForMs >= CHAT_INITIATIVE_QUIET_MS
-      && now - lastInitiativeAt >= CHAT_INITIATIVE_COOLDOWN_MS) {
+      && now - lastInitiativeAt >= CHAT_INITIATIVE_COOLDOWN_MS
+      && ownLastAgoMs >= CHAT_INITIATIVE_COOLDOWN_MS) {
     triggers.push({ ...base, type: 'initiative',
       reason: `комната молчит ${Math.round(quietForMs / 60000)} мин - повод заговорить первым` });
   }
