@@ -9288,6 +9288,15 @@ async function runChatMonitorCycle(chatPage, state) {
     }
     const messagesOnly = extractChatMessagesSection(text);
     const nextMsgs = parseChatMessages(messagesOnly);
+    // 18.09.2026: каждое ВТОРОЕ обновление чата приходило пустым (0 сообщений, потом снова 14).
+    // Комната от этого "менялась" каждые полминуты: lastChangeAt не старел, и инициатива
+    // (30 мин тишины) не срабатывала НИКОГДА, а lastMsgs затирался, и старые обращения
+    // приходили повторно. Живая лента из 14 сообщений не пустеет за полминуты, так что пустое
+    // чтение после непустого - это сбой чтения, а не событие в комнате. Пропускаем его.
+    if (nextMsgs.length === 0 && (s.lastMsgs || []).length > 0) {
+      state[room] = s;
+      continue;
+    }
     const textChanged = s.lastText !== undefined && s.lastText !== messagesOnly;
 
     // Триггеры считаем ВСЕГДА, а не только при изменении текста: "развлекательный момент"
