@@ -297,7 +297,13 @@ function hasPendingFightQuests() {
   // null = Q-меню в этом процессе ещё ни разу не видели. Считаем, что квесты есть: пропустить
   // один круг фарма дешевле, чем сточить HP и потерять дейлик, который пропадёт вместе с днём.
   if (lastListedQuestNames === null) return true;
-  return IMPLEMENTED_FIGHT_QUESTS.some((q) => isQuestInMenu(lastListedQuestNames, q));
+  // 18.09.2026, Паша: "почему сейчас не фармит?" - ферма стояла на 354/380, "сберегая HP" под
+  // торговца, на которого дневные попытки уже кончились. Такой квест сегодня не пойдёт, и
+  // держать ради него ферму бессмысленно.
+  const merchantOut = assassinMerchantAttemptsToday >= ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY;
+  return IMPLEMENTED_FIGHT_QUESTS
+    .filter((q) => !(merchantOut && /торгов/i.test(q)))
+    .some((q) => isQuestInMenu(lastListedQuestNames, q));
 }
 
 // "Дейлик" гарпии — бонусный бой привязан к конкретному дню недели с фиксированным числом
@@ -7003,7 +7009,16 @@ async function progressAssassinPaintingQuest(page) {
 }
 
 async function progressAssassinMerchantQuest(page) {
-  await acceptAssassinGuildQuest(page, 1);
+  const acceptText = await acceptAssassinGuildQuest(page, 1);
+  // 18.09.2026: три из шести дневных попыток ушли на ответ "У вас уже есть задание" - слот
+  // держали Харчевня и Демон озера, до каравана дело не дошло. Лимит придуман против
+  // "караван не стоит на клетке", а не против занятого слота, поэтому такую попытку
+  // возвращаем. Дальше всё равно идём на клетку: слот мог занимать сам торговец.
+  if (hasAlreadyHasQuestText(acceptText) && assassinMerchantAttemptsToday > 0) {
+    assassinMerchantAttemptsToday -= 1;
+    persistDailyQuestState();
+    console.log(`Assassin quest (торговец): слот задания занят - попытку не считаю (${assassinMerchantAttemptsToday}/${ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY}).`);
+  }
   await goToAssassinGuildQuestSpot(page, 1);
 
   if (await existsAnyText(page, ['Вы уже выполняли это задание сегодня'])) {
