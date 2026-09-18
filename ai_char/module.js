@@ -228,6 +228,8 @@ let caravanRobberyDoneToday = false;
 let assassinGuildDayKey = '';
 const assassinGuildDoneToday = { banker: false, painting: false, merchant: false };
 let assassinMerchantAttemptsToday = 0;
+// Когда в последний раз ехали к каравану и не застали его (см. hasPendingFightQuests).
+let assassinMerchantNoCaravanAt = 0;
 const ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY = 6;
 
 // Галерея искусств/лазулиты: одноразовый (не дневной) квест — раз сдан, никогда не
@@ -300,7 +302,11 @@ function hasPendingFightQuests() {
   // 18.09.2026, Паша: "почему сейчас не фармит?" - ферма стояла на 354/380, "сберегая HP" под
   // торговца, на которого дневные попытки уже кончились. Такой квест сегодня не пойдёт, и
   // держать ради него ферму бессмысленно.
-  const merchantOut = assassinMerchantAttemptsToday >= ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY;
+  // И второе: при 380/380 ферма стояла ради торговца, которого только что не застали на
+  // клетке. Ждать HP под квест, который сейчас сделать нельзя, - значит не делать ничего.
+  // 30 минут после "каравана нет" торговец ферму не держит (сам он пробуется каждый цикл).
+  const merchantOut = assassinMerchantAttemptsToday >= ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY
+    || Date.now() - assassinMerchantNoCaravanAt < 30 * 60 * 1000;
   return IMPLEMENTED_FIGHT_QUESTS
     .filter((q) => !(merchantOut && /торгов/i.test(q)))
     .some((q) => isQuestInMenu(lastListedQuestNames, q));
@@ -7029,6 +7035,7 @@ async function progressAssassinMerchantQuest(page) {
   const text = await getBodyText(page);
   if (!/торговый караван/i.test(text)) {
     console.log('Assassin quest (торговец): каравана сейчас нет на этой клетке, попробую в следующий раз.');
+    assassinMerchantNoCaravanAt = Date.now();
     return false;
   }
 
