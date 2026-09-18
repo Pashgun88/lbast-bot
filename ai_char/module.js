@@ -1898,7 +1898,16 @@ const QUEUE_GATED_FIGHT_QUESTS = new Set([
 async function lowHpBeforeFightQuest(page, label) {
   if (!QUEUE_GATED_FIGHT_QUESTS.has(label)) return false;
   const text = await getBodyText(page).catch(() => '');
-  const frac = hpFractionForGate(parseStats(text));
+  const stats = parseStats(text);
+  // Q-меню шапку со статами не рендерит, и hpFractionForGate падал на последний замер - а тот
+  // обновляется только на страницах со статами. Живой случай 18.09.2026: HP уже 110/380, гейт
+  // всё твердил "25%" (замер 96), и так заблокировал бы боевые квесты навсегда. Поэтому без
+  // статов на экране меряем свежо во второй вкладке (Q-меню не трогаем).
+  if (typeof stats.hpCurrent !== 'number' && lastKnownHp.max > 0) {
+    const fresh = await readHpFromLocationInNewTab(page);
+    if (typeof fresh === 'number') lastKnownHp = { current: fresh, max: lastKnownHp.max, at: Date.now() };
+  }
+  const frac = hpFractionForGate(stats);
   if (frac === null || frac >= QUEST_FIGHT_HP_FLOOR) return false;
   console.log(`${label}: HP-гейт очереди не пройден (${Math.round(frac * 100)}% < ${Math.round(QUEST_FIGHT_HP_FLOOR * 100)}%) -> квест не начинаю, вернусь в следующем цикле.`);
   return true;
