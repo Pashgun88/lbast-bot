@@ -6292,6 +6292,21 @@ async function castFishingRodAndDetectCatch(page) {
     return false;
   }
 
+  // 18.09.2026 живой случай: вместо "Забросить удочку" игра показала экран ожидания поклёва
+  // ("Подождем еще ... подсекай! ... сек" + "Ждать") — похоже на мини-игру на время подсечки,
+  // механика не изучена. Не гадаем: сохраняем HTML экрана для разбора и выходим без ошибки.
+  if (!/Забросить удочку/i.test(afterRodText) && /Ждать/.test(afterRodText)) {
+    try {
+      const html = await page.content();
+      require('fs').writeFileSync(require('path').join(__dirname, 'fishing_wait_screen.html'), html);
+    } catch (e) { /* диагностика не должна ронять рыбалку */ }
+    console.log('Рыбалка: экран ожидания поклёва (мини-игра подсечки не изучена) -> HTML сохранён в ai_char/fishing_wait_screen.html, выхожу.');
+    lastFishingAttemptAt = Date.now();
+    persistDailyQuestState();
+    await leaveFishingResultToGame(page);
+    return false;
+  }
+
   await performStep(page, {
     stepName: CAST,
     currentTexts: [CAST, CAST.toLowerCase()],
@@ -6304,7 +6319,9 @@ async function castFishingRodAndDetectCatch(page) {
   // Match on the "карас" stem anywhere in the result rather than the exact phrasing, since a
   // failed attempt presumably doesn't mention the fish at all.
   const resultText = await getBodyText(page);
-  const caught = /карас[а-я]*/i.test(resultText);
+  // Не просто "карас" где угодно: экран ожидания показывает шутку "— Карасей ловил", что дало бы
+  // ложный улов. Засчитываем только фразу вытаскивания рыбы.
+  const caught = /вытаскиваете из воды/i.test(resultText);
 
   lastFishingAttemptAt = Date.now();
 
