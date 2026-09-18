@@ -9135,8 +9135,16 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   const seen = new Set(prevMsgs.map(chatMessageKey));
   const fresh = nextMsgs.filter((m) => !seen.has(chatMessageKey(m)));
 
+  // Лента идёт новыми сверху. Всё, что НИЖЕ последнего сообщения AI__, написано до нашего
+  // ответа - на это мы уже отреагировали. 18.09.2026: одно неполное обновление чата стёрло
+  // prevMsgs, и обе старые реплики Galla ("а оркам отдыхать можно?", "ну спасибо") снова
+  // пришли как новые обращения. Это правило от prevMsgs не зависит.
+  const ownIdx = nextMsgs.findIndex((m) => AI_SELF_NICK_RE.test(m.nick));
+  const newerThanOurReply = (m) => ownIdx < 0 || nextMsgs.indexOf(m) < ownIdx;
+
   const live = fresh.filter((m) => {
     if (AI_SELF_NICK_RE.test(m.nick)) return false; // своё же сообщение
+    if (!newerThanOurReply(m)) return false;
     return chatMessageAgeMinutes(m, nowDate) <= CHAT_TRIGGER_MAX_AGE_MIN;
   });
 
