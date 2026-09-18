@@ -6266,6 +6266,26 @@ async function leaveFishingResultToGame(page) {
 
 // Assumes we're already at the fishing spot ("Рыбачить" visible). Does NOT navigate away
 // afterward — the caller decides where to go next (В игру, or Кулак хаоса during recovery).
+// Экран ожидания поклёва: "Подождем еще <nobr id=pbar>N</nobr> сек" + ссылка "Ждать" (go=1).
+// Ждём отсчёт и подсекаем; если экран повторился (рано или новый отсчёт) — до 3 раз.
+async function finishFishingBiteWait(page) {
+  for (let i = 0; i < 3; i++) {
+    const text = await getBodyText(page);
+    const mm = text.match(/Подождем еще\s*(\d+)\s*сек/i);
+    if (!mm && !/подсекай/i.test(text)) return;
+    const secs = mm ? Number(mm[1]) : 0;
+    console.log(`Рыбалка: жду поклёва ${secs} сек, потом подсекаю.`);
+    await page.waitForTimeout((secs + 1) * 1000);
+    const href = await page.evaluate(() => {
+      const a = Array.from(document.querySelectorAll('a')).find((x) => /^Ждать$/i.test((x.innerText || '').trim()));
+      return a ? a.getAttribute('href') : null;
+    }).catch(() => null);
+    if (!href) return;
+    await page.goto(`http://lbast.ru/${href.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(800);
+  }
+}
+
 async function castFishingRodAndDetectCatch(page) {
   const FISH_SPOT = 'Рыбачить';
   const CAST = 'Забросить удочку';
@@ -6299,32 +6319,25 @@ async function castFishingRodAndDetectCatch(page) {
     return false;
   }
 
-  // 18.09.2026 живой случай: вместо "Забросить удочку" игра показала экран ожидания поклёва
-  // ("Подождем еще ... подсекай! ... сек" + "Ждать") — похоже на мини-игру на время подсечки,
-  // механика не изучена. Не гадаем: сохраняем HTML экрана для разбора и выходим без ошибки.
-  if (!/Забросить удочку/i.test(afterRodText) && /Ждать/.test(afterRodText)) {
-    try {
-      const html = await page.content();
-      require('fs').writeFileSync(require('path').join(__dirname, 'fishing_wait_screen.html'), html);
-    } catch (e) { /* диагностика не должна ронять рыбалку */ }
-    console.log('Рыбалка: экран ожидания поклёва (мини-игра подсечки не изучена) -> HTML сохранён в ai_char/fishing_wait_screen.html, выхожу.');
-    lastFishingAttemptAt = Date.now();
-    persistDailyQuestState();
-    await leaveFishingResultToGame(page);
-    return false;
+  // Удочка уже заброшена (прошлый заход ушёл, не дождавшись) — сразу к ожиданию поклёва.
+  const alreadyCast = !/Забросить удочку/i.test(afterRodText) && /Подождем еще|Ждать/.test(afterRodText);
+  if (!alreadyCast) {
+    await performStep(page, {
+      stepName: CAST,
+      currentTexts: [CAST, CAST.toLowerCase()],
+      nextTexts: [],
+      retries: 3,
+      skipIfNextVisible: false,
+    });
   }
 
-  await performStep(page, {
-    stepName: CAST,
-    currentTexts: [CAST, CAST.toLowerCase()],
-    nextTexts: [],
-    retries: 3,
-    skipIfNextVisible: false,
-  });
+  // 18.09.2026, разобрано по сохранённому HTML: после заброса игра показывает "Подождем еще
+  // <N> сек, авось клюнет" с отсчётом (по нулю -> "подсекай!") и ссылку "Ждать" (go=1) — это и
+  // есть подсечка. Ждём N+1 сек и жмём "Ждать". Раньше код сразу читал этот экран, находил в
+  // шутке под ним слово "карасей" и засчитывал улов, которого не было.
+  await finishFishingBiteWait(page);
 
   // Confirmed real success text: "...Вы с легким усилием вытаскиваете из воды карася! Далее".
-  // Match on the "карас" stem anywhere in the result rather than the exact phrasing, since a
-  // failed attempt presumably doesn't mention the fish at all.
   const resultText = await getBodyText(page);
   // Не просто "карас" где угодно: экран ожидания показывает шутку "— Карасей ловил", что дало бы
   // ложный улов. Засчитываем только фразу вытаскивания рыбы.
