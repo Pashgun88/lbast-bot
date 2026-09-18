@@ -505,6 +505,17 @@ async function loginIfNeeded(page) {
         const need = Math.ceil(idleStats.hpMax * 0.7);
         if (idleStats.hpCurrent < need) {
           idleMinutes = Math.max(1, Math.min(idleMinutes, Math.ceil((need - idleStats.hpCurrent) / 14)));
+          // 18.09.2026, Паша: "купил тебе дом, теперь для быстрого лечения достаточно просто
+          // стоять в локации кулак хаоса". Ждём HP не где попало, а там: амулетом в Кулак Хаоса.
+          // Скорость лечения там ещё не замерена, поэтому спим не дольше 3 минут и пишем HP
+          // в лог - по двум замерам подряд видно, насколько быстрее.
+          const here = await getBodyText(page).catch(() => '');
+          if (!/Кулак Хаоса/i.test(here)) {
+            console.log(`Лечение: HP ${idleStats.hpCurrent}/${idleStats.hpMax} < 70% -> иду в Кулак Хаоса (там дом).`);
+            await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+          }
+          console.log(`Лечение в Кулаке Хаоса: HP ${idleStats.hpCurrent}/${idleStats.hpMax} в ${new Date().toLocaleTimeString('ru-RU')}`);
+          idleMinutes = Math.min(idleMinutes, 3);
         } else {
           idleMinutes = Math.min(idleMinutes, 2);
         }
