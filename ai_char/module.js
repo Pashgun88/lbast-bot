@@ -9188,7 +9188,9 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
     if (AI_SELF_NICK_RE.test(m.text)) {
       triggers.push({ ...base, type: 'mention', nick: m.nick, text: m.text,
         reason: `${m.nick} обратился к AI__` });
-    } else if (!firstObservation && inReplyWindow) {
+    // "Tsunami, и за месяц спустила..." - обращение к ДРУГОМУ нику: это не нам, даже если пришло
+    // сразу после нашей реплики (первая ложная сработка 18.09.2026).
+    } else if (!firstObservation && inReplyWindow && !/^[A-Za-z0-9_.-]+\s*,/.test(m.text)) {
       triggers.push({ ...base, type: 'reply', nick: m.nick, text: m.text,
         reason: `${m.nick} ответил после реплики AI__` });
     } else if (!firstObservation && CHAT_GREETING_RE.test(m.text)) {
