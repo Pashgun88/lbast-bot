@@ -9132,8 +9132,14 @@ const CHAT_REVIVAL_MIN_MESSAGES = 2;
 // иначе это уже не характер, а спам.
 // Паша, 18.09.2026: "пиши иногда в клановом зале, заводи беседу". При 90 мин тишины и
 // раз в 3 часа инициатива почти не срабатывала.
-const CHAT_INITIATIVE_QUIET_MS = 30 * 60_000;
-const CHAT_INITIATIVE_COOLDOWN_MS = 90 * 60_000;
+// Паша, 18.09.2026 (вечер): "если в чате тишина более 2х часов днём с 4 утра по 23:00, то
+// пиши что-нибудь, заводи разговор". Ночью (23:00-04:00) AI__ первым не пишет.
+const CHAT_INITIATIVE_QUIET_MS = 120 * 60_000;
+const CHAT_INITIATIVE_COOLDOWN_MS = 120 * 60_000;
+const CHAT_INITIATIVE_FROM_HOUR = 4;
+const CHAT_INITIATIVE_TO_HOUR = 23;
+// Сколько минут после нашей реплики чужое сообщение считается ответом нам.
+const CHAT_REPLY_WINDOW_MIN = 15;
 const CHAT_GREETING_RE = /(^|\s)(привет\w*|здаров\w*|здорово|здравствуй\w*|доброго|добрый\s+(?:день|вечер)|доброе\s+утро|салют|хай|ку)(\s|[,!.?)]|$)/i;
 
 // Решает, есть ли повод вмешаться. Возвращает список триггеров; пустой список = молчим.
@@ -9170,10 +9176,21 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
     return chatMessageAgeMinutes(m, nowDate) <= CHAT_TRIGGER_MAX_AGE_MIN;
   });
 
+  // Паша, 18.09.2026: "отвечай на все сообщения, адресованные тебе". Ответ на нашу реплику
+  // часто приходит без ника (Galla: "У нас, кстати, хорошенькие гномихи" - сразу после
+  // шутки AI__ про гномих) и раньше не ловился вовсе. Всё, что пришло в течение
+  // CHAT_REPLY_WINDOW_MIN после нашего сообщения, считаем адресованным нам.
+  const ownLastForReply = nextMsgs.find((m) => AI_SELF_NICK_RE.test(m.nick));
+  const inReplyWindow = ownLastForReply
+    && chatMessageAgeMinutes(ownLastForReply, nowDate) <= CHAT_REPLY_WINDOW_MIN;
+
   for (const m of live) {
     if (AI_SELF_NICK_RE.test(m.text)) {
       triggers.push({ ...base, type: 'mention', nick: m.nick, text: m.text,
         reason: `${m.nick} обратился к AI__` });
+    } else if (!firstObservation && inReplyWindow) {
+      triggers.push({ ...base, type: 'reply', nick: m.nick, text: m.text,
+        reason: `${m.nick} ответил после реплики AI__` });
     } else if (!firstObservation && CHAT_GREETING_RE.test(m.text)) {
       triggers.push({ ...base, type: 'greeting', nick: m.nick, text: m.text,
         reason: `${m.nick} поздоровался` });
@@ -9182,7 +9199,7 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
 
   if (!firstObservation && live.length >= CHAT_REVIVAL_MIN_MESSAGES
       && quietForMs >= CHAT_QUIET_FOR_REVIVAL_MS
-      && !triggers.some((t) => t.type === 'mention')) {
+      && !triggers.some((t) => t.type === 'mention' || t.type === 'reply')) {
     triggers.push({ ...base, type: 'revival',
       reason: `после тишины пошёл разговор (${live.length} сообщений)`,
       lines: live.slice(0, 6).map((m) => `${m.nick}: ${m.text}`) });
@@ -9200,7 +9217,8 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   if (!firstObservation && fresh.length === 0
       && Number.isFinite(quietForMs) && quietForMs >= CHAT_INITIATIVE_QUIET_MS
       && now - lastInitiativeAt >= CHAT_INITIATIVE_COOLDOWN_MS
-      && ownLastAgoMs >= CHAT_INITIATIVE_COOLDOWN_MS) {
+      && ownLastAgoMs >= CHAT_INITIATIVE_COOLDOWN_MS
+      && nowDate.getHours() >= CHAT_INITIATIVE_FROM_HOUR && nowDate.getHours() < CHAT_INITIATIVE_TO_HOUR) {
     triggers.push({ ...base, type: 'initiative',
       reason: `комната молчит ${Math.round(quietForMs / 60000)} мин - повод заговорить первым` });
   }
@@ -9241,8 +9259,10 @@ const CHAT_ROOMS = [
 // общение прекратилось опять 5 минут". Активное окно = сколько держится режим 30 секунд
 // после последнего движения в комнате (нового сообщения ИЛИ нашей собственной отправки).
 const CHAT_ACTIVE_POLL_MS = 30_000;
-const CHAT_IDLE_POLL_MS = 5 * 60_000;
-const CHAT_ACTIVE_WINDOW_MS = 5 * 60_000;
+// Паша, 18.09.2026: "почему так долго отвечал в клан зале?" - при опросе раз в 5 минут
+// реплику Galla заметили через 5 минут. Раз в минуту - всё ещё спокойно для сервера.
+const CHAT_IDLE_POLL_MS = 60_000;
+const CHAT_ACTIVE_WINDOW_MS = 15 * 60_000;
 
 // Когда МЫ написали в комнату - ждём ответа, а значит следующие CHAT_ACTIVE_WINDOW_MS
 // опрашиваем её раз в 30 секунд. Хранится здесь, а не в state драйвера, чтобы работало при
