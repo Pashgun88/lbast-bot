@@ -472,7 +472,23 @@ async function loginIfNeeded(page) {
       // 2 мин, 4 мин, 8 мин ... максимум раз в 20 минут (чтобы не пропускать окно,
       // когда HP уже восстановилось до бойеспособного уровня, но следующая проверка
       // ещё далеко). Ограничение по просьбе Паши 14.09.2026: не бездействовать дольше 20 мин.
-      const idleMinutes = Math.min(20, 2 ** idleStreak);
+      let idleMinutes = Math.min(20, 2 ** idleStreak);
+      // 18.09.2026, Паша: "почему остановился посреди квеста?" - боевые квесты ждали HP 70%,
+      // HP дошло до 80% уже через ~10 минут, а драйвер спал по растущей лестнице 2-4-8 минут.
+      // Если простой из-за низкого HP - спим ровно до порога (лечение ~14 hp/мин), не дольше.
+      const idleStats = await page
+        .goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 })
+        .then(async () => parseStats(await getBodyText(page)))
+        .catch(() => null);
+      if (idleStats && typeof idleStats.hpCurrent === 'number' && idleStats.hpMax > 0) {
+        const need = Math.ceil(idleStats.hpMax * 0.7);
+        if (idleStats.hpCurrent < need) {
+          idleMinutes = Math.max(1, Math.min(idleMinutes, Math.ceil((need - idleStats.hpCurrent) / 14)));
+        } else {
+          idleMinutes = Math.min(idleMinutes, 2);
+        }
+      }
+
       console.log(`Ничего нового делать (${idleStreak} цикл подряд без прогресса) -> следующая проверка через ${idleMinutes} мин.`);
       await new Promise((r) => setTimeout(r, idleMinutes * 60_000));
     }
