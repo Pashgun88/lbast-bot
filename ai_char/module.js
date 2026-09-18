@@ -1878,11 +1878,38 @@ async function preTripHpGate(page, label, floor = QUEST_FIGHT_HP_FLOOR) {
   return true;
 }
 
+// Гейт очереди квестов: решение "идти ли в боевой квест" принимается ДО первого шага, пока
+// персонаж стоит в меню заданий. 18.09.2026 два квеста подряд (Харчевня, Корованы) держали свой
+// гейт после клика, который уже запирает в бою, и отказ на низком HP оставлял персонажа на
+// экране боя без выхода. Здесь страница не меняется (квесты стартуют с открытого Q-меню):
+// читаем HP из текущего текста, иначе берём последний замер. Пропускаем только при ИЗВЕСТНОМ
+// низком HP; null пропускает дальше - там стоят внутренние гейты квеста.
+// Исключительные квесты (Харчевня, Кузница Рума, Галерея) сюда не входят: они ждут HP сами.
+const QUEUE_GATED_FIGHT_QUESTS = new Set([
+  'Камни Драбаса',
+  'Грабим корованы',
+  'Гильдия асассинов: банкир',
+  'Гильдия асассинов: картина',
+  'Гильдия асассинов: торговец',
+  'Demon lake quest',
+  'Shipwreck quest',
+]);
+
+async function lowHpBeforeFightQuest(page, label) {
+  if (!QUEUE_GATED_FIGHT_QUESTS.has(label)) return false;
+  const text = await getBodyText(page).catch(() => '');
+  const frac = hpFractionForGate(parseStats(text));
+  if (frac === null || frac >= QUEST_FIGHT_HP_FLOOR) return false;
+  console.log(`${label}: HP-гейт очереди не пройден (${Math.round(frac * 100)}% < ${Math.round(QUEST_FIGHT_HP_FLOOR * 100)}%) -> квест не начинаю, вернусь в следующем цикле.`);
+  return true;
+}
+
 async function runQuestStepSafe(page, label, fn) {
   if (characterDownDetected) {
     console.log(`Quest step skip (персонаж выбыл из строя): ${label}`);
     return false;
   }
+  if (await lowHpBeforeFightQuest(page, label)) return false;
   try {
     const ok = await fn();
     if (ok) {
@@ -2536,6 +2563,7 @@ async function runNonQQuestSafe(page, label, fn) {
     console.log(`${label}: пропускаю, персонаж выбыл из строя.`);
     return false;
   }
+  if (await lowHpBeforeFightQuest(page, label)) return false;
   try {
     const result = await fn();
     noteHpFromPageText(await getBodyText(page), label);
