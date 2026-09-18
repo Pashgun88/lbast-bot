@@ -6859,7 +6859,7 @@ async function progressAssassinBankerQuest(page) {
   // KO ниже в этом же коде).
   const MAX_GUARD_FIGHTS = 6;
   for (let attempt = 1; attempt <= MAX_GUARD_FIGHTS; attempt += 1) {
-    if (await existsAnyText(page, ['Идти в спальню', 'идти в спальню'])) {
+    if (await existsAnyText(page, ['Идти в спальню', 'идти в спальню', 'Идти к банкиру', 'идти к банкиру'])) {
       break;
     }
     if (await existsAnyText(page, ['Вы уже выполняли это задание сегодня'])) {
@@ -6897,11 +6897,29 @@ async function progressAssassinBankerQuest(page) {
     }
   }
 
-  await performStep(page, {
-    stepName: 'Идти в спальню',
-    currentTexts: ['Идти в спальню', 'идти в спальню'],
-    retries: 3,
-  });
+  // 18.09.2026, живой прогон: после "Продолжить квест" персонаж стоит УЖЕ в спальне (там
+  // "Идти к банкиру" / "Взломать сейф"), и жёсткий шаг "Идти в спальню" ронял квест каждый
+  // цикл. А сам шаг в спальню может выбросить засаду - Телохранителя (210 HP, урон 55-63):
+  // бой начинается сразу, "Идти к банкиру" на экране нет. Засаду добиваем (отказаться от неё
+  // нельзя) и продолжаем квест через "Продолжить квест".
+  if (!(await existsAnyText(page, ['Идти к банкиру', 'идти к банкиру']))) {
+    await performStep(page, {
+      stepName: 'Идти в спальню',
+      currentTexts: ['Идти в спальню', 'идти в спальню'],
+      retries: 3,
+    });
+  }
+  if (!(await existsAnyText(page, ['Идти к банкиру', 'идти к банкиру']))
+    && (await existsAnyText(page, ['В бой!', 'в бой!', 'Ударить', 'ударить']))) {
+    console.log('Assassin quest (банкир): засада у спальни (Телохранитель) -> довожу бой.');
+    await fightLoop(page);
+    await pause(page, 900, 1500);
+    await tryPerformStepOptional(page, { stepName: 'Продолжить квест', currentTexts: ['Продолжить квест', 'продолжить квест'] });
+  }
+
+  // Гейт финала - В СПАЛЬНЕ, до "Идти к банкиру": здесь ещё есть выход "В игру", а после
+  // клика уже нет. Раньше он стоял после клика (та же ошибка, что в Харчевне и Корованах).
+  if (!(await questFightHpGate(page, 'Assassin quest (банкир): финал'))) return false;
 
   // РАЗВИЛКА: только "Идти к банкиру". "Взломать сейф" проваливает задание на сегодня — не трогать.
   await performStep(page, {
@@ -6909,10 +6927,6 @@ async function progressAssassinBankerQuest(page) {
     currentTexts: ['Идти к банкиру', 'идти к банкиру'],
     retries: 3,
   });
-
-  // Финальный бой был единственным в этом квесте вообще без гейта: охранники проверялись, а
-  // банкир - нет, хотя к нему приходишь уже потрёпанным после трёх боёв с охраной.
-  if (!(await questFightHpGate(page, 'Assassin quest (банкир): финал'))) return false;
 
   console.log('Assassin quest (банкир): финальный бой с банкиром');
   await fightLoop(page);
