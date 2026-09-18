@@ -6281,7 +6281,14 @@ async function castFishingRodAndDetectCatch(page) {
   // приходите завтра" вместо кнопки "Забросить удочку". Наш счётчик может ещё показывать <6 (лимит
   // считается на сервере), поэтому выставляем его в лимит, чтобы canRunFishingNow больше не гонял
   // на рыбалку, и выходим чисто — без ошибки и общего бэкоффа "Retry after N min".
-  const afterRodText = await getBodyText(page);
+  // 18.09.2026: экран рыбалки иногда приходит почти пустым (одно время) и дорисовывается позже —
+  // ждём до 8 с, пока появится одно из известных состояний, иначе performStep перезагрузит
+  // location.php и потеряет экран.
+  let afterRodText = await getBodyText(page);
+  for (let i = 0; i < 16 && !/Забросить удочку|Ждать|выловили\s+всю\s+рыбу/i.test(afterRodText); i++) {
+    await page.waitForTimeout(500);
+    afterRodText = await getBodyText(page);
+  }
   if (/выловили\s+всю\s+рыбу/i.test(afterRodText)) {
     console.log('Рыбалка: на сегодня рыба закончилась ("выловили всю рыбу") -> отмечаю лимит и выхожу');
     syncFishingDayState();
