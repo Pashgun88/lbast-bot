@@ -6268,14 +6268,18 @@ async function leaveFishingResultToGame(page) {
 // afterward — the caller decides where to go next (В игру, or Кулак хаоса during recovery).
 // Экран ожидания поклёва: "Подождем еще <nobr id=pbar>N</nobr> сек" + ссылка "Ждать" (go=1).
 // Ждём отсчёт и подсекаем; если экран повторился (рано или новый отсчёт) — до 3 раз.
+// Живой прогон 18.09.2026: после подсечки бывает ещё экран "Что-то не клюет, но вы же терпеливый
+// рыбак, подождем… Ждать" без отсчёта — жмём "Ждать", пока он есть (до 8 раз), без отсчёта ждём 3 с.
 async function finishFishingBiteWait(page) {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 8; i++) {
     const text = await getBodyText(page);
+    if (/вытаскиваете из воды/i.test(text)) return;
     const mm = text.match(/Подождем еще\s*(\d+)\s*сек/i);
-    if (!mm && !/подсекай/i.test(text)) return;
-    const secs = mm ? Number(mm[1]) : 0;
-    console.log(`Рыбалка: жду поклёва ${secs} сек, потом подсекаю.`);
-    await page.waitForTimeout((secs + 1) * 1000);
+    const waitingScreen = mm || /подсекай|не клюет|подождем/i.test(text);
+    if (!waitingScreen) return;
+    const secs = mm ? Number(mm[1]) + 1 : 3;
+    console.log(`Рыбалка: жду поклёва ${secs} сек, потом "Ждать" (${i + 1}/8).`);
+    await page.waitForTimeout(secs * 1000);
     const href = await page.evaluate(() => {
       const a = Array.from(document.querySelectorAll('a')).find((x) => /^Ждать$/i.test((x.innerText || '').trim()));
       return a ? a.getAttribute('href') : null;
