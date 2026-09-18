@@ -39,3 +39,4 @@ Thumbs.db
 # AI__ chat outbox (lines Claude queues for the driver to post)
 ai_char/chat_outbox.json
 ai_char/guides/*.progress
+ai_char/guides/guides_state.json

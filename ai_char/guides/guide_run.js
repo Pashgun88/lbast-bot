@@ -1,4 +1,6 @@
-// Guide runner: node guide_run.js <steps.txt> [fromIndex]
+// Guide runner. CLI: node guide_run.js <steps.txt> [fromIndex]
+// Library: const { runGuide } = require('./guide_run'); await runGuide(page, file, from?)
+//   -> { status: 'done'|'stop'|'mismatch'|'lost'|'nofight'|'error', index }
 // Step file lines:
 //   # comment            ignored
 //   @city N              fastway to city N (1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак, 8 Девтаун, 9 Дорожный крест)
@@ -11,15 +13,10 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const m = require('../module');
-const FILE = process.argv[2];
-const PROG = FILE + '.progress';
 const HP_GATE = Number(process.env.HP_GATE || 0.7);
 const LETTERS = process.env.LETTERS !== '0';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) => String(s || '').replace(/^[\s\-–—]+/, '').replace(/[«»"'.,!?…:;()]/g, '').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
-
-const steps = fs.readFileSync(FILE, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-let from = process.argv[3] !== undefined ? Number(process.argv[3]) : (fs.existsSync(PROG) ? Number(fs.readFileSync(PROG, 'utf8')) : 0);
 
 const links = (page) => page.evaluate(() => Array.from(document.querySelectorAll('a')).map((a) => ({ t: (a.innerText || '').trim().replace(/\s+/g, ' '), h: a.getAttribute('href') || '' })).filter((x) => x.t)).catch(() => []);
 async function dump(page, tag) {
@@ -100,11 +97,13 @@ function findLink(l, want) {
   return null;
 }
 
-(async () => {
-  const ctx = await chromium.launchPersistentContext('C:/lbast-bot/ai_char/chrome-profile-ai-char', { headless: false, viewport: null });
-  const page = ctx.pages()[0] || (await ctx.newPage());
+async function runGuide(page, FILE, fromArg) {
+  const PROG = FILE + '.progress';
+  const steps = fs.readFileSync(FILE, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  const from = fromArg !== undefined && fromArg !== null ? Number(fromArg) : (fs.existsSync(PROG) ? Number(fs.readFileSync(PROG, 'utf8')) : 0);
   const name = FILE.split(/[\\/]/).pop();
   let fights = 0;
+  let result = { status: 'error', index: from };
   try {
     await backToScene(page);
     for (let i = from; i < steps.length; i++) {
@@ -132,6 +131,7 @@ function findLink(l, want) {
         await dump(page, 'STOP');
         await notify(page, `${name}: остановка по плану на шаге ${i}: ${step.slice(5).trim()}`);
         fs.writeFileSync(PROG, String(i + 1));
+        result = { status: 'stop', index: i + 1 };
         break;
       } else if (step === '@fight') {
         let { t, l } = await dump(page, 'BEFORE FIGHT');
@@ -146,7 +146,7 @@ function findLink(l, want) {
           }
           ({ t, l } = await dump(page, 'FIGHT SCREEN'));
           const b = l.find((x) => /^В бой!?$/i.test(x.t)) || l.find((x) => /^Принять бой!?$/i.test(x.t)) || l.find((x) => /^Напасть/i.test(x.t));
-          if (!b && !/Ударить/.test(t)) { await dump(page, 'NO FIGHT LINK'); await notify(page, `${name}: шаг ${i} ждал бой, но кнопки боя нет. Стою.`); fs.writeFileSync(PROG, String(i)); break; }
+          if (!b && !/Ударить/.test(t)) { await dump(page, 'NO FIGHT LINK'); await notify(page, `${name}: шаг ${i} ждал бой, но кнопки боя нет. Стою.`); fs.writeFileSync(PROG, String(i)); result = { status: 'nofight', index: i }; break; }
           if (b) { await goto(page, b.h); }
           t = await m.getBodyText(page);
           if (!/Ударить/.test(t)) {
@@ -159,7 +159,7 @@ function findLink(l, want) {
         fights++;
         const s = await readHp(page);
         console.log(`>>> fight ${fights} result=${won} HP ${s && s.hp}/${s && s.max}`);
-        if (s && s.hp <= 0) { await notify(page, `${name}: бой на шаге ${i} ПРОИГРАН (HP ${s.hp}/${s.max}). Стою, жду лечения.`); fs.writeFileSync(PROG, String(i)); break; }
+        if (s && s.hp <= 0) { await notify(page, `${name}: бой на шаге ${i} ПРОИГРАН (HP ${s.hp}/${s.max}). Стою, жду лечения.`); fs.writeFileSync(PROG, String(i)); result = { status: 'lost', index: i }; break; }
         await backToScene(page);
       } else if (step.startsWith('*')) {
         // repeat-click while the link is on screen (hidden extra "Далее" screens)
@@ -189,16 +189,30 @@ function findLink(l, want) {
           console.log('>>> MISMATCH, stopping');
           if (process.env.MISMATCH_LETTERS === '1') await notify(page, `${name}: шаг ${i} «${want}» не найден. На экране: ${l.map((x) => x.t).filter((x) => !/^(Обновить|Чат|В игру|Aмулет|Амулет|Конь|Карта|Форум|Кланы|ЖГ|Галерея|Кто здесь\?|Выход|Размер текста)$/.test(x)).slice(0, 12).join(' / ')}. Стою.`);
           fs.writeFileSync(PROG, String(i));
+          result = { status: 'mismatch', index: i };
           break;
         }
         await goto(page, hit.h);
         if (/fastway|konj/.test(hit.h)) await travelWait(page);
       }
       fs.writeFileSync(PROG, String(i + 1));
-      if (i === steps.length - 1) { await dump(page, 'END'); await notify(page, `${name}: все шаги пройдены (${steps.length}), боёв ${fights}.`); }
+      if (i === steps.length - 1) { result = { status: 'done', index: steps.length }; await dump(page, 'END'); await notify(page, `${name}: все шаги пройдены (${steps.length}), боёв ${fights}.`); }
     }
   } catch (e) {
     console.log('FAILED', e.message);
   }
-  await ctx.close();
-})();
+  if (from >= steps.length) result = { status: 'done', index: steps.length };
+  return result;
+}
+
+module.exports = { runGuide };
+
+if (require.main === module) {
+  (async () => {
+    const ctx = await chromium.launchPersistentContext('C:/lbast-bot/ai_char/chrome-profile-ai-char', { headless: false, viewport: null });
+    const page = ctx.pages()[0] || (await ctx.newPage());
+    const r = await runGuide(page, process.argv[2], process.argv[3]);
+    console.log('RESULT', JSON.stringify(r));
+    await ctx.close();
+  })();
+}

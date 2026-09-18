@@ -7,6 +7,7 @@
 
 const { chromium } = require('playwright');
 const path = require('path');
+const { runGuideQuestsIfDue } = require('./guides/quests');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
 // вовсе, и AI_LOGIN/AI_PASS появлялись только если их вручную экспортировали в шелле. До сих
@@ -463,6 +464,12 @@ async function loginIfNeeded(page) {
 
       // Ордо Экзекуторс: мораль в плюс, предметы копим до 6 уровня (Паша, 18.09.2026).
       r = await runCycleStep(page, 'Ордо экзекуторс', () => runOrdoQuestsIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Повторяемые квесты по записанному маршруту гайда (Смерть ростовщика, раз в 15 дней).
+      // Паша, 18.09.2026: «это не одноразовый квест, потом заскриптуй прохождение».
+      r = await runCycleStep(page, 'Квесты по гайду', () => runGuideQuestsIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
