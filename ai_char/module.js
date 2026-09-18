@@ -6781,9 +6781,16 @@ async function ensureNoStuckResponsibleTask(page) {
     return false;
   }
   console.log('Обнаружен занятый слот "ответственного задания" -> отказываюсь, чтобы освободить.');
-  const ok = await clickByTexts(page, ['отказаться'], 'отказаться (dropquest)');
-  if (ok) await pause(page, 800, 1500);
-  return ok;
+  // По href mod=dropquest, НЕ по тексту "отказаться": в анкете рядом строка статуи славы со
+  // своим "Отказаться" (mod=statuenull), и клик по тексту 17.09.2026 уже снял бафф статуи.
+  const dropHref = await page.evaluate(() => {
+    const a = Array.from(document.querySelectorAll('a')).find((x) => (x.getAttribute('href') || '').includes('mod=dropquest'));
+    return a ? a.getAttribute('href') : null;
+  }).catch(() => null);
+  if (!dropHref) return false;
+  await page.goto(`http://lbast.ru/${dropHref.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 800, 1500);
+  return true;
 }
 
 // 15.09.2026, финальный найденный корень сегодняшних сбоев банкира: "obj=44" (Гильдия
