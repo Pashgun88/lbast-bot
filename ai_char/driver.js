@@ -19,6 +19,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 // отвечает Haiku (chat_autoreply.js) - Claude больше не нужно держать монитор над логом.
 require('./telegram_alerts').installAlertHook();
 const { handleChatTrigger } = require('./chat_autoreply');
+const chatMemory = require('./chat_memory');
 
 const {
   doScenario,
@@ -345,6 +346,8 @@ async function loginIfNeeded(page) {
       try {
         const changed = await runChatMonitorCycle(chatPage, chatRoomState);
         for (const { name, room, text, triggers } of changed) {
+          // Долгая память автоответчика: весь видимый чат комнаты (повторы отсекаются внутри).
+          try { chatMemory.ingestRoom(room, text); } catch (e) { console.log('Память чата: ошибка', e.message); }
           console.log(`\n===== CHAT UPDATE: "${name}" (room=${room}) =====`);
           console.log(text.slice(0, 1500));
           console.log('===== END CHAT UPDATE =====\n');

@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const memory = require('./chat_memory');
 
 const PROMPT_FILE = path.join(__dirname, 'chat_persona_prompt.txt');
 // Тесты кладут реплики в свой файл (AI_CHAT_OUTBOX), иначе живой драйвер отправит их в чат: 19.09.2026
@@ -132,9 +133,16 @@ function handleChatTrigger(trigger, roomText) {
     const room = Number(trigger.room || 12);
     if (!checkQuota(room)) return;
     const task = describeTrigger(trigger);
-    const user = `${task}\nКомната: ${cleanInput(trigger.roomName, 40)}. Новые сообщения сверху.\n<chat>\n${cleanInput(roomText, 1500)}\n</chat>`;
+    const nickRaw = cleanInput(trigger.nick, 30).trim();
+    // Сами сообщения чата (и реплики AI__, когда они появятся в комнате) пишет в память
+    // memory.ingestRoom из цикла чата в driver.js - здесь не дублируем.
+    const mem = memory.recall({ nick: nickRaw, room, query: `${trigger.text || ''} ${cleanInput(roomText, 400)}`, kind: 'chat' });
+    const user = `${task}\nКомната: ${cleanInput(trigger.roomName, 40)}. Новые сообщения сверху.\n`
+      + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
+      + `<chat>\n${cleanInput(roomText, 1500)}\n</chat>`;
     const res = await askModel(user);
     if (!res.ok) { console.log(`Автоответ: ошибка вызова модели (${res.err})`); return; }
+    const noteText = takeNote(res, nickRaw);
     const f = filterReply(res.text);
     if (!f.text) { console.log(`Автоответ: промолчал [${trigger.type}] (${f.reason})`); return; }
     let reply = f.text;
@@ -147,18 +155,40 @@ function handleChatTrigger(trigger, roomText) {
     appendOutbox(room, reply);
     lastReplyAt[room] = Date.now();
     repliesToday += 1;
-    console.log(`Автоответ [${trigger.type}] -> outbox room=${room}: ${reply}`);
+    console.log(`Автоответ [${trigger.type}] -> outbox room=${room}: ${reply}${noteText ? ` | заметка о ${nickRaw}: ${noteText}` : ''}`);
   }).catch((e) => console.log(`Автоответ: ошибка ${e.message}`));
 }
 
 // Ответ на письмо: возвращает текст или null. Письма Tsunami (Паша) сюда не передаются.
 async function composeLetterReply(sender, body) {
-  const user = `Тебе пришло личное письмо от игрока ${cleanInput(sender, 30)}. Ответь письмом в 1-3 предложения (до 400 символов).\n<chat>\n${cleanInput(body, 1500)}\n</chat>`;
+  const who = cleanInput(sender, 30).trim();
+  memory.remember({ kind: 'letter', nick: who, text: body });
+  const mem = memory.recall({ nick: who, query: cleanInput(body, 400), kind: 'letter' });
+  const user = `Тебе пришло личное письмо от игрока ${who}. Ответь письмом в 1-3 предложения (до 400 символов).\n`
+    + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
+    + `<chat>\n${cleanInput(body, 1500)}\n</chat>`;
   const res = await askModel(user);
   if (!res.ok) { console.log(`Автоответ: ошибка вызова модели для письма (${res.err})`); return null; }
+  const noteText = takeNote(res, who);
   const f = filterReply(res.text, { oneLine: false, max: 450 });
-  if (!f.text) { console.log(`Автоответ: письмо от ${cleanInput(sender, 30)} без ответа (${f.reason})`); return null; }
+  if (!f.text) { console.log(`Автоответ: письмо от ${who} без ответа (${f.reason})`); return null; }
+  memory.remember({ kind: 'letter', nick: 'AI__', text: f.text, self: true });
+  if (noteText) console.log(`Автоответ: заметка о ${who}: ${noteText}`);
   return f.text;
+}
+
+// Строку «ЗАМЕТКА: ...» модель пишет, когда узнала о собеседнике что-то стоящее. Вынимаем её из
+// ответа (в чат она не уходит) и кладём в долгую память о человеке.
+function takeNote(res, nick) {
+  const lines = String(res.text || '').split('\n');
+  let note = '';
+  res.text = lines.filter((l) => {
+    const m = l.match(/^\s*ЗАМЕТКА\s*:\s*(.*)$/i);
+    if (m) { note = m[1].trim(); return false; }
+    return true;
+  }).join('\n');
+  if (note && nick && !/^(нет|-|—)$/i.test(note)) memory.addNote(nick, note);
+  return note;
 }
 
 module.exports = { handleChatTrigger, composeLetterReply, cleanOutput, filterReply, addressOnce };
