@@ -42,3 +42,4 @@ ai_char/guides/*.progress
 ai_char/guides/guides_state.json
 ai_char/fishing_wait_screen.html
 ai_char/driver_live.log
+ai_char/driver_err.log
