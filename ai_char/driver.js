@@ -305,7 +305,20 @@ async function waitForHeal(page) {
     console.log(
       `HP=${stats.hpCurrent}/${stats.hpMax} -> персонаж выбыл из строя. Жду восстановления ~${waitMinutes} мин (до ${eta.toLocaleTimeString('ru-RU')}), браузер остаётся открытым.`
     );
-    await new Promise((r) => setTimeout(r, waitMinutes * 60_000));
+    // Пока восстанавливаемся - домой в Кулак и жарить рыбу, если хватает резерва (Паша, 19.09.2026:
+    // «рыбу пожарь пока восстанавливаешься»). Попытка раз в 5 минут; кухня под пределом времени.
+    const until = Date.now() + waitMinutes * 60_000;
+    let first = true;
+    while (Date.now() < until) {
+      const cur = await readLocationStats(page);
+      if (first && !/Кулак Хаоса/i.test(await getBodyText(page).catch(() => ''))) {
+        await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 8000));
+      }
+      first = false;
+      await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, cur).catch(() => {}));
+      await new Promise((r) => setTimeout(r, Math.min(5 * 60_000, Math.max(0, until - Date.now()))));
+    }
   }
 }
 

@@ -143,8 +143,16 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       } else if (step.startsWith('@heal')) {
         // heal in place to the given share of max HP (default HP_GATE) before a step that starts a fight
         const frac = Number(step.split(/\s+/)[1] || HP_GATE);
-        await healInPlace(page, frac);
+        // При висящем бое HP не восстанавливается: 19.09 «Ожерелье» ~20 мин ждало лечения перед
+        // вторым налётчиком. Бой уже на экране - лечение пропускаем.
         await backToScene(page);
+        const lh = await links(page);
+        if (lh.some((x) => /^(В бой!?|Принять бой!?)$/i.test(x.t)) || /Ударить/.test(await m.getBodyText(page))) {
+          console.log('@heal skipped: fight pending, HP does not regenerate');
+        } else {
+          await healInPlace(page, frac);
+          await backToScene(page);
+        }
       } else if (step.startsWith('@stop')) {
         await dump(page, 'STOP');
         await notify(page, `${name}: остановка по плану на шаге ${i}: ${step.slice(5).trim()}`);
@@ -163,7 +171,17 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
             await backToScene(page);
           }
           ({ t, l } = await dump(page, 'FIGHT SCREEN'));
-          const b = l.find((x) => /^В бой!?$/i.test(x.t)) || l.find((x) => /^Принять бой!?$/i.test(x.t)) || l.find((x) => /^Напасть/i.test(x.t));
+          // Перед боем бывают экраны-виньетки с одной «Далее» (Ожерелье, 19.09): листаем их, пока не
+          // появится кнопка боя. Только когда на экране ровно одна ссылка сцены и это «Далее».
+          for (let k = 0; k < 6 && !/Ударить/.test(t); k++) {
+            const scene = l.filter((x) => !/^(Обновить|Чат|В игру)$/i.test(x.t));
+            if (scene.some((x) => /^(В бой!?|Принять бой!?|Напасть.*)$/i.test(x.t))) break;
+            if (scene.length !== 1 || !/^Далее/i.test(scene[0].t)) break;
+            console.log('before fight: Далее');
+            await goto(page, scene[0].h);
+            ({ t, l } = await dump(page, 'FIGHT SCREEN'));
+          }
+          const b =l.find((x) => /^В бой!?$/i.test(x.t)) || l.find((x) => /^Принять бой!?$/i.test(x.t)) || l.find((x) => /^Напасть/i.test(x.t));
           if (!b && !/Ударить/.test(t)) { await dump(page, 'NO FIGHT LINK'); await notify(page, `${name}: шаг ${i} ждал бой, но кнопки боя нет. Стою.`); fs.writeFileSync(PROG, String(i)); result = { status: 'nofight', index: i }; break; }
           if (b) { await goto(page, b.h); }
           t = await m.getBodyText(page);
