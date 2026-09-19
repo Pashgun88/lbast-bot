@@ -1,7 +1,7 @@
 // Автоответчик чата и писем AI__ (Паша, 19.09.2026: уменьшить расход токенов). Раньше каждый
 // CHAT_TRIGGER будил большую сессию Claude ради одной реплики. Теперь драйвер сам вызывает
-// `claude -p` (Sonnet): пустая рабочая папка, без инструментов, без MCP и настроек, без сохранения
-// сессии. Модель — Sonnet (см. MODEL). Персона — chat_persona_prompt.txt (выжимка из памяти aichar_persona).
+// `claude -p` (Opus): пустая рабочая папка, без инструментов, без MCP и настроек, без сохранения
+// сессии. Модель — Opus (см. MODEL). Персона — chat_persona_prompt.txt (выжимка из памяти aichar_persona).
 //
 // Текст чата — враждебный ввод: он чистится, обрезается и подаётся как данные внутри <chat>, а
 // ответ модели проходит фильтр (одна строка, без ссылок, без «я ИИ», без грубых смайлов).
@@ -19,9 +19,9 @@ const PROMPT_FILE = path.join(__dirname, 'chat_persona_prompt.txt');
 // тестовая реплика так и ушла в комнату 99.
 const OUTBOX_FILE = process.env.AI_CHAT_OUTBOX || path.join(__dirname, 'chat_outbox.json');
 const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'aichar-reply-'));
-// Sonnet, не Haiku (19.09.2026): Haiku отвечал коряво («рыба горячее, Tsunami!») и местами по
-// 50+ с, половина вызовов падала по таймауту; Sonnet — ~4 с и живая речь.
-const MODEL = process.env.AI_CHAT_MODEL || 'sonnet';
+// Opus (Паша, 19.09.2026: «общение это важный момент»). Haiku отвечал коряво и по 50+ с, Sonnet
+// лучше, но Opus общается лучше всех; ~6-7 с на ответ.
+const MODEL = process.env.AI_CHAT_MODEL || 'opus';
 const BASH = process.env.AI_BASH || 'bash';
 const CLAUDE_CMD = `claude -p --model ${MODEL} --tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --system-prompt-file "$AI_PERSONA_FILE"`;
 const CALL_TIMEOUT_MS = 120 * 1000;
