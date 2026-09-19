@@ -17,6 +17,15 @@ const GUIDE_QUESTS = [
     files: ['rostovshik.steps', 'rostovshik2.steps', 'rostovshik3.steps'],
     periodDays: 15,
   },
+  {
+    // Паша, 19.09.2026: «каждый день, проигрыш не страшен». Бой 2 впритык (39 HP с элем), поэтому
+    // поражение = квест на сегодня закрыт, а не пауза и продолжение с того же шага (сцена сгорает).
+    name: 'Штольни',
+    files: ['shtolni.steps'],
+    periodDays: 1,
+    lostEndsDay: true,
+    quietDone: true,
+  },
 ];
 
 function loadState() {
@@ -54,7 +63,17 @@ async function runGuideQuestIfDue(page, q) {
   for (let p = qs.part; p < q.files.length; p++) {
     const file = path.join(__dirname, q.files[p]);
     console.log(`${q.name}: часть ${p + 1}/${q.files.length} (${q.files[p]})`);
-    const r = await runGuide(page, file);
+    const r = await runGuide(page, file, undefined, { quietDone: q.quietDone });
+    if (r.status === 'lost' && q.lostEndsDay) {
+      qs.lastDone = Date.now();
+      delete qs.part;
+      delete qs.suppressedUntil;
+      st[q.name] = qs;
+      saveState(st);
+      clearProgress(q);
+      console.log(`${q.name}: бой проигран на шаге ${r.index} - на сегодня всё, завтра заново.`);
+      return true;
+    }
     if (r.status !== 'done') {
       // Не долбим: после поражения ждём лечения, после расхождения с маршрутом — человека.
       const pauseMin = r.status === 'lost' ? 30 : 180;

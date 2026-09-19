@@ -1,6 +1,7 @@
 // Guide runner. CLI: node guide_run.js <steps.txt> [fromIndex]
 // Library: const { runGuide } = require('./guide_run'); await runGuide(page, file, from?)
 //   -> { status: 'done'|'stop'|'mismatch'|'lost'|'nofight'|'error', index }
+//   opts.quietDone: не писать письмо Tsunami об успешном проходе (ежедневные квесты - только сбои)
 // Step file lines:
 //   # comment            ignored
 //   @city N              fastway to city N (1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак, 8 Девтаун, 9 Дорожный крест)
@@ -97,7 +98,7 @@ function findLink(l, want) {
   return null;
 }
 
-async function runGuide(page, FILE, fromArg) {
+async function runGuide(page, FILE, fromArg, opts = {}) {
   const PROG = FILE + '.progress';
   const steps = fs.readFileSync(FILE, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   const from = fromArg !== undefined && fromArg !== null ? Number(fromArg) : (fs.existsSync(PROG) ? Number(fs.readFileSync(PROG, 'utf8')) : 0);
@@ -217,7 +218,7 @@ async function runGuide(page, FILE, fromArg) {
         if (/fastway|konj/.test(hit.h)) await travelWait(page);
       }
       fs.writeFileSync(PROG, String(i + 1));
-      if (i === steps.length - 1) { result = { status: 'done', index: steps.length }; await dump(page, 'END'); await notify(page, `${name}: все шаги пройдены (${steps.length}), боёв ${fights}.`); }
+      if (i === steps.length - 1) { result = { status: 'done', index: steps.length }; await dump(page, 'END'); if (!opts.quietDone) await notify(page, `${name}: все шаги пройдены (${steps.length}), боёв ${fights}.`); }
     }
   } catch (e) {
     console.log('FAILED', e.message);
