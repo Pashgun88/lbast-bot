@@ -14,6 +14,7 @@ const ALERT_PATTERNS = [
   /Could not open Life Tree/,
   /CHAT_SEND_FAILED|Автоответ: (ошибка|отказ)/,
   /already in use/,
+  /^Зависание:/,
 ];
 const IGNORE_PATTERNS = [
   /Cycle error: page\.goto: Timeout/,
@@ -64,24 +65,34 @@ function alertIfNeeded(line) {
 
 // Перехватывает console.log драйвера: каждая строка проверяется по ALERT_PATTERNS. Плюс сторож:
 // если лог молчит дольше stallMs - драйвер завис (раньше это ловил только монитор Claude).
-function installAlertHook({ stallMs = 15 * 60 * 1000 } = {}) {
+// Строки цикла чата не считаются признаком жизни: 19.09.2026 основной цикл висел ~30 мин, а сторож
+// молчал, потому что чат писал в лог каждую минуту. Блок «CHAT UPDATE ... END CHAT UPDATE», строки
+// с отступом (текст комнаты) и служебные строки чата пропускаются.
+const CHAT_LINE_RE = /^(OK: Обновить чат|CHAT_SENT|CHAT_SEND_FAILED|Автоответ|>>> ПОРА ОТВЕТИТЬ|\s|$)/;
+function installAlertHook({ stallMs = 30 * 60 * 1000 } = {}) {
   let lastLogAt = Date.now();
   let stallReported = false;
+  let inChatBlock = false;
   const orig = console.log.bind(console);
   console.log = (...args) => {
-    lastLogAt = Date.now();
-    stallReported = false;
     orig(...args);
     try {
       const text = args.map((a) => (typeof a === 'string' ? a : String(a))).join(' ');
-      for (const l of text.split('\n')) alertIfNeeded(l.trim());
+      let progress = false;
+      for (const raw of text.split('\n')) {
+        if (/^===== CHAT UPDATE/.test(raw)) { inChatBlock = true; continue; }
+        if (/^===== END CHAT UPDATE/.test(raw)) { inChatBlock = false; continue; }
+        if (!inChatBlock && !CHAT_LINE_RE.test(raw)) progress = true;
+        alertIfNeeded(raw.trim());
+      }
+      if (progress) { lastLogAt = Date.now(); stallReported = false; }
     } catch (e) { /* оповещение не должно ронять драйвер */ }
   };
   const timer = setInterval(() => {
     const idle = Date.now() - lastLogAt;
     if (idle > stallMs && !stallReported) {
       stallReported = true;
-      sendTelegram(`лог молчит ${Math.round(idle / 60000)} мин - драйвер, похоже, завис.`).catch(() => {});
+      sendTelegram(`основной цикл молчит ${Math.round(idle / 60000)} мин (чат не в счёт) - драйвер, похоже, завис.`).catch(() => {});
     }
   }, 60 * 1000);
   timer.unref();

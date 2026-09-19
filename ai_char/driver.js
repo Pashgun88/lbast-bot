@@ -122,9 +122,28 @@ async function sleepUntilMorning(page) {
   console.log('Сон: подъём!');
 }
 
+// 19.09.2026 драйвер ~30 мин стоял в цикле лечения при полном HP (Паша: «кажется страница зависла»):
+// вызов страницы (evaluate/innerText) не вернулся, а сторож лога молчал, потому что писал чат.
+// Теперь у шагов лечения есть предел: не уложился - пишем «Зависание» (уходит в Telegram) и
+// перезагружаем вкладку.
+async function withHangGuard(page, label, ms, fn) {
+  let timer;
+  const hang = new Promise((resolve) => { timer = setTimeout(() => resolve(HANG), ms); });
+  const res = await Promise.race([fn(), hang]);
+  clearTimeout(timer);
+  if (res !== HANG) return res;
+  console.log(`Зависание: ${label} не вернулся за ${Math.round(ms / 60000)} мин - перезагружаю вкладку.`);
+  await page.goto('about:blank', { timeout: 30000 }).catch(() => {});
+  return undefined;
+}
+const HANG = Symbol('hang');
+
 async function readLocationStats(page) {
-  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  return parseStats(await getBodyText(page).catch(() => ''));
+  const st = await withHangGuard(page, 'замер HP', 3 * 60_000, async () => {
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return parseStats(await getBodyText(page).catch(() => ''));
+  });
+  return st || {};
 }
 
 // Паша, 18.09.2026: "копи, и смотри, выгоднее всего если кож будет равное количество" (кожи
@@ -173,14 +192,18 @@ async function runFarmSession(page) {
       }
       console.log(`Фарм-сессия: HP ${st.hpCurrent}/${st.hpMax} -> лечусь в Кулаке Хаоса до ${Math.round(FARM_HEAL_TARGET * 100)}%.`);
       // Жарить сразу по приходу, не дожидаясь первого замера через 2 минуты (Паша, 19.09.2026).
-      await fryFishWhileHealing(page, await readLocationStats(page)).catch(() => {});
+      const firstSt = await readLocationStats(page);
+      await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, firstSt).catch(() => {}));
+      let lastHealLog = Date.now();
       for (;;) {
         await new Promise((r) => setTimeout(r, 120_000));
         const h = await readLocationStats(page);
         if (typeof h.hpCurrent !== 'number') break;
         if (h.hpCurrent >= h.hpMax * FARM_HEAL_TARGET || Date.now() >= deadline || isSleepTime()) break;
+        // признак жизни для сторожа лога (строки чата он не считает)
+        if (Date.now() - lastHealLog >= 10 * 60_000) { lastHealLog = Date.now(); console.log(`Лечение: HP ${h.hpCurrent}/${h.hpMax}.`); }
         // Пока лечимся - жарим рыбу на кухне в доме, если резерв полный (Паша, 19.09.2026).
-        await fryFishWhileHealing(page, h).catch(() => {});
+        await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, h).catch(() => {}));
       }
       continue;
     }
