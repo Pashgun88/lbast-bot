@@ -17,7 +17,7 @@ const m = require('../module');
 const HP_GATE = Number(process.env.HP_GATE || 0.7);
 const LETTERS = process.env.LETTERS !== '0';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const norm = (s) => String(s || '').replace(/^[\s\-–—]+/, '').replace(/[«»"'.,!?…:;()]/g, '').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
+const norm = (s) => String(s || '').replace(/^[\s\-–—*•]+/, '').replace(/[«»"'.,!?…:;()]/g, '').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
 
 const links = (page) => page.evaluate(() => Array.from(document.querySelectorAll('a')).map((a) => ({ t: (a.innerText || '').trim().replace(/\s+/g, ' '), h: a.getAttribute('href') || '' })).filter((x) => x.t)).catch(() => []);
 async function dump(page, tag) {
