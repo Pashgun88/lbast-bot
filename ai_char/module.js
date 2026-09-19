@@ -6351,7 +6351,9 @@ async function fryFishWhileHealing(page, stats) {
         const after = parseStats(t);
         const r = typeof after.reserveMinutes === 'number' ? after.reserveMinutes : after.cooldown;
         console.log(`Кухня: поджарил рыбу (резерв был ${left}${typeof r === 'number' ? `, стал ${r}` : ''}).`);
-        left = typeof r === 'number' ? r : left - 10;
+        // Шапка кухни показывает резерв ДО списания (живьём 19.09: 30 -> «стал 30»), поэтому
+        // доверяем ей только в меньшую сторону: каждая рыба стоит 10 минут резерва.
+        left = typeof r === 'number' ? Math.min(r, left - 10) : left - 10;
         await pause(page, 600, 1200);
       } else if (/жарен\S*\s+рыб[^.]*нужно иметь|нужно иметь в инвентаре (рыб|карас)/i.test(t)) {
         kitchenOutOfFish = true;
