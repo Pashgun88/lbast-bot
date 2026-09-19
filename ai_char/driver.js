@@ -39,6 +39,7 @@ const {
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
+  runWeekdayHuntsIfDue,
   hasPendingFightQuests,
   escapeStuckSceneIfAny,
   resolvePendingFightIfAny,
@@ -532,6 +533,11 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'Дейлики по дню недели', () => runThursdayDailiesIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Среда/пятница «как у Цунами» (дух гор, гиены, варан); кабан/бизон/гарпия - в фарме ниже.
+      r = await runCycleStep(page, 'Дейлики недели (как у Цунами)', () => runWeekdayHuntsIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

@@ -8544,6 +8544,157 @@ const THURSDAY_TASK_ROUTES = [
   { re: /дом\s+в\s+тупике/i, label: 'Дом в тупике', fn: (p) => progressDeadEndHouse(p) },
 ];
 
+// ===================================================================================
+// Дейлики по дню недели «как у Цунами» (Паша, 19.09.2026: «активируй дейлики как у цунами. Все
+// идентично кроме четверга, четверг у тебя свой»). Порт EXTRA_DAILY_TASKS из origin/main
+// (daily_quests_piraty.js, fb9dea7): Вс - кабан x3 + бизон x3; Вт - гарпии x3 (уже есть,
+// runHarpyFarmRound); Ср - дух гор, гиены x2, кабан x2, бизон x2, варан x2; Пт - кабан x2, варан x2.
+// Кабан и бизон у AI__ фармятся каждый цикл по тем же маршрутам, что у Цунами, поэтому здесь только
+// то, чего в фарме нет: дух гор, гиены, варан. Маршруты взяты из кода Цунами, для AI__ вживую ещё
+// НЕ проверены. Отличия от Цунами: HP-гейт 70% перед выездом и перед каждым боем (ниже - просто
+// ждём следующего цикла), и после проигрыша цель на сегодня бросается, чтобы не умирать по кругу.
+// ===================================================================================
+const WEEKDAY_HUNT_PLAN = {
+  3: [['spirit', 1], ['hyena', 2], ['varan', 2]], // среда
+  5: [['varan', 2]],                              // пятница
+};
+const WEEKDAY_HUNT_NAMES = { spirit: 'дух гор', hyena: 'гиены', varan: 'варан' };
+const WEEKDAY_HUNT_HP_FLOOR = 0.7;
+
+function weekdayHuntState() {
+  const key = getDayKeyNow();
+  let s = persistedState.weekdayHunts;
+  if (!s || s.dayKey !== key) {
+    s = { dayKey: key, done: {}, lost: {} };
+    persistedState.weekdayHunts = s;
+  }
+  return s;
+}
+
+async function weekdayHuntHpOk(page, label) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const st = parseStats(await getBodyText(page));
+  if (typeof st.hpCurrent !== 'number' || typeof st.hpMax !== 'number' || st.hpMax <= 0) return false;
+  const ok = st.hpCurrent >= st.hpMax * WEEKDAY_HUNT_HP_FLOOR;
+  if (!ok) console.log(`Дейлик (${label}): HP ${st.hpCurrent}/${st.hpMax} ниже 70% -> в следующем цикле.`);
+  return ok;
+}
+
+async function weekdayHuntRideByHorse(page, city, firstStep) {
+  const V_PUTI = ['В пути еще', 'В пути ещё', 'В пути'];
+  await performStep(page, { stepName: 'Конь', currentTexts: ['Конь', 'конь'], nextTexts: [city], retries: 3 });
+  await performStep(page, {
+    stepName: city, currentTexts: [city], waitAfterClickMs: 7000,
+    nextTexts: [...V_PUTI, firstStep], retries: 3,
+  });
+  // Поездка бывает длинной (до Мисттоуна - пять «В пути еще»), поэтому цикл, а не один клик.
+  for (let i = 0; i < 8; i++) {
+    const t = await getBodyText(page);
+    if (new RegExp(firstStep, 'i').test(t)) break;
+    const ok = await tryPerformStepOptional(page, {
+      stepName: 'В пути', currentTexts: V_PUTI, nextTexts: [firstStep], waitForNextMs: 30000,
+    });
+    if (!ok) await page.waitForTimeout(5000);
+  }
+}
+
+// Возвращает текст кнопки, которая открывает бой на месте.
+async function weekdayHuntRoute(page, target) {
+  if (target === 'spirit') {
+    // Конь -> Горы Дарии -> запад/юг/запад/запад/север/север -> Осмотреть пещеру -> Спуститься в тоннель (бой)
+    await weekdayHuntRideByHorse(page, 'Горы Дарии', 'Запад');
+    for (const [dir, n] of [['Запад', 1], ['Юг', 2], ['Запад', 3], ['Запад', 4], ['Север', 5], ['Север', 6]]) {
+      await performStep(page, { stepName: `${dir} (${n}/6)`, currentTexts: [dir, dir.toLowerCase()], retries: 3, skipIfNextVisible: false });
+    }
+    await performStep(page, { stepName: 'Осмотреть пещеру', currentTexts: ['Осмотреть пещеру'], nextTexts: ['Спуститься в тоннель'], retries: 3 });
+    return 'Спуститься в тоннель';
+  }
+  if (target === 'hyena') {
+    // Амулет -> Таверна -> юг -> запад -> Выслеживать гиен
+    await performStep(page, { stepName: 'Амулет', currentTexts: ['Амулет', 'амулет'], nextTexts: ['Таверна'], retries: 3 });
+    await performStep(page, { stepName: 'Таверна', currentTexts: ['Таверна'], nextTexts: ['Юг'], retries: 3 });
+    await performStep(page, { stepName: 'Юг', currentTexts: ['Юг', 'юг'], nextTexts: ['Запад'], retries: 3, skipIfNextVisible: false });
+    await performStep(page, { stepName: 'Запад', currentTexts: ['Запад', 'запад'], nextTexts: ['Выслеживать гиен'], retries: 3 });
+    return 'Выслеживать гиен';
+  }
+  // varan: Дорожный крест (fastway lway=9; «Амулет» текстом не кликаем - латинская A) -> юг -> Устроиться на привал
+  await page.goto(DEMON_LAKE_FASTWAY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 500, 900);
+  await performStep(page, { stepName: 'Юг', currentTexts: ['Юг', 'юг', 'Идти на юг'], nextTexts: ['Устроиться на привал'], retries: 3 });
+  return 'Устроиться на привал';
+}
+
+async function runWeekdayHuntTarget(page, target, count) {
+  const s = weekdayHuntState();
+  const name = WEEKDAY_HUNT_NAMES[target];
+  const done = s.done[target] || 0;
+  if (done >= count || s.lost[target]) return false;
+  if (!(await weekdayHuntHpOk(page, name))) return false;
+
+  console.log(`Дейлик: ${name} - выезжаю (сделано ${done}/${count}).`);
+  let fightText;
+  try {
+    fightText = await weekdayHuntRoute(page, target);
+  } catch (e) {
+    console.log(`Дейлик: ${name} - маршрут не пройден: ${e.message}`);
+    s.lost[target] = 'route';
+    saveStateToDisk(persistedState);
+    return true;
+  }
+
+  for (let i = done; i < count; i++) {
+    const st = parseStats(await getBodyText(page));
+    if (typeof st.hpCurrent === 'number' && typeof st.hpMax === 'number' && st.hpCurrent < st.hpMax * WEEKDAY_HUNT_HP_FLOOR) {
+      console.log(`Дейлик (${name}): HP ${st.hpCurrent}/${st.hpMax} ниже 70% перед боем ${i + 1}/${count} -> доделаю в следующем цикле.`);
+      break;
+    }
+    const hpBefore = st.hpCurrent;
+    await performStep(page, { stepName: `${fightText} (${i + 1}/${count})`, currentTexts: [fightText, fightText.toLowerCase()], retries: 3 });
+    let won;
+    try {
+      won = await fightLoop(page);
+    } catch (e) {
+      const waitMinutes = parseCooldownError(e);
+      if (waitMinutes !== null) {
+        console.log(`Дейлик (${name}): цель на кулдауне (${waitMinutes} мин, сделано ${i}/${count}) -> в следующем цикле.`);
+        await clickByTexts(page, ['Назад', 'назад'], 'Назад').catch(() => {});
+        break;
+      }
+      console.log(`Дейлик (${name}): ошибка боя: ${e.message}`);
+      won = null;
+    }
+    const after = parseStats(await getBodyText(page));
+    console.log(`Дейлик: ${name} бой ${i + 1}/${count} result=${won} HP ${hpBefore}->${after.hpCurrent}`);
+    if (won === false || (typeof after.hpCurrent === 'number' && after.hpCurrent <= 0)) {
+      console.log(`Дейлик: ${name} - проиграл, на сегодня эту цель бросаю.`);
+      s.lost[target] = 'lost';
+      saveStateToDisk(persistedState);
+      break;
+    }
+    s.done[target] = i + 1;
+    saveStateToDisk(persistedState);
+    await pause(page, 800, 1400);
+  }
+
+  if (await existsAnyText(page, ['В игру'])) {
+    await clickByTexts(page, ['В игру'], 'В игру').catch(() => {});
+    await pause(page, 800, 1600);
+  }
+  return true;
+}
+
+// По одной цели за вызов, как четверг: не занимать драйвер надолго.
+async function runWeekdayHuntsIfDue(page) {
+  const plan = WEEKDAY_HUNT_PLAN[getWeekday()];
+  if (!plan) return false;
+  for (const [target, count] of plan) {
+    const s = weekdayHuntState();
+    if ((s.done[target] || 0) >= count || s.lost[target]) continue;
+    return runWeekdayHuntTarget(page, target, count);
+  }
+  return false;
+}
+
 async function runThursdayDailiesIfAvailable(page) {
   if (getWeekday() !== THURSDAY_WEEKDAY) {
     return false; // сегодня не четверг - этих дейликов просто нет
@@ -10378,6 +10529,7 @@ module.exports = {
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
+  runWeekdayHuntsIfDue,
   hasPendingFightQuests,
   resolvePendingFightIfAny,
   runFishingIfDue,
