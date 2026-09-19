@@ -6266,6 +6266,42 @@ async function leaveFishingResultToGame(page) {
 
 // Assumes we're already at the fishing spot ("Рыбачить" visible). Does NOT navigate away
 // afterward — the caller decides where to go next (В игру, or Кулак хаоса during recovery).
+// ===================================================================================
+// Кухня в доме (Кулак Хаоса). Паша, 19.09.2026: «купил кухню, теперь можешь заходить в свой дом
+// и жарить рыбу пока восстанавливаешься, 1 рыба - 10 минут резерва, жарь так чтобы не в ущерб
+// фарму». Жареная рыба стоит 48 дин против 2 у сырого карася.
+// ВНИМАНИЕ: GET на flag=kuchnya сразу жарит одну рыбу (проверено: «посмотреть» кухню = пожарить).
+// Поэтому вызывается только отсюда и только при полном резерве: после жарки остаётся 20 минут.
+// ===================================================================================
+const HOUSE_ID = 34309;
+const KITCHEN_URL = `http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}&flag=kuchnya`;
+const FRY_MIN_RESERVE = Number(process.env.AI_FRY_MIN_RESERVE || 30);
+let kitchenOutOfFish = false;
+
+async function fryFishWhileHealing(page, stats) {
+  const reserve = stats && (typeof stats.reserveMinutes === 'number' ? stats.reserveMinutes : stats.cooldown);
+  if (typeof reserve !== 'number' || reserve < FRY_MIN_RESERVE) return false;
+  if (kitchenOutOfFish) return false;
+  let fried = false;
+  try {
+    await page.goto(KITCHEN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const t = await getBodyText(page);
+    if (/поджарили/i.test(t)) {
+      fried = true;
+      console.log(`Кухня: поджарил рыбу (резерв был ${reserve}).`);
+    } else if (/жарен\S*\s+рыб[^.]*нужно иметь|нужно иметь в инвентаре (рыб|карас)/i.test(t)) {
+      kitchenOutOfFish = true;
+      console.log('Кухня: сырой рыбы нет -> не жарю до следующего улова.');
+    } else {
+      console.log(`Кухня: не получилось: "${snapshotText(t, 200)}"`);
+    }
+  } catch (e) {
+    console.log('Кухня: ошибка', e.message);
+  }
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return fried;
+}
+
 // Экран ожидания поклёва: "Подождем еще <nobr id=pbar>N</nobr> сек" + ссылка "Ждать" (go=1).
 // Ждём отсчёт и подсекаем; если экран повторился (рано или новый отсчёт) — до 3 раз.
 // Живой прогон 18.09.2026: после подсечки бывает ещё экран "Что-то не клюет, но вы же терпеливый
@@ -6354,6 +6390,7 @@ async function castFishingRodAndDetectCatch(page) {
   if (caught) {
     syncFishingDayState();
     fishingCatchesToday += 1;
+    kitchenOutOfFish = false; // есть свежий карась - кухне снова есть что жарить
     persistDailyQuestState();
     console.log(`Рыбалка: поймали карася (${fishingCatchesToday}/${FISHING_DAILY_CATCH_LIMIT} today)`);
   } else {
@@ -10318,6 +10355,7 @@ module.exports = {
   hasPendingFightQuests,
   resolvePendingFightIfAny,
   runFishingIfDue,
+  fryFishWhileHealing,
   runOrdoQuestsIfAvailable,
   escapeStuckSceneIfAny,
   readDailyTasksProgress,

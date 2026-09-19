@@ -43,6 +43,7 @@ const {
   escapeStuckSceneIfAny,
   resolvePendingFightIfAny,
   runFishingIfDue,
+  fryFishWhileHealing,
   runOrdoQuestsIfAvailable,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
@@ -144,6 +145,8 @@ async function runFarmSession(page) {
         const h = await readLocationStats(page);
         if (typeof h.hpCurrent !== 'number') break;
         if (h.hpCurrent >= h.hpMax * FARM_HEAL_TARGET || Date.now() >= deadline) break;
+        // Пока лечимся - жарим рыбу на кухне в доме, если резерв полный (Паша, 19.09.2026).
+        await fryFishWhileHealing(page, h).catch(() => {});
       }
       continue;
     }
@@ -654,6 +657,7 @@ async function loginIfNeeded(page) {
             await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
           }
           console.log(`Лечение в Кулаке Хаоса: HP ${idleStats.hpCurrent}/${idleStats.hpMax} в ${new Date().toLocaleTimeString('ru-RU')}`);
+          await fryFishWhileHealing(page, idleStats).catch(() => {});
           idleMinutes = Math.min(idleMinutes, 3);
         } else {
           idleMinutes = Math.min(idleMinutes, 2);
