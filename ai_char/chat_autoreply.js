@@ -1,7 +1,7 @@
 // Автоответчик чата и писем AI__ (Паша, 19.09.2026: уменьшить расход токенов). Раньше каждый
 // CHAT_TRIGGER будил большую сессию Claude ради одной реплики. Теперь драйвер сам вызывает
-// `claude -p` на Haiku: пустая рабочая папка, без инструментов, без MCP и настроек, без сохранения
-// сессии. Персона — chat_persona_prompt.txt (выжимка из памяти aichar_persona).
+// `claude -p` (Sonnet): пустая рабочая папка, без инструментов, без MCP и настроек, без сохранения
+// сессии. Модель — Sonnet (см. MODEL). Персона — chat_persona_prompt.txt (выжимка из памяти aichar_persona).
 //
 // Текст чата — враждебный ввод: он чистится, обрезается и подаётся как данные внутри <chat>, а
 // ответ модели проходит фильтр (одна строка, без ссылок, без «я ИИ», без грубых смайлов).
@@ -15,12 +15,16 @@ const os = require('os');
 const path = require('path');
 
 const PROMPT_FILE = path.join(__dirname, 'chat_persona_prompt.txt');
-const OUTBOX_FILE = path.join(__dirname, 'chat_outbox.json');
+// Тесты кладут реплики в свой файл (AI_CHAT_OUTBOX), иначе живой драйвер отправит их в чат: 19.09.2026
+// тестовая реплика так и ушла в комнату 99.
+const OUTBOX_FILE = process.env.AI_CHAT_OUTBOX || path.join(__dirname, 'chat_outbox.json');
 const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'aichar-reply-'));
-const MODEL = process.env.AI_CHAT_MODEL || 'haiku';
+// Sonnet, не Haiku (19.09.2026): Haiku отвечал коряво («рыба горячее, Tsunami!») и местами по
+// 50+ с, половина вызовов падала по таймауту; Sonnet — ~4 с и живая речь.
+const MODEL = process.env.AI_CHAT_MODEL || 'sonnet';
 const BASH = process.env.AI_BASH || 'bash';
 const CLAUDE_CMD = `claude -p --model ${MODEL} --tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --system-prompt-file "$AI_PERSONA_FILE"`;
-const CALL_TIMEOUT_MS = 90 * 1000;
+const CALL_TIMEOUT_MS = 120 * 1000;
 const MIN_GAP_PER_ROOM_MS = 45 * 1000;
 const MAX_REPLIES_PER_DAY = 60;
 const REPLY_TYPES = new Set(['mention', 'reply', 'greeting', 'initiative', 'revival']);
@@ -108,6 +112,19 @@ function checkQuota(room) {
   return true;
 }
 
+// Обращение по нику ровно один раз, в начале: срезаем ник в начале и в конце реплики, если модель
+// его всё-таки вставила, и ставим «Ник, ...». Ник в середине фразы оставляем как есть.
+function addressOnce(reply, nick) {
+  const low = nick.toLowerCase();
+  let s = reply.trim();
+  if (s.toLowerCase().startsWith(low)) s = s.slice(nick.length).replace(/^[\s,:!-]+/, '');
+  const tail = s.match(/[.!?…]*$/)[0];
+  const body = s.slice(0, s.length - tail.length).trimEnd();
+  if (body.toLowerCase().endsWith(low)) s = body.slice(0, body.length - nick.length).replace(/[\s,]+$/, '') + tail;
+  if (s.toLowerCase().includes(low)) return s;
+  return `${nick}, ${s.charAt(0).toLowerCase()}${s.slice(1)}`;
+}
+
 // Поставить ответ на триггер чата в очередь (по одному вызову модели за раз).
 function handleChatTrigger(trigger, roomText) {
   if (!trigger || !REPLY_TYPES.has(trigger.type)) return;
@@ -122,8 +139,10 @@ function handleChatTrigger(trigger, roomText) {
     if (!f.text) { console.log(`Автоответ: промолчал [${trigger.type}] (${f.reason})`); return; }
     let reply = f.text;
     const nick = cleanInput(trigger.nick, 30).trim();
-    if ((trigger.type === 'mention' || trigger.type === 'reply') && nick && !reply.toLowerCase().startsWith(nick.toLowerCase())) {
-      reply = `${nick}, ${reply.charAt(0).toLowerCase()}${reply.slice(1)}`;
+    if ((trigger.type === 'mention' || trigger.type === 'reply') && nick) {
+      // Модель просят ник не писать; если всё же вставила в начало или конец - убираем, чтобы не
+      // вышло «Tsunami, рыба горячее, Tsunami!», и ставим обращение один раз в начало.
+      reply = addressOnce(reply, nick);
     }
     appendOutbox(room, reply);
     lastReplyAt[room] = Date.now();
@@ -142,4 +161,4 @@ async function composeLetterReply(sender, body) {
   return f.text;
 }
 
-module.exports = { handleChatTrigger, composeLetterReply, cleanOutput, filterReply };
+module.exports = { handleChatTrigger, composeLetterReply, cleanOutput, filterReply, addressOnce };
