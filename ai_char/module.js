@@ -6271,11 +6271,11 @@ async function leaveFishingResultToGame(page) {
 // и жарить рыбу пока восстанавливаешься, 1 рыба - 10 минут резерва, жарь так чтобы не в ущерб
 // фарму». Жареная рыба стоит 48 дин против 2 у сырого карася.
 // ВНИМАНИЕ: GET на flag=kuchnya сразу жарит одну рыбу (проверено: «посмотреть» кухню = пожарить).
-// Поэтому вызывается только отсюда и только при полном резерве: после жарки остаётся 20 минут.
+// Поэтому вызывается только отсюда и только при резерве от FRY_MIN_RESERVE (15).
 // ===================================================================================
 const HOUSE_ID = 34309;
 const KITCHEN_URL = `http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}&flag=kuchnya`;
-const FRY_MIN_RESERVE = Number(process.env.AI_FRY_MIN_RESERVE || 30);
+const FRY_MIN_RESERVE = Number(process.env.AI_FRY_MIN_RESERVE || 15); // Паша 19.09: 30 - это максимум резерва, жарить от 15
 let kitchenOutOfFish = false;
 
 async function fryFishWhileHealing(page, stats) {
