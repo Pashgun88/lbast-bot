@@ -6284,6 +6284,21 @@ async function fryFishWhileHealing(page, stats) {
   if (kitchenOutOfFish) return false;
   let fried = false;
   try {
+    // В дом пускают только из Форпоста («Вы находитесь не в том месте» с улицы Кулака, 19.09):
+    // улица -> «Форпост» (dom.php) -> свой дом -> кухня.
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const fortHref = await page.evaluate(() => {
+      const a = Array.from(document.querySelectorAll('a')).find((x) => /^Форпост$/i.test((x.innerText || '').trim()));
+      return a ? a.getAttribute('href') : null;
+    }).catch(() => null);
+    if (!fortHref) {
+      console.log('Кухня: нет ссылки «Форпост» (не в Кулаке?) -> не жарю.');
+      return false;
+    }
+    await page.goto(`http://lbast.ru/${fortHref.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 500, 1000);
+    await page.goto(`http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 500, 1000);
     await page.goto(KITCHEN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     const t = await getBodyText(page);
     if (/поджарили/i.test(t)) {
