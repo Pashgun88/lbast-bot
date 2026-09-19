@@ -23,6 +23,7 @@ const GUIDE_QUESTS = [
     name: 'Штольни',
     files: ['shtolni.steps'],
     periodDays: 1,
+    resetAtMidnight: true,
     lostEndsDay: true,
     quietDone: true,
   },
@@ -48,7 +49,11 @@ async function runGuideQuestIfDue(page, q) {
   if (qs.suppressedUntil && now < qs.suppressedUntil) return false;
 
   if (qs.part === undefined) {
-    if (qs.lastDone && now - qs.lastDone < q.periodDays * 86400000) return false;
+    // resetAtMidnight: квест обновляется с полуночи (Паша про Штольни, 19.09.2026), а не через сутки.
+    const localDay = (t) => new Date(t).toLocaleDateString('ru-RU');
+    if (q.resetAtMidnight) {
+      if (qs.lastDone && localDay(qs.lastDone) === localDay(now)) return false;
+    } else if (qs.lastDone && now - qs.lastDone < q.periodDays * 86400000) return false;
     if (!(await m.resetToQuestMenu(page))) return false;
     const qText = await m.getBodyText(page);
     if (!qText.includes(q.name)) return false;
@@ -95,7 +100,7 @@ async function runGuideQuestIfDue(page, q) {
   st[q.name] = qs;
   saveState(st);
   clearProgress(q);
-  console.log(`${q.name}: квест пройден по маршруту, следующий раз через ${q.periodDays} дн.`);
+  console.log(`${q.name}: квест пройден по маршруту, следующий раз ${q.resetAtMidnight ? 'после полуночи' : `через ${q.periodDays} дн.`}.`);
   return true;
 }
 
