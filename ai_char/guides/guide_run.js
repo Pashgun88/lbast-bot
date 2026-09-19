@@ -103,6 +103,7 @@ async function runGuide(page, FILE, fromArg) {
   const from = fromArg !== undefined && fromArg !== null ? Number(fromArg) : (fs.existsSync(PROG) ? Number(fs.readFileSync(PROG, 'utf8')) : 0);
   const name = FILE.split(/[\\/]/).pop();
   let fights = 0;
+  let autoLone = false;
   let result = { status: 'error', index: from };
   try {
     await backToScene(page);
@@ -116,7 +117,23 @@ async function runGuide(page, FILE, fromArg) {
         if (/Ударить/.test(t0) || l0.some((x) => /^В бой!?$/i.test(x.t))) step = '@fight';
         else { console.log('no extra fight'); fs.writeFileSync(PROG, String(i + 1)); continue; }
       }
-      if (step.startsWith('@city')) {
+      if (step === '@autolone') {
+        // Для квестов со случайными экранами-виньетками (Рыбный ресторан): если шага нет, а на экране
+        // ровно одна не-служебная ссылка, жмём её. Боевые ссылки, "Уйти" и "Отказаться" — никогда.
+        autoLone = true;
+      } else if (step.startsWith('@qinfo')) {
+        // Взять квест формально: Q -> [инфо] -> "К месту выполнения" (без этого сценарий не поднимается).
+        const qn = step.slice(6).trim();
+        await m.resetToQuestMenu(page);
+        const infoOk = await m.clickInfoForQuest(page, qn);
+        const l0 = await links(page);
+        const go = l0.find((x) => /^К месту выполнения$/i.test(x.t));
+        if (!infoOk || !go) { await dump(page, 'QINFO FAILED'); fs.writeFileSync(PROG, String(i)); result = { status: 'mismatch', index: i }; break; }
+        await goto(page, go.h);
+        await sleep(6500);
+        await goto(page, 'location.php');
+        await travelWait(page);
+      } else if (step.startsWith('@city')) {
         const n = step.split(/\s+/)[1];
         await goto(page, `location.php?mod=fastway&lway=${n}`);
         await sleep(6000);
@@ -178,8 +195,12 @@ async function runGuide(page, FILE, fromArg) {
         // Guides skip extra narrative screens: when the step is absent and "Далее" is the only way on, take it.
         for (let k = 0; !hit && k < 12; k++) {
           const real = l.filter((x) => !/^(Обновить|Чат|В игру)$/.test(x.t));
-          if (real.length !== 1 || !/^Далее$/i.test(real[0].t)) break;
-          console.log('auto Далее');
+          if (real.length !== 1) break;
+          const lone = real[0].t;
+          const isNext = /^Далее$/i.test(lone);
+          const forbidden = /^(в\s*бой!?|принять\s+бой!?|напасть|атаковать|ударить|вступить\s+в\s+бой|уйти|отказаться)/i.test(lone.replace(/^[-\s]+/, ''));
+          if (!isNext && !(autoLone && !forbidden)) break;
+          console.log(isNext ? 'auto Далее' : `auto lone link: ${lone}`);
           await goto(page, real[0].h);
           ({ l } = await dump(page, `STEP ${i} after auto Далее`));
           hit = findLink(l, want);
