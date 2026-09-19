@@ -136,7 +136,7 @@ function handleChatTrigger(trigger, roomText) {
     const nickRaw = cleanInput(trigger.nick, 30).trim();
     // Сами сообщения чата (и реплики AI__, когда они появятся в комнате) пишет в память
     // memory.ingestRoom из цикла чата в driver.js - здесь не дублируем.
-    const mem = memory.recall({ nick: nickRaw, room, query: `${trigger.text || ''} ${cleanInput(roomText, 400)}`, kind: 'chat' });
+    const mem = memory.recall({ nick: nickRaw, room, query: `${trigger.text || ''} ${cleanInput(roomText, 400)}`, kind: 'chat', loreQuery: cleanInput(trigger.text, 300) });
     const user = `${task}\nКомната: ${cleanInput(trigger.roomName, 40)}. Новые сообщения сверху.\n`
       + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
       + `<chat>\n${cleanInput(roomText, 1500)}\n</chat>`;
