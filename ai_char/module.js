@@ -2340,6 +2340,17 @@ async function ensureLifeTreeJuiceCollected(page) {
     );
   }
 
+  // 19.09.2026: после «Все квесты» ссылка «с 0 ур.» не находилась (страница не успевала
+  // открыться), и дерево делалось 1 раз в сутки вместо 3. Инфо квеста открывается напрямую по qid=42.
+  if (!opened) {
+    try {
+      await page.goto('http://lbast.ru/pers.php?mod=questinfo&qid=42', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 600, 1200);
+      opened = await existsAnyText(page, ['К месту выполнения']);
+      if (opened) console.log('OK: Дерево жизни -> инфо по qid=42');
+    } catch (e) { /* ниже - отказ */ }
+  }
+
   if (!opened) {
     console.log('Could not open Life Tree quest entry.');
     return false;
