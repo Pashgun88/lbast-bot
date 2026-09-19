@@ -145,6 +145,8 @@ async function runFarmSession(page) {
         await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       }
       console.log(`Фарм-сессия: HP ${st.hpCurrent}/${st.hpMax} -> лечусь в Кулаке Хаоса до ${Math.round(FARM_HEAL_TARGET * 100)}%.`);
+      // Жарить сразу по приходу, не дожидаясь первого замера через 2 минуты (Паша, 19.09.2026).
+      await fryFishWhileHealing(page, await readLocationStats(page)).catch(() => {});
       for (;;) {
         await new Promise((r) => setTimeout(r, 120_000));
         const h = await readLocationStats(page);

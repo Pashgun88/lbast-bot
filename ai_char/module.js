@@ -6339,16 +6339,28 @@ async function fryFishWhileHealing(page, stats) {
     await pause(page, 500, 1000);
     await page.goto(`http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await pause(page, 500, 1000);
-    await page.goto(KITCHEN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const t = await getBodyText(page);
-    if (/поджарили/i.test(t)) {
-      fried = true;
-      console.log(`Кухня: поджарил рыбу (резерв был ${reserve}).`);
-    } else if (/жарен\S*\s+рыб[^.]*нужно иметь|нужно иметь в инвентаре (рыб|карас)/i.test(t)) {
-      kitchenOutOfFish = true;
-      console.log('Кухня: сырой рыбы нет -> не жарю до следующего улова.');
-    } else {
-      console.log(`Кухня: не получилось: "${snapshotText(t, 200)}"`);
+    // Паша, 19.09.2026 (скриншот: стоит в Кулаке с резервом 30 и не жарит): жарить подряд, пока
+    // резерв не упадёт ниже порога, а не по одной рыбе раз в 2 минуты. Уже внутри дома кухня
+    // открывается прямой ссылкой; новый резерв читается из шапки страницы кухни.
+    let left = reserve;
+    for (let n = 0; n < 3 && left >= FRY_MIN_RESERVE; n++) {
+      await page.goto(KITCHEN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      const t = await getBodyText(page);
+      if (/поджарили/i.test(t)) {
+        fried = true;
+        const after = parseStats(t);
+        const r = typeof after.reserveMinutes === 'number' ? after.reserveMinutes : after.cooldown;
+        console.log(`Кухня: поджарил рыбу (резерв был ${left}${typeof r === 'number' ? `, стал ${r}` : ''}).`);
+        left = typeof r === 'number' ? r : left - 10;
+        await pause(page, 600, 1200);
+      } else if (/жарен\S*\s+рыб[^.]*нужно иметь|нужно иметь в инвентаре (рыб|карас)/i.test(t)) {
+        kitchenOutOfFish = true;
+        console.log('Кухня: сырой рыбы нет -> не жарю до следующего улова.');
+        break;
+      } else {
+        console.log(`Кухня: не получилось: "${snapshotText(t, 200)}"`);
+        break;
+      }
     }
   } catch (e) {
     console.log('Кухня: ошибка', e.message);
