@@ -15,6 +15,10 @@ const { runGuideQuestsIfDue } = require('./guides/quests');
 // - но при смерти сессии драйвер молча выходил с кодом 1. Подключаем ДО require('./module'):
 // module.js читает process.env на этапе загрузки.
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+// Паша, 19.09.2026 (экономия токенов): нестандартные случаи драйвер сам шлёт в Telegram, а на чат
+// отвечает Haiku (chat_autoreply.js) - Claude больше не нужно держать монитор над логом.
+require('./telegram_alerts').installAlertHook();
+const { handleChatTrigger } = require('./chat_autoreply');
 
 const {
   doScenario,
@@ -352,6 +356,7 @@ async function loginIfNeeded(page) {
               console.log(`>>> ПОРА ОТВЕТИТЬ [${t.type}] "${name}": ${t.reason}`);
               if (t.text) console.log(`    ${t.nick}: ${t.text}`);
               if (Array.isArray(t.lines)) for (const l of t.lines) console.log(`    ${l}`);
+              handleChatTrigger(t, text);
             }
             console.log('');
           }

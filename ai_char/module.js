@@ -3,6 +3,8 @@
 const { chromium } = require('playwright');
 const { execSync } = require('child_process');
 const path = require('path');
+const { composeLetterReply } = require('./chat_autoreply');
+const { sendTelegram } = require('./telegram_alerts');
 const fs = require('fs');
 
 const DEBUG_SNAPSHOTS_PATH = path.join(__dirname, 'logs', 'debug_snapshots.log');
@@ -843,7 +845,33 @@ async function returnToGame(page) {
   }
 }
 
+// Автоответ на письма (Паша, 19.09.2026, экономия токенов): письма чужих игроков отвечает Haiku
+// через chat_autoreply.js, письма Tsunami (это сам Паша) пересылаются в Telegram — на них нужен
+// ответ по делу, который Haiku без знания игры дать не может.
+const LETTERS_FROM_OWNER_RE = /^tsunami$/i;
+const lettersToAnswer = [];
+
 async function handleUnreadMailIfAny(page) {
+  const handled = await handleUnreadMailIfAnyInner(page);
+  while (lettersToAnswer.length) {
+    const { sender, body } = lettersToAnswer.shift();
+    try {
+      if (LETTERS_FROM_OWNER_RE.test(sender)) {
+        await sendTelegram(`письмо от ${sender}: ${body}`);
+        continue;
+      }
+      const reply = await composeLetterReply(sender, body);
+      if (!reply) continue;
+      const ok = await replyToLetter(page, sender, reply);
+      console.log(`Автоответ на письмо ${sender}: ${ok ? 'отправлен' : 'НЕ отправлен'} - ${reply}`);
+    } catch (e) {
+      console.log(`Автоответ: ошибка ответа на письмо ${sender}: ${e.message}`);
+    }
+  }
+  return handled;
+}
+
+async function handleUnreadMailIfAnyInner(page) {
   const mailInfo = await getMailCountFromPage(page);
   const mailCount = Number(mailInfo?.count || 0);
   const sourceText = String(mailInfo?.sourceText || '');
@@ -910,6 +938,7 @@ async function handleUnreadMailIfAny(page) {
           sender: mail.sender,
           body: mail.body,
         });
+        if (mail.sender) lettersToAnswer.push({ sender: String(mail.sender), body: String(mail.body || '') });
 
         // Паша, 17.09.2026: "нужно автоответы сделать по типу как в чате, считай письмо это
         // тригер". MAIL_MESSAGE - машинный маркер для manager_bot.js, в логе он выглядит как
