@@ -111,6 +111,14 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
     for (let i = from; i < steps.length; i++) {
       let step = steps[i];
       console.log(`\n--- [${i}/${steps.length}] ${step}`);
+      // «Вам нужно отдохнуть еще N мин» - кончился резерв (19.09 «Крыша» дважды): ждём и возвращаемся в сцену.
+      for (let r = 0; r < 5; r++) {
+        const rm = (await m.getBodyText(page)).match(/отдохнуть еще (\d+) мин/i);
+        if (!rm) break;
+        console.log(`reserve: rest ${rm[1]} min`);
+        await sleep((Number(rm[1]) * 60 + 20) * 1000);
+        await backToScene(page);
+      }
       if (step === '?@fight') {
         // optional extra fight: only if a fight is on screen right now
         const t0 = await m.getBodyText(page);
