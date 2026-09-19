@@ -96,6 +96,32 @@ function hasEnoughHpForOptionalFight(stats) {
 const FARM_SESSION_MIN = Number(process.env.AI_FARM_SESSION_MIN || 60);
 const FARM_HEAL_TARGET = 0.95;
 
+// Сон с 23:00 до 05:00 (Паша, 19.09.2026: «уходи спать с 23:00 по 05:00 - солдатский сон короткий
+// но крепкий»). Во сне ни фарма, ни квестов, ни чата. Спать уходит домой, в Кулак Хаоса. Подъём в
+// 05:00 плюс 0-15 минут, чтобы не вставать секунда в секунду. Строка в лог раз в 10 минут: сторож
+// telegram_alerts иначе примет сон за зависание (лог молчит 15 мин).
+const SLEEP_FROM_HOUR = 23;
+const SLEEP_TO_HOUR = 5;
+function isSleepTime(d = new Date()) {
+  const h = d.getHours();
+  return h >= SLEEP_FROM_HOUR || h < SLEEP_TO_HOUR;
+}
+async function sleepUntilMorning(page) {
+  const wake = new Date();
+  if (wake.getHours() >= SLEEP_FROM_HOUR) wake.setDate(wake.getDate() + 1);
+  wake.setHours(SLEEP_TO_HOUR, Math.floor(Math.random() * 16), 0, 0);
+  // Висящий бой не оставляем на ночь: во сне HP не лечится, пока бой открыт.
+  await resolvePendingFightIfAny(page).catch(() => false);
+  await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const hhmm = (d) => d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  console.log(`Сон: отбой в ${hhmm(new Date())}, дома в Кулаке Хаоса; подъём в ${hhmm(wake)}.`);
+  while (Date.now() < wake.getTime()) {
+    await new Promise((r) => setTimeout(r, Math.min(10 * 60_000, Math.max(1000, wake.getTime() - Date.now()))));
+    if (Date.now() < wake.getTime()) console.log(`Сон: сплю, подъём в ${hhmm(wake)}.`);
+  }
+  console.log('Сон: подъём!');
+}
+
 async function readLocationStats(page) {
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return parseStats(await getBodyText(page).catch(() => ''));
@@ -122,7 +148,7 @@ async function runFarmSession(page) {
   let fights = 0;
   let lastMailAt = Date.now();
   console.log(`Фарм-сессия: ${FARM_SESSION_MIN} мин (до ${new Date(deadline).toLocaleTimeString('ru-RU')}).`);
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !isSleepTime()) {
     let st = await readLocationStats(page);
     if (typeof st.hpCurrent !== 'number') {
       // висящий бой или залипшая сцена - разбираем здесь же, не выходя из сессии
@@ -152,7 +178,7 @@ async function runFarmSession(page) {
         await new Promise((r) => setTimeout(r, 120_000));
         const h = await readLocationStats(page);
         if (typeof h.hpCurrent !== 'number') break;
-        if (h.hpCurrent >= h.hpMax * FARM_HEAL_TARGET || Date.now() >= deadline) break;
+        if (h.hpCurrent >= h.hpMax * FARM_HEAL_TARGET || Date.now() >= deadline || isSleepTime()) break;
         // Пока лечимся - жарим рыбу на кухне в доме, если резерв полный (Паша, 19.09.2026).
         await fryFishWhileHealing(page, h).catch(() => {});
       }
@@ -343,6 +369,8 @@ async function loginIfNeeded(page) {
   const CHAT_TICK_MS = 15_000;
   (async function runChatWatchLoop() {
     for (;;) {
+      // Во сне чат не читаем и не отвечаем (Паша, 19.09.2026: сон с 23:00 до 05:00).
+      if (isSleepTime()) { await new Promise((r) => setTimeout(r, 60_000)); continue; }
       try {
         const changed = await runChatMonitorCycle(chatPage, chatRoomState);
         for (const { name, room, text, triggers } of changed) {
@@ -380,6 +408,10 @@ async function loginIfNeeded(page) {
   let idleStreak = 0;
 
   for (let i = 1; i <= MAX_CYCLES; i++) {
+    if (isSleepTime()) {
+      await sleepUntilMorning(page).catch((e) => console.log('Сон: ошибка', e.message));
+      continue;
+    }
     console.log(`\n===== CYCLE ${i}/${MAX_CYCLES} =====`);
     let didAnything = false;
     try {
