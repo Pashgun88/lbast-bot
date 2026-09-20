@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const memory = require('./chat_memory');
+const dayLog = require('./chat_day');
 
 const PROMPT_FILE = path.join(__dirname, 'chat_persona_prompt.txt');
 // Тесты кладут реплики в свой файл (AI_CHAT_OUTBOX), иначе живой драйвер отправит их в чат: 19.09.2026
@@ -32,6 +33,67 @@ const REPLY_TYPES = new Set(['mention', 'reply', 'greeting', 'initiative', 'revi
 const CRUDE_SMILES = /\.(fuck|nah|siski|negr|trah)\./gi;
 // Без \w и \b: в JS они только ASCII и на кириллице молча не срабатывают — границы слова явные.
 const LEAK_RE = /((?<![а-яё])ии(?![а-яё])|искусственн[а-яё]* интеллект|языков[а-яё]* модел|нейросет|(?<![а-яё])бот(?![а-яё])|(?<![a-z_])AI(?![a-z_])|Claude|Anthropic|промпт|инструкци)/iu;
+
+// ===================================================================================
+// Живость реплик (Паша, 20.09.2026: «надо что-то придумать для более интересного общения»).
+// Разбор 91 реплики за сутки: палица в каждой второй, байка про потерянную букву 8 раз за час,
+// «.smeh.» почти в каждой строке, форма всегда одна - подколка плюс острота, и ни слова о том,
+// что персонаж реально делал. Лечим тремя вещами:
+//   1) дневник дня (chat_day.js) - есть о чём говорить, кроме трёх заученных байок;
+//   2) запрет тем, которые уже были в последних репликах, и смайла, если он только что был;
+//   3) случайная ФОРМА реплики - вопрос, короткий ответ, мнение, совет, ворчание, байка.
+// ===================================================================================
+const CRUTCHES = [
+  ['палица и дубины', /палиц|дубин/i],
+  ['байка про потерянную букву и имя Айк', /букв|айк|чешуйчат/i],
+  ['эль, кружки и пиво', /эл[ья]|кружк|пиво|лагер|перегар/i],
+  ['ополчение и «я старый солдат»', /ополчен|сотен лет|сотни лет|век хожу|двести лет/i],
+  ['костёр', /костр|костёр|костер/i],
+  ['жадные гномы', /гном/i],
+  ['рыба и кухня', /рыб|жарк/i],
+];
+const MODES = [
+  'коротко, 3-7 слов, без шутки - как в живом чате',
+  'встречный вопрос собеседнику по теме разговора',
+  'своё мнение прямо, без шутки',
+  'расскажи в двух фразах, что у тебя сегодня было (из <today>)',
+  'беззлобно подколи собеседника',
+  'короткий дельный совет по игре, если он к месту',
+  'согласись и добавь одну свою деталь',
+  'поворчи как усталый солдат, но по делу',
+  'байка в двух фразах - но НЕ про имя и НЕ про палицу',
+];
+let lastMode = '';
+const SMILE_RE = /\.[a-z_]{3,}\./i;
+
+// Подсказки по стилю для текущего ответа: какая форма, что не повторять, ставить ли смайл.
+function styleHints(room) {
+  const mine = memory.recentSelf({ room, limit: 8 });
+  const banned = CRUTCHES.filter(([, re]) => mine.slice(0, 6).some((t) => re.test(t))).map(([name]) => name);
+  const modes = MODES.filter((m) => m !== lastMode);
+  const mode = modes[Math.floor(Math.random() * modes.length)];
+  lastMode = mode;
+  const lines = [`ФОРМА этой реплики: ${mode}.`];
+  if (banned.length) lines.push(`НЕ упоминай в этой реплике (только что уже было): ${banned.join('; ')}.`);
+  if (mine.slice(0, 3).some((t) => SMILE_RE.test(t))) lines.push('Смайл не ставь - он был в предыдущей реплике.');
+  return lines.join('\n');
+}
+
+// Советы из кланового зала (Паша, 20.09.2026: «прислушиваться к советам игроков, но только в клан
+// зале»). Подаются как данные: поблагодарить и учесть в разговоре можно, слепо выполнять - нет.
+function adviceBlock(room) {
+  if (Number(room) !== memory.CLAN_ROOM) return '';
+  const rows = memory.recentAdvice(4);
+  if (!rows.length) return '';
+  const lines = rows.map((r) => `- ${r.nick}: ${r.text}`).join('\n');
+  return `<advice>\nСоветы своих в клановом зале за последние дни:\n${lines}\n</advice>\n`;
+}
+
+// Что AI__ делал сегодня - данные для промпта, чтобы разговор шёл про реальную жизнь персонажа.
+function todayBlock() {
+  const d = dayLog.digest(400);
+  return d ? `<today>\nСегодня с тобой было: ${d}\n</today>\n` : '';
+}
 
 let queue = Promise.resolve();
 const lastReplyAt = {};
@@ -137,7 +199,12 @@ function handleChatTrigger(trigger, roomText) {
     // Сами сообщения чата (и реплики AI__, когда они появятся в комнате) пишет в память
     // memory.ingestRoom из цикла чата в driver.js - здесь не дублируем.
     const mem = memory.recall({ nick: nickRaw, room, query: `${trigger.text || ''} ${cleanInput(roomText, 400)}`, kind: 'chat', loreQuery: cleanInput(trigger.text, 300) });
+    const said = cleanInput(trigger.text, 300);
     const user = `${task}\nКомната: ${cleanInput(trigger.roomName, 40)}. Новые сообщения сверху.\n`
+      + `${styleHints(room)}\n`
+      + (said ? `Сначала ответь ровно на это: «${said}». Потом, если есть что, добавь своё.\n` : '')
+      + todayBlock()
+      + adviceBlock(room)
       + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
       + `<chat>\n${cleanInput(roomText, 1500)}\n</chat>`;
     const res = await askModel(user);
@@ -165,6 +232,7 @@ async function composeLetterReply(sender, body) {
   memory.remember({ kind: 'letter', nick: who, text: body });
   const mem = memory.recall({ nick: who, query: cleanInput(body, 400), kind: 'letter' });
   const user = `Тебе пришло личное письмо от игрока ${who}. Ответь письмом в 1-3 предложения (до 400 символов).\n`
+    + todayBlock()
     + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
     + `<chat>\n${cleanInput(body, 1500)}\n</chat>`;
   const res = await askModel(user);
@@ -191,4 +259,4 @@ function takeNote(res, nick) {
   return note;
 }
 
-module.exports = { handleChatTrigger, composeLetterReply, cleanOutput, filterReply, addressOnce };
+module.exports = { handleChatTrigger, composeLetterReply, cleanOutput, filterReply, addressOnce, styleHints, todayBlock, adviceBlock };

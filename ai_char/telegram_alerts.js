@@ -3,6 +3,8 @@
 // Токен и чат берутся только из окружения (.env в корне, подключается в driver.js через dotenv).
 // Бот тот же, что у manager_bot.js: отправка sendMessage не мешает его getUpdates-опросу.
 
+const dayLog = require('./chat_day');
+
 const ALERT_PATTERNS = [
   /выбыл из строя|погиб/i,
   /Error:|is not defined|Cannot find module|Quest step error/,
@@ -15,6 +17,7 @@ const ALERT_PATTERNS = [
   /CHAT_SEND_FAILED|Автоответ: (ошибка|отказ)/,
   /already in use/,
   /^Зависание:/,
+  /^Совет из кланового зала/,
 ];
 const IGNORE_PATTERNS = [
   /Cycle error: page\.goto: Timeout/,
@@ -84,6 +87,8 @@ function installAlertHook({ stallMs = 30 * 60 * 1000 } = {}) {
         if (/^===== END CHAT UPDATE/.test(raw)) { inChatBlock = false; continue; }
         if (!inChatBlock && !CHAT_LINE_RE.test(raw)) progress = true;
         alertIfNeeded(raw.trim());
+        // Дневник дня для реплик в чате (chat_day.js): события берём из тех же строк лога.
+        if (!inChatBlock) { try { dayLog.noteEvent(raw); } catch (e) { /* не критично */ } }
       }
       if (progress) { lastLogAt = Date.now(); stallReported = false; }
     } catch (e) { /* оповещение не должно ронять драйвер */ }
