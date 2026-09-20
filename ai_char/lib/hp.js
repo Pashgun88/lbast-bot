@@ -9,7 +9,7 @@ module.exports = {
   getReserveMinutesSafe, waitForReserveAtLeast, waitForHpAbove, tryPerformStepOptional,
 };
 
-const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, isNoFightMode, PEACEFUL_QUESTS } = require('./state');
+const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, getFightMode, PEACEFUL_QUESTS, CHAIN_FIGHT_QUESTS } = require('./state');
 const { fixedPause, getBodyText, parseStats, pause } = require('./core');
 const { handleIncomingAttackIfAny } = require('./pvp');
 const { recoverToCity } = require('./recovery');
@@ -172,9 +172,16 @@ async function lowHpBeforeFightQuest(page, label) {
 }
 
 async function runQuestStepSafe(page, label, fn) {
-  // Режим без боёв (приказ Паши письмом 20.09.2026): из дневных квестов оставляем только мирные.
-  if (isNoFightMode() && !PEACEFUL_QUESTS.has(label) && !/^Травы/i.test(label)) {
+  // Боевой режим (приказы Паши 20.09.2026): 'none' - только мирные квесты; 'single' - всё, кроме
+  // квестов с цепочкой боёв (между ними не полечиться, там он и ложился).
+  const fightMode = getFightMode();
+  const peaceful = PEACEFUL_QUESTS.has(label) || /^Травы/i.test(label);
+  if (fightMode === 'none' && !peaceful) {
     console.log(`Quest step skip (режим без боёв): ${label}`);
+    return false;
+  }
+  if (fightMode === 'single' && !peaceful && CHAIN_FIGHT_QUESTS.has(label)) {
+    console.log(`Quest step skip (только одиночные бои): ${label}`);
     return false;
   }
   if (S.characterDownDetected) {

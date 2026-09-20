@@ -242,22 +242,31 @@ async function runFarmSession(page) {
 // в общем всё что без боя»). Включается файлом-флагом ai_char/no_fight.flag или AI_NO_FIGHT=1 -
 // файл проверяется каждый цикл, поэтому режим снимается и включается без перезапуска драйвера.
 // Мирное продолжает работать: рыбалка, травы, довольствие, дерево жизни, статуя, кухня, письма, чат.
-const { isNoFightMode } = require('./lib/state');
-const FIGHT_STEPS = new Set([
+const { getFightMode } = require('./lib/state');
+// Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
+const CHAIN_FIGHT_STEPS = new Set([
   'Шепот quest step', 'assassin quest step', 'Ордо экзекуторс', 'Квесты по гайду',
-  'demon lake quest step', 'shipwreck quest step', 'Fish Restaurant quest step', 'Fish Eye step',
+  'Fish Restaurant quest step',
+]);
+// Шаги с ОДИНОЧНЫМ ботом - разрешены в 'single' (Паша 20.09.2026: «Попробуй одиночных ботов бить»).
+const SINGLE_FIGHT_STEPS = new Set([
+  'demon lake quest step', 'shipwreck quest step', 'Fish Eye step',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)', 'Harpy hunt (вторник)',
   'Boar farm round',
-  // 'Bison farm round' здесь НЕТ намеренно: Паша 20.09.2026 - «бизона можешь попробовать побить,
-  // он слабый». Это единственный бой, разрешённый в режиме без боёв.
+  // Бизон разрешён даже в 'none' - Паша: «бизона можешь попробовать побить, он слабый».
 ]);
 let noFightLogged = false;
 
 async function runCycleStep(page, label, fn) {
-  if (FIGHT_STEPS.has(label) && isNoFightMode()) {
+  const fightMode = getFightMode();
+  const blocked = fightMode === 'none' ? (CHAIN_FIGHT_STEPS.has(label) || SINGLE_FIGHT_STEPS.has(label))
+    : fightMode === 'single' ? CHAIN_FIGHT_STEPS.has(label) : false;
+  if (blocked) {
     if (!noFightLogged) {
       noFightLogged = true;
-      console.log('Режим без боёв (приказ Паши письмом): бои и фарм пропускаю, делаю только мирное.');
+      console.log(fightMode === 'none'
+        ? 'Режим без боёв (приказ Паши): из боёв только бизон, остальное мирное.'
+        : 'Режим только одиночных боёв (Паша, после руны): цепочки боёв пропускаю.');
     }
     return { didAnything: false, ko: false };
   }
@@ -521,7 +530,7 @@ async function loginIfNeeded(page) {
       // есть незакрытые квесты с боями и HP ниже порога - лечимся сразу, дома в Кулаке, с жаркой.
       if (typeof stats.hpCurrent === 'number' && stats.hpMax > 0
         && stats.hpCurrent < stats.hpMax * OPTIONAL_FIGHT_MIN_HP_FRACTION
-        && (hasPendingFightQuests() || isNoFightMode()) && !isSleepTime()) {
+        && (hasPendingFightQuests() || getFightMode() !== 'all') && !isSleepTime()) {
         const target = Math.ceil(stats.hpMax * QUEST_HEAL_TARGET);
         console.log(`Лечение под квесты: HP ${stats.hpCurrent}/${stats.hpMax} -> до ${target} (есть квесты с боями).`);
         if (!/Кулак Хаоса/i.test(text)) {
@@ -683,7 +692,7 @@ async function loginIfNeeded(page) {
       //    ровно то, на чём Паша меня и поймал ("эти квесты не сделаны а ты на бизона пошел").
       const hpOkForFarm = hasEnoughHpForOptionalFight(stats);
       const questsPending = hasPendingFightQuests();
-      const noFight = isNoFightMode();
+      const noFight = getFightMode() === 'none';
       const farmAllowed = hpOkForFarm && !questsPending; // бизон разрешён и в режиме без боёв
       const farmAllowedFull = farmAllowed && !noFight;   // кабан и гарпия - только в обычном режиме
       if (!hpOkForFarm) {
@@ -717,7 +726,7 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       // Боевые квесты на сегодня закрыты -> длинная фарм-сессия вместо одного боя за цикл.
-      if (!hasPendingFightQuests() && process.env.AI_DISABLE_PODVALY !== '1' && !isNoFightMode()) {
+      if (!hasPendingFightQuests() && process.env.AI_DISABLE_PODVALY !== '1' && getFightMode() === 'all') {
         const farmed = await runFarmSession(page).catch((e) => {
           console.log('Фарм-сессия упала:', e.message);
           return false;

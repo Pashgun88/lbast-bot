@@ -522,25 +522,35 @@ const DEMON_LAKE_FASTWAY_URL = 'http://lbast.ru/location.php?mod=fastway&lway=9'
 const FISH_RESTAURANT_ENABLED = false;
 
 
-// Режим «без боёв» (письмо Паши 20.09.2026: «Прекрати пока, форму не вывозишь ботов, только рыбалка,
-// в общем всё что без боя»). Флаг - файл ai_char/no_fight.flag или AI_NO_FIGHT=1. Файл перечитываем
-// не чаще раза в 30 секунд, чтобы режим можно было включить и снять без перезапуска драйвера.
-// Мирные дневные квесты, которые в этом режиме РАЗРЕШЕНЫ (остальные - только с боями):
+// Боевой режим драйвера. Файл-флаг ai_char/no_fight.flag (или AI_NO_FIGHT=1) ограничивает бои:
+//   файла нет                -> 'all'    : всё как обычно;
+//   в файле слово "single"   -> 'single' : только одиночные боты (Паша 20.09.2026, после руны:
+//                                          «Попробуй одиночных ботов бить»), цепочки боёв - нет;
+//   файл есть без "single"   -> 'none'   : боёв нет вовсе, кроме бизона (первый приказ 20.09).
+// Файл перечитывается раз в 30 секунд - режим меняется без перезапуска драйвера.
 const PEACEFUL_QUESTS = new Set(['Дерево жизни', 'Довольствие', 'Еда для рыбака']);
+// Квесты, где бои идут ЦЕПОЧКОЙ (между ними не полечиться) - их держим выключенными и в 'single'.
+const CHAIN_FIGHT_QUESTS = new Set(['Штольни', 'Шепот', 'Рыбный ресторан']);
 const NO_FIGHT_FLAG_PATH = require('path').join(__dirname, '..', 'no_fight.flag');
-let noFightCache = { at: 0, on: false };
-function isNoFightMode() {
-  if (process.env.AI_NO_FIGHT === '1') return true;
+let fightModeCache = { at: 0, mode: 'all' };
+function getFightMode() {
+  if (process.env.AI_NO_FIGHT === '1') return 'none';
   const now = Date.now();
-  if (now - noFightCache.at < 30000) return noFightCache.on;
-  let on = false;
-  try { on = require('fs').existsSync(NO_FIGHT_FLAG_PATH); } catch (e) { on = false; }
-  noFightCache = { at: now, on };
-  return on;
+  if (now - fightModeCache.at < 30000) return fightModeCache.mode;
+  let mode = 'all';
+  try {
+    const fs = require('fs');
+    if (fs.existsSync(NO_FIGHT_FLAG_PATH)) {
+      mode = /single/i.test(fs.readFileSync(NO_FIGHT_FLAG_PATH, 'utf8')) ? 'single' : 'none';
+    }
+  } catch (e) { mode = 'all'; }
+  fightModeCache = { at: now, mode };
+  return mode;
 }
+function isNoFightMode() { return getFightMode() === 'none'; }
 
 module.exports = {
-  S, isNoFightMode, PEACEFUL_QUESTS, NO_FIGHT_FLAG_PATH,
+  S, isNoFightMode, getFightMode, PEACEFUL_QUESTS, CHAIN_FIGHT_QUESTS, NO_FIGHT_FLAG_PATH,
   setupWindowsConsoleUtf8, loadStateFromDisk, saveStateToDisk, getWeekday, resetHuntStateIfNewDay,
   parseCooldownError, restoreDailyQuestState, persistDailyQuestState,
   resetAssassinGuildDayIfNeeded, getDayKeyNow, getMonthKeyNow, DEBUG_SNAPSHOTS_PATH,
