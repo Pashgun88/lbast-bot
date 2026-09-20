@@ -95,6 +95,8 @@ function hasEnoughHpForOptionalFight(stats) {
 // Длина сессии - AI_FARM_SESSION_MIN (по умолчанию 60 мин, для "полдня" - 360).
 const FARM_SESSION_MIN = Number(process.env.AI_FARM_SESSION_MIN || 60);
 const FARM_HEAL_TARGET = 0.95;
+// До какого HP лечимся, когда ждут квесты с боями (порог входа в них - 70%, берём с запасом).
+const QUEST_HEAL_TARGET = 0.85;
 
 // Сон с 23:00 до 05:00 (Паша, 19.09.2026: «уходи спать с 23:00 по 05:00 - солдатский сон короткий
 // но крепкий»). Во сне ни фарма, ни квестов, ни чата. Спать уходит домой, в Кулак Хаоса. Подъём в
@@ -488,6 +490,29 @@ async function loginIfNeeded(page) {
 
       if (typeof stats.hpCurrent === 'number' && stats.hpCurrent <= 0) {
         await waitForHeal(page);
+        continue;
+      }
+
+      // 20.09.2026, Паша: «смотри сколько квестов, почему не делаются?» - почти каждый квест с боем
+      // требует 70% HP, а бои самих квестов держат HP ниже. Лечение было только в пустом цикле, а
+      // цикл не пустой (травы, довольствие, рыбалка), поэтому HP не догонялось никогда. Теперь:
+      // есть незакрытые квесты с боями и HP ниже порога - лечимся сразу, дома в Кулаке, с жаркой.
+      if (typeof stats.hpCurrent === 'number' && stats.hpMax > 0
+        && stats.hpCurrent < stats.hpMax * OPTIONAL_FIGHT_MIN_HP_FRACTION
+        && hasPendingFightQuests() && !isSleepTime()) {
+        const target = Math.ceil(stats.hpMax * QUEST_HEAL_TARGET);
+        console.log(`Лечение под квесты: HP ${stats.hpCurrent}/${stats.hpMax} -> до ${target} (есть квесты с боями).`);
+        if (!/Кулак Хаоса/i.test(text)) {
+          await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+          await new Promise((r) => setTimeout(r, 8000));
+        }
+        for (let n = 0; n < 12; n++) {
+          const h = await readLocationStats(page);
+          if (typeof h.hpCurrent !== 'number' || h.hpCurrent >= target || isSleepTime()) break;
+          await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, h).catch(() => {}));
+          console.log(`Лечение под квесты: HP ${h.hpCurrent}/${h.hpMax}.`);
+          await new Promise((r) => setTimeout(r, 120_000));
+        }
         continue;
       }
 
