@@ -399,7 +399,8 @@ async function loginIfNeeded(page) {
     headless: false, // локально можно смотреть на экран; для сервера/без монитора поставь true
     viewport: null,
   });
-  const page = context.pages()[0] || (await context.newPage());
+  let page = context.pages()[0] || (await context.newPage());
+  let gotoFails = 0; // подряд идущие зависания вкладки (см. обработку Cycle error ниже)
 
   // 18.09.2026, Паша: "у тебя автобан часто выходит, сделай задержку между кликами".
   // Паузы были разбросаны по шагам вручную, а многие переходы (page.goto, замеры HP во
@@ -767,6 +768,21 @@ async function loginIfNeeded(page) {
         new Promise((r) => setTimeout(() => r('(снимок не получен за 5 с - загрузка висит)'), 5000)),
       ]);
       console.log(`Cycle error snapshot: url=${page.url()} text=${String(snap || '(нет)').replace(/\s+/g, ' ').slice(0, 300)}`);
+      // 20.09.2026: сайт отвечал (curl 200 за 0.3 с), а вкладка висела на location.php цикл за циклом
+      // - зависает сам рендерер Chrome. Три таких цикла подряд -> пересоздаём вкладку.
+      if (/Timeout \d+ms exceeded|Target (page|closed)|crashed/i.test(e.message)) {
+        gotoFails += 1;
+        if (gotoFails >= 3) {
+          gotoFails = 0;
+          console.log('Вкладка висит третий цикл подряд - пересоздаю вкладку браузера.');
+          try {
+            const fresh = await context.newPage();
+            await page.close({ runBeforeUnload: false }).catch(() => {});
+            page = fresh;
+            await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+          } catch (e2) { console.log('Пересоздание вкладки не удалось:', e2.message); }
+        }
+      } else gotoFails = 0;
     }
 
     if (didAnything) {
