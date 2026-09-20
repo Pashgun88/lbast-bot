@@ -13,6 +13,7 @@ const {
   S, ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY, DRABAS_DAILY_LIMIT, DRABAS_INTERVAL_MS,
   FISH_EYE_DAILY_FIGHT_LIMIT, FISH_EYE_INTERVAL_MS, FISH_RESTAURANT_ENABLED,
   FISHING_ATTEMPT_COOLDOWN_MS, FISHING_DAILY_CATCH_LIMIT, getDayKeyNow, LIFE_TREE_DAILY_LIMIT,
+  getFightMode, CHAIN_FIGHT_QUESTS,
   LIFE_TREE_INTERVAL_MS,
 } = require('./state');
 const { appendDebugSnapshot, checkExclusiveQuestTimeouts, getBodyText, pause } = require('./core');
@@ -63,7 +64,13 @@ function hasPendingFightQuests() {
   // Ещё два квеста висят в Q ВСЕГДА и потому держали ферму вечно: выключенный Рыбный
   // ресторан (FISH_RESTAURANT_ENABLED) и Рыбий глаз - он повторяется каждые 25 минут и в
   // цикле всё равно идёт РАНЬШЕ фермы, когда подходит его очередь.
-  const skip = (q) => (merchantOut && /торгов/i.test(q))
+  // 20.09.2026: в режиме одиночных боёв ферма стояла, «берегу HP под квесты», а те квесты - цепочки,
+  // которые в этом режиме и не запускаются (Ордо, Штольни). Ждать их бессмысленно.
+  const mode = getFightMode();
+  if (mode === 'none') return false; // боёв нет вовсе - ферме ждать нечего (бизон идёт всегда)
+  const blockedByMode = (q) => mode === 'single'
+    && (CHAIN_FIGHT_QUESTS.has(q) || /^Ордо/i.test(q) || /Рыбный ресторан/i.test(q));
+  const skip = (q) => blockedByMode(q) || (merchantOut && /торгов/i.test(q))
     || (!FISH_RESTAURANT_ENABLED && q === 'Рыбный ресторан')
     || (q === 'Трактир «Рыбий глаз»' && !canRunFishEyeFightNow());
   return IMPLEMENTED_FIGHT_QUESTS
