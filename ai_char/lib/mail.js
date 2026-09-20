@@ -11,6 +11,7 @@ module.exports = {
 };
 
 const { composeLetterReply } = require('../chat_autoreply');
+const { noteOwnerOrder } = require('../chat_memory');
 const { sendTelegram } = require('../telegram_alerts');
 const { S, ENABLE_PVP_ALERTS } = require('./state');
 const { getBodyText, pause } = require('./core');
@@ -393,8 +394,19 @@ async function handleUnreadMailIfAny(page) {
   while (lettersToAnswer.length) {
     const { sender, body } = lettersToAnswer.shift();
     try {
+      // 20.09.2026, Паша: «если получаешь письмо от меня - реагируй, а не просто пересылай его мне
+      // же в телеграм». Письмо от Tsunami - это распоряжение: отвечаем в игре по делу (без байки),
+      // складываем в chat_memory/orders.jsonl (Claude читает его в начале сессии и делает то, что
+      // требует кода или покупок) и только уведомляем в Telegram, что письмо принято и отвечено.
       if (LETTERS_FROM_OWNER_RE.test(sender)) {
-        await sendTelegram(`письмо от ${sender}: ${body}`);
+        const order = noteOwnerOrder(sender, body);
+        const reply = await composeLetterReply(sender, body, { owner: true });
+        let ok = false;
+        if (reply) ok = await replyToLetter(page, sender, reply);
+        console.log(`Письмо от ${sender} (распоряжение): ответ ${ok ? 'отправлен' : 'НЕ отправлен'} - ${reply || 'нет'}`);
+        await sendTelegram(`письмо от ${sender} принято${ok ? ' и отвечено в игре' : ' (ответ НЕ ушёл)'}: ${body}${reply ? `
+Ответ AI__: ${reply}` : ''}`);
+        if (order) console.log(`Распоряжение Паши записано: ${order.text.slice(0, 120)}`);
         continue;
       }
       const reply = await composeLetterReply(sender, body);

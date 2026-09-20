@@ -226,12 +226,17 @@ function handleChatTrigger(trigger, roomText) {
   }).catch((e) => console.log(`Автоответ: ошибка ${e.message}`));
 }
 
-// Ответ на письмо: возвращает текст или null. Письма Tsunami (Паша) сюда не передаются.
-async function composeLetterReply(sender, body) {
+// Ответ на письмо: возвращает текст или null. owner=true - письмо от Tsunami (Паша): это
+// распоряжение командира, отвечаем по делу и без байки (20.09.2026: «если получаешь письмо от меня -
+// реагируй, а не просто пересылай его мне же в телеграм»).
+async function composeLetterReply(sender, body, { owner = false } = {}) {
   const who = cleanInput(sender, 30).trim();
   memory.remember({ kind: 'letter', nick: who, text: body });
   const mem = memory.recall({ nick: who, query: cleanInput(body, 400), kind: 'letter' });
-  const user = `Тебе пришло личное письмо от игрока ${who}. Ответь письмом в 1-3 предложения (до 400 символов).\n`
+  const task = owner
+    ? `Тебе пришло письмо от ${who} - это твой командир и старший в клане. Ответь коротко и по делу (1-3 предложения): что понял из письма, что сделаешь, и спроси, если что-то неясно. Без байки и без шуток-заглушек, лишнего не обещай.`
+    : `Тебе пришло личное письмо от игрока ${who}. Ответь письмом в 1-3 предложения (до 400 символов).`;
+  const user = `${task}\n`
     + todayBlock()
     + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
     + `<chat>\n${cleanInput(body, 1500)}\n</chat>`;
