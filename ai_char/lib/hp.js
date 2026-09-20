@@ -9,7 +9,7 @@ module.exports = {
   getReserveMinutesSafe, waitForReserveAtLeast, waitForHpAbove, tryPerformStepOptional,
 };
 
-const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR } = require('./state');
+const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, isNoFightMode, PEACEFUL_QUESTS } = require('./state');
 const { fixedPause, getBodyText, parseStats, pause } = require('./core');
 const { handleIncomingAttackIfAny } = require('./pvp');
 const { recoverToCity } = require('./recovery');
@@ -172,6 +172,11 @@ async function lowHpBeforeFightQuest(page, label) {
 }
 
 async function runQuestStepSafe(page, label, fn) {
+  // Режим без боёв (приказ Паши письмом 20.09.2026): из дневных квестов оставляем только мирные.
+  if (isNoFightMode() && !PEACEFUL_QUESTS.has(label) && !/^Травы/i.test(label)) {
+    console.log(`Quest step skip (режим без боёв): ${label}`);
+    return false;
+  }
   if (S.characterDownDetected) {
     console.log(`Quest step skip (персонаж выбыл из строя): ${label}`);
     return false;

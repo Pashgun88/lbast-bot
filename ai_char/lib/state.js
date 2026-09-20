@@ -521,8 +521,26 @@ const DEMON_LAKE_FASTWAY_URL = 'http://lbast.ru/location.php?mod=fastway&lway=9'
 // Включать только вместе с явной обработкой засады: questFightHpGate + fightLoop.
 const FISH_RESTAURANT_ENABLED = false;
 
+
+// Режим «без боёв» (письмо Паши 20.09.2026: «Прекрати пока, форму не вывозишь ботов, только рыбалка,
+// в общем всё что без боя»). Флаг - файл ai_char/no_fight.flag или AI_NO_FIGHT=1. Файл перечитываем
+// не чаще раза в 30 секунд, чтобы режим можно было включить и снять без перезапуска драйвера.
+// Мирные дневные квесты, которые в этом режиме РАЗРЕШЕНЫ (остальные - только с боями):
+const PEACEFUL_QUESTS = new Set(['Дерево жизни', 'Довольствие', 'Еда для рыбака']);
+const NO_FIGHT_FLAG_PATH = require('path').join(__dirname, '..', 'no_fight.flag');
+let noFightCache = { at: 0, on: false };
+function isNoFightMode() {
+  if (process.env.AI_NO_FIGHT === '1') return true;
+  const now = Date.now();
+  if (now - noFightCache.at < 30000) return noFightCache.on;
+  let on = false;
+  try { on = require('fs').existsSync(NO_FIGHT_FLAG_PATH); } catch (e) { on = false; }
+  noFightCache = { at: now, on };
+  return on;
+}
+
 module.exports = {
-  S,
+  S, isNoFightMode, PEACEFUL_QUESTS, NO_FIGHT_FLAG_PATH,
   setupWindowsConsoleUtf8, loadStateFromDisk, saveStateToDisk, getWeekday, resetHuntStateIfNewDay,
   parseCooldownError, restoreDailyQuestState, persistDailyQuestState,
   resetAssassinGuildDayIfNeeded, getDayKeyNow, getMonthKeyNow, DEBUG_SNAPSHOTS_PATH,

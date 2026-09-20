@@ -45,3 +45,4 @@ ai_char/driver_live.log
 ai_char/driver_err.log
 ai_char/guides/*_run.log
 ai_char/chat_memory/
+ai_char/no_fight.flag
