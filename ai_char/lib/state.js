@@ -113,7 +113,10 @@ const persistedState = loadStateFromDisk();
 //   saveStateToDisk(persistedState);
 // }
 
-const LIFE_TREE_INTERVAL_MS = 4 * 60 * 60 * 1000; // раз в 4 часа
+// Паша, 20.09.2026: «дерево жизни ты только 1 раз делал». Лимит игры - 3 раза в день, а свой
+// интервал 4 часа не давал их израсходовать (особенно при простоях). 75 минут: игра сама скажет,
+// если рано, а три подхода за день теперь укладываются даже в полдня работы.
+const LIFE_TREE_INTERVAL_MS = 75 * 60 * 1000;
 const LIFE_TREE_DAILY_LIMIT = 3; // не более 3 раз в день
 S.lastLifeTreeRunAt = 0;
 S.lifeTreeDayKey = '';
