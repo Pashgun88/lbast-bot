@@ -411,11 +411,12 @@ async function handleUnreadMailIfAny(page) {
         continue;
       }
       // 21.09.2026: Паша дал от имени AI__ объявление о продаже предметов асассинов. Письма о купле-
-      // продаже - это сделка, её ведёт Паша: пересылаем ему в Telegram, а в игре AI__ отвечает сам
-      // (без цены и обещаний, см. <affairs> в промпте).
+      // продаже - сделка, её ведёт Паша. Он: «не надо пока отвечать, давай я покажу как такие сделки
+      // проходят, как получишь письмо только мне скажи». Поэтому в игре НЕ отвечаем, только Telegram.
       if (TRADE_LETTER_RE.test(body)) {
-        await sendTelegram(`письмо про сделку от ${sender}: ${body}`);
-        console.log(`Письмо про сделку от ${sender} переслано Паше.`);
+        await sendTelegram(`письмо про сделку от ${sender} (в игре не отвечал, жду тебя): ${body}`);
+        console.log(`Письмо про сделку от ${sender} переслано Паше, в игре без ответа.`);
+        continue;
       }
       const reply = await composeLetterReply(sender, body);
       if (!reply) continue;
