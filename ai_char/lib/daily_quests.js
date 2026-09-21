@@ -273,6 +273,9 @@ function syncDrabasDayState() {
 function canRunDrabasNow() {
   syncDrabasDayState();
 
+  // Нет питомца - камни игра не даёт («Пока что вам эти камни ни к чему»), см. S.drabasNoPetUntil.
+  if (Date.now() < S.drabasNoPetUntil) return false;
+
   if (S.drabasRunsToday >= DRABAS_DAILY_LIMIT) {
     return false;
   }

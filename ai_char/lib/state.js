@@ -135,6 +135,11 @@ const DRABAS_DAILY_LIMIT = 2;
 S.lastDrabasRunAt = 0;
 S.drabasDayKey = '';
 S.drabasRunsToday = 0;
+// 21.09.2026: разведка у укротителя Лариэля (Кулак Хаоса, Рыночная площадь -> Имение укротителя).
+// Камни нужны для ментальной связи с ПИТОМЦЕМ, а питомца у AI__ нет - поэтому поиск в ущелье
+// отвечает «Пока что вам эти камни ни к чему» и шага «Напасть» на экране не бывает. Питомец
+// стоит 2000 дин (решение Паши), до него квест держать бессмысленно: ставим сутки тишины.
+S.drabasNoPetUntil = 0;
 
 // Полив винограда: каждые 8 часов.
 const VINOGRAD_INTERVAL_MS = 8 * 60 * 60 * 1000;
@@ -310,6 +315,7 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.lastDrabasRunAt)) S.lastDrabasRunAt = s.lastDrabasRunAt;
   if (typeof s.drabasDayKey === 'string') S.drabasDayKey = s.drabasDayKey;
   if (Number.isFinite(s.drabasRunsToday)) S.drabasRunsToday = s.drabasRunsToday;
+  if (Number.isFinite(s.drabasNoPetUntil)) S.drabasNoPetUntil = s.drabasNoPetUntil;
 
   if (Number.isFinite(s.lastVinogradRunAt)) S.lastVinogradRunAt = s.lastVinogradRunAt;
 
@@ -380,6 +386,7 @@ function persistDailyQuestState() {
     lastLifeTreeRunAt: S.lastLifeTreeRunAt, lifeTreeDayKey: S.lifeTreeDayKey, lifeTreeRunsToday: S.lifeTreeRunsToday,
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
+    drabasNoPetUntil: S.drabasNoPetUntil,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastStatueRunAt: S.lastStatueRunAt, nextStatueDueAt: S.nextStatueDueAt,
     shepotMonthKey: S.shepotMonthKey, shepotDoneThisMonth: S.shepotDoneThisMonth, shepotStage: S.shepotStage, shepotGauntletFightsDone: S.shepotGauntletFightsDone,
