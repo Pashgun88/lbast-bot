@@ -45,6 +45,11 @@ const prev = [OLD];
 const tMention = detectChatTriggers(ROOM, prev, [fresh('Hacky', 'AI__, ты чего молчишь?'), OLD], { quietForMs: 0, now });
 check('обращение к AI__ -> mention', tMention.some((t) => t.type === 'mention'), JSON.stringify(tMention.map((t) => t.type)));
 
+const tAik = detectChatTriggers(ROOM, prev, [fresh('Galla', 'Айк, ты куда пропал?'), OLD], { quietForMs: 0, now });
+check('прозвище «Айк» -> mention', tAik.some((t) => t.type === 'mention'), JSON.stringify(tAik.map((t) => t.type)));
+const tAikido = detectChatTriggers(ROOM, prev, [fresh('Galla', 'кто айкидо занимался?'), OLD], { quietForMs: 0, now });
+check('«айкидо» -> не нам', tAikido.length === 0, JSON.stringify(tAikido.map((t) => t.type)));
+
 const tGreet = detectChatTriggers(ROOM, prev, [fresh('Hacky', 'всем привет!'), OLD], { quietForMs: 0, now });
 // 21.09.2026, Паша: отвечать только на обращения - приветствие всем больше не повод.
 check('приветствие всем -> молчим', tGreet.length === 0, JSON.stringify(tGreet.map((t) => t.type)));

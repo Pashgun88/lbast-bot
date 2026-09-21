@@ -164,9 +164,15 @@ const CHAT_REVIVAL_MIN_MESSAGES = 2;
 // пиши что-нибудь, заводи разговор". Ночью (23:00-04:00) AI__ первым не пишет.
 // 21.09.2026: оживление комнаты (revival) выключено - отвечаем только когда обращаются.
 const CHAT_REACT_TO_ROOM = false;
+// Обращение к AI__ в тексте: ник или прозвище «Айк» (Паша, 21.09.2026: «откликайся на Айк/айк
+// тоже»), с падежами (Айка, Айку, Айком, Айке). Границы слова для кириллицы - явными классами:
+// \b в JS только ASCII. Для ника собеседника (m.nick) по-прежнему AI_SELF_NICK_RE - игрок с ником
+// вроде «Айкидо» не должен считаться нами.
+const AI_MENTION_RE = /(\bAI__\b|(^|[^а-яёА-ЯЁA-Za-z0-9_])[Аа]йк(а|у|ом|е)?(?![а-яёА-ЯЁA-Za-z0-9_]))/;
 const CHAT_INITIATIVE_QUIET_MS = 120 * 60_000;
 const CHAT_INITIATIVE_COOLDOWN_MS = 120 * 60_000;
-const CHAT_INITIATIVE_FROM_HOUR = 4;
+// 21.09.2026, Паша: «с 23 до 5 сон» - первым AI__ пишет только с 5:00 (было с 4:00).
+const CHAT_INITIATIVE_FROM_HOUR = 5;
 const CHAT_INITIATIVE_TO_HOUR = 23;
 // Сколько минут после нашей реплики чужое сообщение считается ответом нам.
 const CHAT_REPLY_WINDOW_MIN = 15;
@@ -221,7 +227,7 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   const isOurInterlocutor = (nick) => !ownAddressee || ownAddressee.toLowerCase() === String(nick).toLowerCase();
 
   for (const m of live) {
-    if (AI_SELF_NICK_RE.test(m.text)) {
+    if (AI_MENTION_RE.test(m.text)) {
       triggers.push({ ...base, type: 'mention', nick: m.nick, text: m.text,
         reason: `${m.nick} обратился к AI__` });
     // "Tsunami, и за месяц спустила..." - обращение к ДРУГОМУ нику: это не нам, даже если пришло
