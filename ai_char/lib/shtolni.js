@@ -1,4 +1,4 @@
-// Квест "Штольни" (выключен для AI__, см. SHTOLNI_ENABLED_FOR_AI).
+// Квест "Штольни" (включён 21.09.2026 с условием: должен быть Праздничный эль).
 // Выделено из ai_char/module.js (там только сборка экспорта). Изменяемое состояние - S из ./state.
 
 // Экспорт стоит ДО require: файлы lib/ вызывают друг друга по кругу, а объявления функций
@@ -20,7 +20,7 @@ const {
 const {
   clickInfoForQuest, isQuestInMenu, openQuestsMenu, parseQuestNamesFromQMenuText, resetToQuestMenu,
 } = require('./quest_menu');
-const { tryDrinkFestiveAle } = require('./recovery');
+const { tryDrinkFestiveAle, isAnyBuffAleActive } = require('./recovery');
 const {
   clickByKeywords, clickByNormalizedIncludes, clickByTexts, clickByTextsLoose, existsAnyText,
   performStep,
@@ -151,7 +151,17 @@ async function progressShtolniQuest(page) {
   // 14.09.2026 (Паша): выпить "Праздничный эль" ЗАРАНЕЕ, ещё на экране инфо-квеста, пока мы
   // не зашли в саму пещеру — раньше это делалось прямо перед первым боем, что означало
   // навигацию в inv.php посреди "сцены" подземелья и, видимо, ломало распознавание предмета.
-  await tryDrinkFestiveAle(page);
+  // 21.09.2026, Паша: «включи Штольни, но с условием что должен быть эль». Без эля в гаунтлете
+  // Штолен делать нечего (второй бой и так впритык), поэтому проверяем ДО входа: либо бафф уже
+  // висит, либо Праздничный эль выпился сейчас.
+  const aleDrunk = await tryDrinkFestiveAle(page);
+  if (!aleDrunk && !(await isAnyBuffAleActive(page))) {
+    console.log('Shtolni quest: нет Праздничного эля (и бафф не активен) -> квест не начинаю, куплю эль и вернусь.');
+    S.shtolniTakenToday = false;
+    S.shtolniFocusStartedAt = 0;
+    S.shtolniSuppressedUntil = Date.now() + 60 * 60 * 1000;
+    return false;
+  }
 
   const textBefore = await getBodyText(page);
   if (/Вы еще не выполнили другое задание/i.test(textBefore)) {

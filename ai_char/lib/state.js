@@ -74,7 +74,9 @@ const SHTOLNI_MIN_RESERVE_MINUTES = Number(process.env.AI_SHTOLNI_MIN_RESERVE ||
 // квест отключен для AI__ до дальнейших указаний. Маршрут полностью записан в
 // LESSONS_AI_CHAR.md ("Штольни — полный маршрут") на случай, если вернёмся к нему позже
 // с лучшей экипировкой/уровнем.
-const SHTOLNI_ENABLED_FOR_AI = false; // отложено до завтрашнего сброса дневных квестов (14.09.2026, по просьбе Паши)
+// 21.09.2026, Паша: «включи штольни, но с условием что должен быть эль». Без Праздничного эля
+// (или уже активного баффа) квест не начинаем - см. проверку в lib/shtolni.js.
+const SHTOLNI_ENABLED_FOR_AI = true;
 // const UGO_INTERVAL_MS = 65 * 60 * 1000; // "раз в час и 5 минут"
 // const UGO_DAILY_LIMIT = 10; // не более 10 раз в день
 // let lastUgoRunAt = 0;
@@ -541,7 +543,9 @@ const FISH_RESTAURANT_ENABLED = false;
 // Файл перечитывается раз в 30 секунд - режим меняется без перезапуска драйвера.
 const PEACEFUL_QUESTS = new Set(['Дерево жизни', 'Довольствие', 'Еда для рыбака']);
 // Квесты, где бои идут ЦЕПОЧКОЙ (между ними не полечиться) - их держим выключенными и в 'single'.
-const CHAIN_FIGHT_QUESTS = new Set(['Штольни', 'Шепот', 'Рыбный ресторан']);
+// 21.09.2026: Штольни убраны из этого списка - Паша включил их обратно с условием «должен быть эль»,
+// и решает теперь не режим боёв, а наличие эля (проверка в lib/shtolni.js).
+const CHAIN_FIGHT_QUESTS = new Set(['Шепот', 'Рыбный ресторан']);
 const NO_FIGHT_FLAG_PATH = require('path').join(__dirname, '..', 'no_fight.flag');
 let fightModeCache = { at: 0, mode: 'all' };
 function getFightMode() {

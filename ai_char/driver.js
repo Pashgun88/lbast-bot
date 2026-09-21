@@ -273,6 +273,7 @@ async function runFarmSession(page) {
 const { getFightMode } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
+const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
   'Шепот quest step', 'Квесты по гайду',
@@ -630,6 +631,11 @@ async function loginIfNeeded(page) {
 
       // 21.09.2026, Паша: раз в 3 дня продавать всю жареную рыбу в Лавке боевых ресурсов Стоунгарда.
       r = await runCycleStep(page, 'Продажа рыбы', () => sellFriedFishIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // 21.09.2026, Паша: Штольни только с элем -> держим в запасе один Праздничный эль (50 дин).
+      r = await runCycleStep(page, 'Покупка эля', () => buyFestiveAleIfNeeded(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
