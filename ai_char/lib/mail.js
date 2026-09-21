@@ -387,6 +387,7 @@ async function returnToGame(page) {
 // через chat_autoreply.js, письма Tsunami (это сам Паша) пересылаются в Telegram — на них нужен
 // ответ по делу, который Haiku без знания игры дать не может.
 const LETTERS_FROM_OWNER_RE = /^tsunami$/i;
+const TRADE_LETTER_RE = /(куп(лю|ить|ишь|ит)|прода(шь|ёшь|ешь|м|й)|почём|почем|цен[аыуе]|ч[её]тк|асас|ассас|ассы|сделк|обмен)/i;
 const lettersToAnswer = [];
 
 async function handleUnreadMailIfAny(page) {
@@ -408,6 +409,13 @@ async function handleUnreadMailIfAny(page) {
 Ответ AI__: ${reply}` : ''}`);
         if (order) console.log(`Распоряжение Паши записано: ${order.text.slice(0, 120)}`);
         continue;
+      }
+      // 21.09.2026: Паша дал от имени AI__ объявление о продаже предметов асассинов. Письма о купле-
+      // продаже - это сделка, её ведёт Паша: пересылаем ему в Telegram, а в игре AI__ отвечает сам
+      // (без цены и обещаний, см. <affairs> в промпте).
+      if (TRADE_LETTER_RE.test(body)) {
+        await sendTelegram(`письмо про сделку от ${sender}: ${body}`);
+        console.log(`Письмо про сделку от ${sender} переслано Паше.`);
       }
       const reply = await composeLetterReply(sender, body);
       if (!reply) continue;

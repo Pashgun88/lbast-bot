@@ -89,6 +89,17 @@ function adviceBlock(room) {
   return `<advice>\nСоветы своих в клановом зале за последние дни:\n${lines}\n</advice>\n`;
 }
 
+// Текущие дела персонажа (21.09.2026: Паша дал объявление о продаже предметов асассинов от имени
+// AI__). Пишет Claude в chat_memory/affairs.txt по словам Паши; без этого AI__ в чате удивлялся бы
+// собственному объявлению. Файл наш, но текст всё равно режем и чистим как любой ввод.
+function affairsBlock() {
+  let raw = '';
+  try { raw = fs.readFileSync(path.join(memory.DIR, 'affairs.txt'), 'utf8'); } catch (e) { return ''; }
+  const lines = raw.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  if (!lines.length) return '';
+  return `<affairs>\n${cleanInput(lines.join('\n'), 800)}\n</affairs>\n`;
+}
+
 // Что AI__ делал сегодня - данные для промпта, чтобы разговор шёл про реальную жизнь персонажа.
 function todayBlock() {
   const d = dayLog.digest(400);
@@ -204,6 +215,7 @@ function handleChatTrigger(trigger, roomText) {
       + `${styleHints(room)}\n`
       + (said ? `Сначала ответь ровно на это: «${said}». Потом, если есть что, добавь своё.\n` : '')
       + todayBlock()
+      + affairsBlock()
       + adviceBlock(room)
       + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
       + `<chat>\n${cleanInput(roomText, 1500)}\n</chat>`;
@@ -238,6 +250,7 @@ async function composeLetterReply(sender, body, { owner = false } = {}) {
     : `Тебе пришло личное письмо от игрока ${who}. Ответь письмом в 1-3 предложения (до 400 символов).`;
   const user = `${task}\n`
     + todayBlock()
+    + affairsBlock()
     + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
     + `<chat>\n${cleanInput(body, 1500)}\n</chat>`;
   const res = await askModel(user);
