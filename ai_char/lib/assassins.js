@@ -157,13 +157,9 @@ async function progressAssassinBankerQuest(page) {
     // унёс HP с 210ish до -15 ДАЖЕ с эликсиром (+40) применённым в процессе - обычный порог
     // 40% тут недостаточен, слишком близко к тому, что один бой реально может забрать больше
     // половины макс. HP. Порог поднят до 70% специально для этого квеста.
-    const preText = await getBodyText(page);
-    const preStats = parseStats(preText);
-    noteHpFromPageText(preText, 'банкир: перед боем');
-    const guardFrac = hpFractionForGate(preStats);
-    if (guardFrac === null || guardFrac < 0.7) {
-      const shown = guardFrac === null ? 'HP не читается ни на экране, ни по последнему замеру' : `${Math.round(guardFrac * 100)}% < 70%`;
-      console.log(`Assassin quest (банкир): HP-гейт не пройден (${shown}) -> останавливаюсь перед боем, продолжу позже ("Продолжить квест" сохранит прогресс).`);
+    // 21.09.2026: и здесь ждём HP на месте, а не уходим (уход = охрана заново, см. финал ниже).
+    if (!(await questFightHpGate(page, 'Assassin quest (банкир): охрана', 0.7, { waitForRecovery: true, maxWaitMs: 60 * 60 * 1000 }))) {
+      console.log('Assassin quest (банкир): HP не восстановилось за час на месте -> останавливаюсь.');
       return false;
     }
 
@@ -215,7 +211,10 @@ async function progressAssassinBankerQuest(page) {
 
   // Гейт финала - В СПАЛЬНЕ, до "Идти к банкиру": здесь ещё есть выход "В игру", а после
   // клика уже нет. Раньше он стоял после клика (та же ошибка, что в Харчевне и Корованах).
-  if (!(await questFightHpGate(page, 'Assassin quest (банкир): финал'))) return false;
+  // 21.09.2026, Паша: «опять после боя ты ушёл в Кулак Хаоса. Нужно в локации ожидать, так всё время
+  // телохранители будут». Уход из дома банкира сбрасывает засады - вернёшься, и их снова двое.
+  // Поэтому HP ждём ЗДЕСЬ, в спальне (замер во второй вкладке, сцену не трогаем).
+  if (!(await questFightHpGate(page, 'Assassin quest (банкир): финал', 0.7, { waitForRecovery: true, maxWaitMs: 60 * 60 * 1000 }))) return false;
 
   // РАЗВИЛКА: только "Идти к банкиру". "Взломать сейф" проваливает задание на сегодня — не трогать.
   await performStep(page, {
@@ -264,13 +263,9 @@ async function progressAssassinPaintingQuest(page) {
     }
 
     if (await existsAnyText(page, ['В бой!', 'в бой!'])) {
-      const preText = await getBodyText(page);
-      const preStats = parseStats(preText);
-      noteHpFromPageText(preText, 'картина: перед боем');
-      const frac = hpFractionForGate(preStats);
-      if (frac === null || frac < 0.7) {
-        const shown = frac === null ? 'HP не читается ни на экране, ни по последнему замеру' : `${Math.round(frac * 100)}% < 70%`;
-        console.log(`Assassin quest (картина): HP-гейт не пройден (${shown}) -> не вступаю в бой с псом, продолжу позже ("Продолжить квест" сохранит прогресс).`);
+      // 21.09.2026: как у банкира - HP ждём на месте, уход из дома заново выставляет псов.
+      if (!(await questFightHpGate(page, 'Assassin quest (картина): пёс', 0.7, { waitForRecovery: true, maxWaitMs: 60 * 60 * 1000 }))) {
+        console.log('Assassin quest (картина): HP не восстановилось за час на месте -> останавливаюсь.');
         return false;
       }
       console.log(`Assassin quest (картина): бой с боевым псом, попытка ${attempt}/${MAX_DOG_FIGHTS}`);
