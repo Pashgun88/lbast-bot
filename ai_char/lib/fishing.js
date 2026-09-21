@@ -286,6 +286,10 @@ async function runFishingTask(page) {
 
   await goRouteToFishingSpot(page);
   await castFishingRodAndDetectCatch(page);
+  // 21.09.2026, Паша: «рыбалка - ожидание всегда в кулаке хаоса, там лечение быстрее. Ты и так
+  // слабый сейчас, используй все возможности». После улова AI__ оставался у Ивового озера и ждал
+  // следующего шага (и лечения) там. Теперь сразу амулетом домой в Кулак.
+  await goToChaosByAmulet(page).catch((e) => console.log('Рыбалка: в Кулак не вернулся:', e.message));
 }
 
 // Used during critical-HP recovery (Последний дом): try the "Последний портал" shortcut first
