@@ -35,3 +35,15 @@ page_text.txt
 
 # OS
 Thumbs.db
+
+# AI__ chat outbox (lines Claude queues for the driver to post)
+ai_char/chat_outbox.json
+ai_char/guides/*.progress
+ai_char/guides/guides_state.json
+ai_char/fishing_wait_screen.html
+ai_char/driver_live.log
+ai_char/driver_err.log
+ai_char/guides/*_run.log
+ai_char/chat_memory/
+ai_char/no_fight.flag
+ai_char/shtolni_no_ale.flag

@@ -136,31 +136,6 @@ let drabasRunsToday = 0;
 const VINOGRAD_INTERVAL_MS = 8 * 60 * 60 * 1000;
 let lastVinogradRunAt = 0;
 
-// Статуя славы: раз в 12-14 часов (случайный интервал в этих пределах).
-const STATUE_MIN_INTERVAL_MINUTES = 12 * 60;
-const STATUE_MAX_INTERVAL_MINUTES = 14 * 60;
-let lastStatueRunAt = 0;
-let nextStatueDueAt = 0;
-
-// Рыбалка: не более 6 успешных уловов в день, кулдаун 2 минуты между попытками —
-// пробуем между квестами каждый цикл, пока не наловим лимит. Никогда не запускается из фарма Блейка.
-// Также используется во время восстановления в Последнем доме (см. runLastHouseRecovery).
-const FISHING_DAILY_CATCH_LIMIT = 6;
-const FISHING_ATTEMPT_COOLDOWN_MS = 2 * 60 * 1000;
-let fishingDayKey = '';
-let fishingCatchesToday = 0;
-let lastFishingAttemptAt = 0;
-
-// Порог HP, при котором можно продолжать обычные действия (квесты) или биться с Блейком —
-// используется и как условие выхода из критического восстановления в Последнем доме.
-const BLAKE_MIN_HP = 1800;
-
-// Цель фарма после квестов: 'blake' (по умолчанию) или 'goblins'. Задаётся менеджером через
-// переменную окружения FARM_TARGET при запуске сценария (кнопки "Квесты + Блейки" / "Квесты + Гоблины").
-const FARM_TARGET = String(process.env.FARM_TARGET || 'blake').toLowerCase() === 'goblins' ? 'goblins' : 'blake';
-const FARM_LABEL = FARM_TARGET === 'goblins' ? 'гоблинов' : 'Блейка';
-console.log(`Farm target: ${FARM_TARGET}`);
-
 
 // Квесты без явно указанного кулдауна: 1 раз в день (в памяти процесса).
 let tavernDayKey = '';
@@ -183,67 +158,6 @@ let fisherFoodDayKey = '';
 let fisherFoodDoneToday = false;
 let caravanRobberyDayKey = '';
 let caravanRobberyDoneToday = false;
-
-// Restore "already done today" markers from disk so a restart mid-day doesn't redo completed dailies.
-// Each quest's own dayKey check (getDayKeyNow() comparison) already discards stale data once the day rolls over.
-function restoreDailyQuestState() {
-  const s = persistedState;
-
-  if (Number.isFinite(s.lastLifeTreeRunAt)) lastLifeTreeRunAt = s.lastLifeTreeRunAt;
-  if (typeof s.lifeTreeDayKey === 'string') lifeTreeDayKey = s.lifeTreeDayKey;
-  if (Number.isFinite(s.lifeTreeRunsToday)) lifeTreeRunsToday = s.lifeTreeRunsToday;
-
-  if (Number.isFinite(s.lastFishEyeRunAt)) lastFishEyeRunAt = s.lastFishEyeRunAt;
-  if (typeof s.fishEyeDayKey === 'string') fishEyeDayKey = s.fishEyeDayKey;
-  if (Number.isFinite(s.fishEyeFightsToday)) fishEyeFightsToday = s.fishEyeFightsToday;
-  if (typeof s.fishEyeRewardClaimedToday === 'boolean') fishEyeRewardClaimedToday = s.fishEyeRewardClaimedToday;
-
-  if (Number.isFinite(s.lastDrabasRunAt)) lastDrabasRunAt = s.lastDrabasRunAt;
-  if (typeof s.drabasDayKey === 'string') drabasDayKey = s.drabasDayKey;
-  if (Number.isFinite(s.drabasRunsToday)) drabasRunsToday = s.drabasRunsToday;
-
-  if (Number.isFinite(s.lastVinogradRunAt)) lastVinogradRunAt = s.lastVinogradRunAt;
-
-  if (Number.isFinite(s.lastStatueRunAt)) lastStatueRunAt = s.lastStatueRunAt;
-  if (Number.isFinite(s.nextStatueDueAt)) nextStatueDueAt = s.nextStatueDueAt;
-
-  if (typeof s.tavernDayKey === 'string') tavernDayKey = s.tavernDayKey;
-  if (typeof s.tavernDoneToday === 'boolean') tavernDoneToday = s.tavernDoneToday;
-
-  if (typeof s.shtolniDayKey === 'string') shtolniDayKey = s.shtolniDayKey;
-  if (typeof s.shtolniDoneToday === 'boolean') shtolniDoneToday = s.shtolniDoneToday;
-
-  if (typeof s.rumaForgeDayKey === 'string') rumaForgeDayKey = s.rumaForgeDayKey;
-  if (typeof s.rumaForgeDoneToday === 'boolean') rumaForgeDoneToday = s.rumaForgeDoneToday;
-
-  if (typeof s.fisherFoodDayKey === 'string') fisherFoodDayKey = s.fisherFoodDayKey;
-  if (typeof s.fisherFoodDoneToday === 'boolean') fisherFoodDoneToday = s.fisherFoodDoneToday;
-
-  if (typeof s.caravanRobberyDayKey === 'string') caravanRobberyDayKey = s.caravanRobberyDayKey;
-  if (typeof s.caravanRobberyDoneToday === 'boolean') caravanRobberyDoneToday = s.caravanRobberyDoneToday;
-
-  if (typeof s.fishingDayKey === 'string') fishingDayKey = s.fishingDayKey;
-  if (Number.isFinite(s.fishingCatchesToday)) fishingCatchesToday = s.fishingCatchesToday;
-}
-
-restoreDailyQuestState();
-
-function persistDailyQuestState() {
-  Object.assign(persistedState, {
-    lastLifeTreeRunAt, lifeTreeDayKey, lifeTreeRunsToday,
-    lastFishEyeRunAt, fishEyeDayKey, fishEyeFightsToday, fishEyeRewardClaimedToday,
-    lastDrabasRunAt, drabasDayKey, drabasRunsToday,
-    lastVinogradRunAt,
-    lastStatueRunAt, nextStatueDueAt,
-    tavernDayKey, tavernDoneToday,
-    shtolniDayKey, shtolniDoneToday,
-    rumaForgeDayKey, rumaForgeDoneToday,
-    fisherFoodDayKey, fisherFoodDoneToday,
-    caravanRobberyDayKey, caravanRobberyDoneToday,
-    fishingDayKey, fishingCatchesToday,
-  });
-  saveStateToDisk(persistedState);
-}
 
 const EXCLUSIVE_QUEST_MAX_ACTIVE_MS = 30 * 60 * 1000; // max focus window
 const EXCLUSIVE_QUEST_ERROR_BACKOFF_MS = 15 * 60 * 1000; // pause exclusive quest after repeated errors
@@ -654,11 +568,6 @@ function getRandomCycleDelayMs() {
   return minutes * 60 * 1000;
 }
 
-function isNetworkError(e) {
-  const msg = String(e?.message || '');
-  return /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_(REFUSED|RESET|CLOSED|TIMED_OUT)|ERR_NETWORK_CHANGED|ERR_ADDRESS_UNREACHABLE|net::ERR_/.test(msg);
-}
-
 function setNextCycleDelayOverrideMinutes(minMinutes, maxMinutes) {
   const minutes = randomInt(minMinutes, maxMinutes);
   nextCycleDelayOverrideMs = minutes * 60 * 1000;
@@ -717,18 +626,6 @@ function scheduleQuestFollowup(reason) {
   console.log(`Quest follow-up scheduled: ${minutes} min (${reason})`);
 }
 
-// Планирование сна после фарма, когда цикл остановился на локации фарма.
-// Если кулдаун ушёл в минус (ресурсы для боя исчерпаны), спим случайные 17-20 минут.
-// Иначе (кулдаун ещё есть, но бой не пошёл) — обычный короткий follow-up, если был бой.
-function scheduleFarmNextCycle(stats, didFight) {
-  const cd = typeof stats?.cooldown === 'number' ? stats.cooldown : stats?.reserveMinutes;
-  if (typeof cd === 'number' && cd < 0) {
-    scheduleLongRestMinutes(randomInt(17, 20), 'farm_cooldown_recovery');
-  } else if (didFight) {
-    scheduleQuestFollowup('farm');
-  }
-}
-
 async function saveSnapshot(page, prefix = 'snapshot') {
   return;
 }
@@ -781,15 +678,6 @@ function parseStats(text) {
       plausible = candidates
         .filter((c) => c.hpMax > 0 && c.hpCurrent >= 0 && c.hpCurrent <= c.hpMax * 3)
         .sort((a, b) => b.hpMax - a.hpMax);
-    }
-
-    // Deeply negative HP is a real state (critical recovery at Последний дом can show e.g.
-    // "(-8774/3120)"), not garbage — only fall back to it once the positive-HP tiers above find
-    // nothing, so ordinary pages keep preferring a normal HP reading.
-    if (plausible.length === 0) {
-      plausible = candidates
-        .filter((c) => c.hpMax > 0 && c.hpCurrent < 0)
-        .sort((a, b) => b.hpCurrent - a.hpCurrent);
     }
 
     if (plausible.length === 0) {
@@ -1330,7 +1218,6 @@ async function progressTavernQuest(page, { initialReserveMinutes, questCount } =
       tavernTakenToday = false;
       tavernSuppressedUntil = 0;
       tavernFocusStartedAt = 0;
-      persistDailyQuestState();
       return true;
     }
   }
@@ -1558,7 +1445,7 @@ async function runDailyQuests(page, stats) {
   }
 
   if (isQQuestAllowed('Кузница Рума') && isQuestInMenu(listedQuests, 'Кузница Рума')) {
-    if (await runQuestStepSafe(page, 'Кузница Рума', () => progressRumaForgeQuest(page, { questCount }))) {
+    if (await runQuestStepSafe(page, 'Кузница Рума', () => progressRumaForgeQuest(page))) {
       didAnything = true;
     }
     await resetToQuestMenu(page, questCount);
@@ -1569,7 +1456,7 @@ async function runDailyQuests(page, stats) {
     if (typeof reserveMinutes !== 'number' || reserveMinutes < 10) {
       console.log(`Quest step skip: Еда для рыбака (need >=10 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
     } else {
-      if (await runQuestStepSafe(page, 'Еда для рыбака', () => progressFisherFoodQuest(page, { questCount }))) {
+      if (await runQuestStepSafe(page, 'Еда для рыбака', () => progressFisherFoodQuest(page))) {
         didAnything = true;
       }
     }
@@ -1651,21 +1538,6 @@ function canRunDrabasNow() {
 
   if (!lastDrabasRunAt) return true;
   return Date.now() - lastDrabasRunAt >= DRABAS_INTERVAL_MS;
-}
-
-function syncFishingDayState() {
-  const key = getDayKeyNow();
-  if (fishingDayKey !== key) {
-    fishingDayKey = key;
-    fishingCatchesToday = 0;
-  }
-}
-
-function canRunFishingNow() {
-  syncFishingDayState();
-  if (fishingCatchesToday >= FISHING_DAILY_CATCH_LIMIT) return false;
-  if (!lastFishingAttemptAt) return true;
-  return Date.now() - lastFishingAttemptAt >= FISHING_ATTEMPT_COOLDOWN_MS;
 }
 
 function canRunFishEyeFightNow() {
@@ -1756,7 +1628,6 @@ async function ensureLifeTreeJuiceCollected(page) {
     lifeTreeRunsToday = 0;
   }
   lifeTreeRunsToday += 1;
-  persistDailyQuestState();
 
   console.log(`Life Tree quest: done (${lifeTreeRunsToday}/${LIFE_TREE_DAILY_LIMIT} today)`);
   return true;
@@ -1851,48 +1722,6 @@ async function runFishEyeFight(page) {
 
   await runFishEyeRouteToArena(page);
 
-  // The arena has its own in-game cooldown ("\u0412\u044b \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u0430\u0432\u043b\u0438\u0432\u0430\u0435\u0442\u0435 \u0441\u0438\u043b\u044b. \u0412\u043e\u0437\u0432\u0440\u0430\u0449\u0430\u0439\u0442\u0435\u0441\u044c \u0447\u0435\u0440\u0435\u0437
-  // N \u043c\u0438\u043d.") independent of our internal 25-minute timer, which can drift out of sync. Detect
-  // it and reschedule cleanly instead of failing to find "\u0412 \u0431\u043e\u0439!" and erroring out.
-  const arenaText = await getBodyText(page);
-  const cooldownMatch = arenaText.match(/\u0412\u043e\u0437\u0432\u0440\u0430\u0449\u0430\u0439\u0442\u0435\u0441\u044c \u0447\u0435\u0440\u0435\u0437\s+(\d+)\s*\u043c\u0438\u043d/i);
-  if (cooldownMatch) {
-    const waitMinutes = Number(cooldownMatch[1]) || 1;
-    console.log(`Fish Eye quest: \u0430\u0440\u0435\u043d\u0430 \u0435\u0449\u0451 \u043d\u0430 \u043a\u0443\u043b\u0434\u0430\u0443\u043d\u0435 ${waitMinutes} \u043c\u0438\u043d -> \u043e\u0442\u043a\u043b\u0430\u0434\u044b\u0432\u0430\u044e \u043f\u043e\u043f\u044b\u0442\u043a\u0443`);
-    lastFishEyeRunAt = Date.now() + waitMinutes * 60 * 1000 - FISH_EYE_INTERVAL_MS;
-    persistDailyQuestState();
-    await clickByTexts(page, ['\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f', '\u0432\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f'], '\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f').catch(() => {});
-    return false;
-  }
-
-  // Another real in-game message, distinct from the per-fight cooldown above: "\u041c\u044b \u0431\u0435\u0440\u0435\u0436\u0435\u043c \u0441\u0432\u043e\u0438\u0445
-  // \u0431\u043e\u0439\u0446\u043e\u0432, \u043f\u0440\u0438\u0445\u043e\u0434\u0438 \u0437\u0430\u0432\u0442\u0440\u0430" means today's fights AND the reward claim
-  // are both already used up (our local counters drifted out of sync with the server, e.g. after a
-  // restart). Sync our counters to that reality instead of erroring out and doing an unneeded city trip.
-  const dailyLimitReached = /\u041c\u044b\s+\u0431\u0435\u0440\u0435\u0436\u0435\u043c\s+\u0441\u0432\u043e\u0438\u0445\s+\u0431\u043e\u0439\u0446\u043e\u0432/i.test(arenaText);
-  if (dailyLimitReached) {
-    console.log('Fish Eye quest: \u0432 \u0438\u0433\u0440\u0435 \u043b\u0438\u043c\u0438\u0442 \u043d\u0430 \u0441\u0435\u0433\u043e\u0434\u043d\u044f \u0443\u0436\u0435 \u0438\u0441\u0447\u0435\u0440\u043f\u0430\u043d ("\u041c\u044b \u0431\u0435\u0440\u0435\u0436\u0435\u043c \u0441\u0432\u043e\u0438\u0445 \u0431\u043e\u0439\u0446\u043e\u0432") -> \u043e\u0442\u043a\u043b\u0430\u0434\u044b\u0432\u0430\u044e \u0434\u043e \u0437\u0430\u0432\u0442\u0440\u0430');
-    syncFishEyeDayState();
-    fishEyeFightsToday = FISH_EYE_DAILY_FIGHT_LIMIT;
-    fishEyeRewardClaimedToday = true;
-    lastFishEyeRunAt = Date.now();
-    persistDailyQuestState();
-    await clickByTexts(page, ['\u0423\u0439\u0442\u0438', '\u0443\u0439\u0442\u0438', '\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f', '\u0432\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f'], '\u0423\u0439\u0442\u0438').catch(() => {});
-    return false;
-  }
-
-  // Arena requires at least 1 reserve to fight: "\u041d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u043e \u0438\u043c\u0435\u0442\u044c \u0445\u043e\u0442\u044f \u0431\u044b \u0435\u0434\u0438\u043d\u0438\u0446\u0443 \u0440\u0435\u0437\u0435\u0440\u0432\u043e\u0432".
-  // Reserve regenerates over time, so just defer this fight (~15 min) instead of erroring out and
-  // doing an unneeded city trip.
-  const noReserve = /\u041d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u043e\s+\u0438\u043c\u0435\u0442\u044c\s+\u0445\u043e\u0442\u044f\s+\u0431\u044b\s+\u0435\u0434\u0438\u043d\u0438\u0446\u0443\s+\u0440\u0435\u0437\u0435\u0440\u0432\u043e\u0432/i.test(arenaText);
-  if (noReserve) {
-    console.log('Fish Eye quest: \u043d\u0435\u0442 \u0440\u0435\u0437\u0435\u0440\u0432\u043e\u0432 \u0434\u043b\u044f \u0431\u043e\u044f ("\u041d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u043e \u0438\u043c\u0435\u0442\u044c \u0445\u043e\u0442\u044f \u0431\u044b \u0435\u0434\u0438\u043d\u0438\u0446\u0443 \u0440\u0435\u0437\u0435\u0440\u0432\u043e\u0432") -> \u043e\u0442\u043a\u043b\u0430\u0434\u044b\u0432\u0430\u044e \u043d\u0430 15 \u043c\u0438\u043d');
-    lastFishEyeRunAt = Date.now() + 15 * 60 * 1000 - FISH_EYE_INTERVAL_MS;
-    persistDailyQuestState();
-    await clickByTexts(page, ['\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f', '\u0432\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f', '\u0423\u0439\u0442\u0438', '\u0443\u0439\u0442\u0438'], '\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f').catch(() => {});
-    return false;
-  }
-
   // Some fights start immediately after descending to the arena.
   if (!await existsAnyText(page, ['\u0423\u0434\u0430\u0440\u0438\u0442\u044c', '\u0443\u0434\u0430\u0440\u0438\u0442\u044c'])) {
     await performStep(page, {
@@ -1907,10 +1736,8 @@ async function runFishEyeFight(page) {
   lastFishEyeRunAt = Date.now();
   syncFishEyeDayState();
   fishEyeFightsToday += 1;
-  persistDailyQuestState();
 
   console.log(`Fish Eye quest: fight done (${fishEyeFightsToday}/${FISH_EYE_DAILY_FIGHT_LIMIT} today)`);
-  return true;
 }
 
 async function tryClaimFishEyeReward(page) {
@@ -1937,7 +1764,6 @@ async function tryClaimFishEyeReward(page) {
 
   syncFishEyeDayState();
   fishEyeRewardClaimedToday = true;
-  persistDailyQuestState();
   console.log('Fish Eye quest: reward claimed (assumed)');
   return true;
 }
@@ -2007,7 +1833,6 @@ async function runDrabasQuest(page) {
   lastDrabasRunAt = Date.now();
   syncDrabasDayState();
   drabasRunsToday += 1;
-  persistDailyQuestState();
   console.log(`Drabas quest: done (${drabasRunsToday}/${DRABAS_DAILY_LIMIT} today)`);
 
   if (await existsAnyText(page, ['\u0412 \u0438\u0433\u0440\u0443', '\u0432 \u0438\u0433\u0440\u0443'])) {
@@ -2018,7 +1843,7 @@ async function runDrabasQuest(page) {
   return true;
 }
 
-async function progressRumaForgeQuest(page, { questCount } = {}) {
+async function progressRumaForgeQuest(page) {
   const QUEST = '\u041a\u0443\u0437\u043d\u0438\u0446\u0430 \u0420\u0443\u043c\u0430';
 
   const today = getDayKeyNow();
@@ -2048,16 +1873,10 @@ async function progressRumaForgeQuest(page, { questCount } = {}) {
     waitAfterClickMs: 7000,
   });
 
-  // "\u0412 \u043f\u0443\u0442\u0438" \u2014 \u044d\u043a\u0440\u0430\u043d \u043f\u0443\u0442\u0435\u0448\u0435\u0441\u0442\u0432\u0438\u044f, \u043f\u0435\u0440\u0435\u0435\u0437\u0434 \u043d\u0435 \u043c\u0433\u043d\u043e\u0432\u0435\u043d\u043d\u044b\u0439. \u041a\u043b\u0438\u043a\u0430\u0435\u043c \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435 \u0438 \u0436\u0434\u0451\u043c \u0434\u043e 30 \u0441\u0435\u043a,
-  // \u043f\u043e\u043a\u0430 \u043d\u0435 \u043f\u043e\u044f\u0432\u0438\u0442\u0441\u044f "\u041f\u0440\u0438\u0441\u0442\u0430\u043d\u044c" (\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0439 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0439 \u0448\u0430\u0433), \u043e\u0431\u0440\u0430\u0431\u0430\u0442\u044b\u0432\u0430\u044f \u043f\u043e\u0432\u0442\u043e\u0440\u044b "\u0412 \u043f\u0443\u0442\u0438 \u0435\u0449\u0435".
-  // \u0411\u0435\u0437 \u044d\u0442\u043e\u0433\u043e \u043c\u0430\u0440\u0448\u0440\u0443\u0442 \u0438\u043d\u043e\u0433\u0434\u0430 \u0448\u0451\u043b \u0434\u0430\u043b\u044c\u0448\u0435 \u043d\u0430 \u0435\u0449\u0451-\u0435\u0434\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435, \u043d\u0435 \u043d\u0430\u0445\u043e\u0434\u0438\u043b \u041f\u0440\u0438\u0441\u0442\u0430\u043d\u044c, \u0438 \u0432\u0441\u0435
-  // \u043f\u043e\u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0435 \u043e\u043f\u0446\u0438\u043e\u043d\u0430\u043b\u044c\u043d\u044b\u0435 \u0448\u0430\u0433\u0438 \u043c\u043e\u043b\u0447\u0430 \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u043b\u0438\u0441\u044c -> fightLoop \u043a\u0440\u0443\u0442\u0438\u043b\u0441\u044f \u0432\u0445\u043e\u043b\u043e\u0441\u0442\u0443\u044e.
-  await tryPerformStepOptional(page, {
-    stepName: '\u0412 \u043f\u0443\u0442\u0438',
-    currentTexts: ['\u0412 \u043f\u0443\u0442\u0438 \u0435\u0449\u0435', '\u0432 \u043f\u0443\u0442\u0438 \u0435\u0449\u0435', '\u0412 \u043f\u0443\u0442\u0438 \u0435\u0449\u0451', '\u0432 \u043f\u0443\u0442\u0438 \u0435\u0449\u0451', '\u0412 \u043f\u0443\u0442\u0438', '\u0432 \u043f\u0443\u0442\u0438'],
-    nextTexts: ['\u041f\u0440\u0438\u0441\u0442\u0430\u043d\u044c', '\u043f\u0440\u0438\u0441\u0442\u0430\u043d\u044c'],
-    waitForNextMs: 30000,
-  });
+  if (await existsAnyText(page, ['\u0412 \u043f\u0443\u0442\u0438', '\u0432 \u043f\u0443\u0442\u0438'])) {
+    await clickByTexts(page, ['\u0412 \u043f\u0443\u0442\u0438', '\u0432 \u043f\u0443\u0442\u0438'], '\u0412 \u043f\u0443\u0442\u0438');
+    await pause(page, 800, 1600);
+  }
 
   await tryPerformStepOptional(page, {
     stepName: '\u041f\u0440\u0438\u0441\u0442\u0430\u043d\u044c',
@@ -2145,28 +1964,12 @@ async function progressRumaForgeQuest(page, { questCount } = {}) {
     retries: 4,
   });
 
-  // Verify the quest actually disappeared from the Q menu before marking it done.
-  // Several of the steps above are best-effort (tryPerformStepOptional), so a silent
-  // failure mid-route must not be recorded as a completed daily quest.
-  if (Number.isFinite(questCount) && questCount > 0) {
-    const menuOk = await resetToQuestMenu(page, questCount);
-    if (menuOk) {
-      const qText = await getBodyText(page);
-      const names = parseQuestNamesFromQMenuText(qText);
-      if (isQuestInMenu(names, QUEST)) {
-        console.log('Ruma forge quest: still listed in Q menu after the route -> not marking done, will retry.');
-        return false;
-      }
-    }
-  }
-
   rumaForgeDoneToday = true;
-  persistDailyQuestState();
   console.log('Ruma forge quest: done today');
   return true;
 }
 
-async function progressFisherFoodQuest(page, { questCount } = {}) {
+async function progressFisherFoodQuest(page) {
   const QUEST = '\u0415\u0434\u0430 \u0434\u043b\u044f \u0440\u044b\u0431\u0430\u043a\u0430';
 
   const today = getDayKeyNow();
@@ -2227,15 +2030,10 @@ async function progressFisherFoodQuest(page, { questCount } = {}) {
     waitAfterClickMs: 7000,
   });
 
-  // \u0416\u0434\u0451\u043c \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f \u043f\u0435\u0440\u0435\u0435\u0437\u0434\u0430 \u043a \u0418\u0432\u043e\u0432\u043e\u043c\u0443 \u043e\u0437\u0435\u0440\u0443: \u043a\u043b\u0438\u043a\u0430\u0435\u043c "\u0412 \u043f\u0443\u0442\u0438" \u0438 \u0436\u0434\u0451\u043c \u0434\u043e 30 \u0441\u0435\u043a \u043f\u043e\u044f\u0432\u043b\u0435\u043d\u0438\u044f \u043f\u0435\u0440\u0432\u043e\u0433\u043e
-  // \u0448\u0430\u0433\u0430 \u0434\u043e\u0441\u0442\u0430\u0432\u043a\u0438 ("\u0418\u0434\u0442\u0438 \u043d\u0430 \u0437\u0430\u043f\u0430\u0434"/"\u0412\u043e\u0439\u0442\u0438 \u0432 \u043b\u0430\u0447\u0443\u0433\u0443"). \u0411\u0435\u0437 \u044d\u0442\u043e\u0433\u043e \u0434\u043e\u0441\u0442\u0430\u0432\u043a\u0430 \u043c\u043e\u043b\u0447\u0430 \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u043b\u0430\u0441\u044c, \u0430
-  // \u043a\u0432\u0435\u0441\u0442 \u043e\u0448\u0438\u0431\u043e\u0447\u043d\u043e \u043f\u043e\u043c\u0435\u0447\u0430\u043b\u0441\u044f done (\u0435\u0434\u0443 \u0432\u0437\u044f\u043b\u0438, \u043d\u043e \u043d\u0435 \u0434\u043e\u043d\u0435\u0441\u043b\u0438).
-  await tryPerformStepOptional(page, {
-    stepName: '\u0412 \u043f\u0443\u0442\u0438',
-    currentTexts: ['\u0412 \u043f\u0443\u0442\u0438 \u0435\u0449\u0435', '\u0432 \u043f\u0443\u0442\u0438 \u0435\u0449\u0435', '\u0412 \u043f\u0443\u0442\u0438 \u0435\u0449\u0451', '\u0432 \u043f\u0443\u0442\u0438 \u0435\u0449\u0451', '\u0412 \u043f\u0443\u0442\u0438', '\u0432 \u043f\u0443\u0442\u0438'],
-    nextTexts: ['\u0418\u0434\u0442\u0438 \u043d\u0430 \u0437\u0430\u043f\u0430\u0434', '\u0438\u0434\u0442\u0438 \u043d\u0430 \u0437\u0430\u043f\u0430\u0434', '\u0412\u043e\u0439\u0442\u0438 \u0432 \u043b\u0430\u0447\u0443\u0433\u0443', '\u0432\u043e\u0439\u0442\u0438 \u0432 \u043b\u0430\u0447\u0443\u0433\u0443'],
-    waitForNextMs: 30000,
-  });
+  if (await existsAnyText(page, ['\u0412 \u043f\u0443\u0442\u0438', '\u0432 \u043f\u0443\u0442\u0438'])) {
+    await clickByTexts(page, ['\u0412 \u043f\u0443\u0442\u0438', '\u0432 \u043f\u0443\u0442\u0438'], '\u0412 \u043f\u0443\u0442\u0438');
+    await pause(page, 800, 1600);
+  }
 
   async function stepManyExact(text, count) {
     for (let i = 0; i < count; i++) {
@@ -2256,7 +2054,7 @@ async function progressFisherFoodQuest(page, { questCount } = {}) {
     currentTexts: ['\u0412\u043e\u0439\u0442\u0438 \u0432 \u043b\u0430\u0447\u0443\u0433\u0443', '\u0432\u043e\u0439\u0442\u0438 \u0432 \u043b\u0430\u0447\u0443\u0433\u0443'],
   });
 
-  const gaveFood = await tryPerformStepOptional(page, {
+  await tryPerformStepOptional(page, {
     stepName: '\u041e\u0442\u0434\u0430\u0442\u044c \u0435\u0434\u0443',
     currentTexts: ['\u041e\u0442\u0434\u0430\u0442\u044c \u0435\u0434\u0443', '\u043e\u0442\u0434\u0430\u0442\u044c \u0435\u0434\u0443'],
   });
@@ -2271,27 +2069,7 @@ async function progressFisherFoodQuest(page, { questCount } = {}) {
     await pause(page, 800, 1600);
   }
 
-  // \u0415\u0441\u043b\u0438 "\u041e\u0442\u0434\u0430\u0442\u044c \u0435\u0434\u0443" \u043d\u0435 \u043d\u0430\u0448\u043b\u043e\u0441\u044c \u2014 \u0434\u043e\u0441\u0442\u0430\u0432\u043a\u0430 \u043d\u0435 \u0434\u043e\u0448\u043b\u0430 (\u0435\u0434\u0443 \u0432\u0437\u044f\u043b\u0438, \u043d\u043e \u043d\u0435 \u0434\u043e\u043d\u0435\u0441\u043b\u0438). \u041d\u0435 \u043f\u043e\u043c\u0435\u0447\u0430\u0435\u043c done,
-  // \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u043c \u0432 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u043c \u0446\u0438\u043a\u043b\u0435.
-  if (!gaveFood) {
-    console.log('Fisher Food quest: \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u0434\u0430\u0442\u044c \u0435\u0434\u0443 (\u0434\u043e\u0441\u0442\u0430\u0432\u043a\u0430 \u043d\u0435 \u0434\u043e\u0448\u043b\u0430) -> \u043d\u0435 \u043e\u0442\u043c\u0435\u0447\u0430\u044e done, \u043f\u043e\u0432\u0442\u043e\u0440 \u043f\u043e\u0437\u0436\u0435');
-    return false;
-  }
-
-  // \u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0430\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 (\u043a\u0430\u043a \u0432 \u041a\u0443\u0437\u043d\u0438\u0446\u0435 \u0420\u0443\u043c\u0430): \u043a\u0432\u0435\u0441\u0442 \u0434\u043e\u043b\u0436\u0435\u043d \u0438\u0441\u0447\u0435\u0437\u043d\u0443\u0442\u044c \u0438\u0437 Q-\u043c\u0435\u043d\u044e.
-  if (Number.isFinite(questCount) && questCount > 0) {
-    const menuOk = await resetToQuestMenu(page, questCount);
-    if (menuOk) {
-      const names = parseQuestNamesFromQMenuText(await getBodyText(page));
-      if (isQuestInMenu(names, QUEST)) {
-        console.log('Fisher Food quest: \u0432\u0441\u0451 \u0435\u0449\u0451 \u0432 Q-\u043c\u0435\u043d\u044e \u043f\u043e\u0441\u043b\u0435 \u043c\u0430\u0440\u0448\u0440\u0443\u0442\u0430 -> \u043d\u0435 \u043e\u0442\u043c\u0435\u0447\u0430\u044e done, \u043f\u043e\u0432\u0442\u043e\u0440 \u043f\u043e\u0437\u0436\u0435.');
-        return false;
-      }
-    }
-  }
-
   fisherFoodDoneToday = true;
-  persistDailyQuestState();
   console.log('Fisher Food quest: done today');
   return true;
 }
@@ -2360,7 +2138,6 @@ async function progressCaravanRobberyQuest(page) {
   }
 
   caravanRobberyDoneToday = true;
-  persistDailyQuestState();
   console.log('Caravan Robbery quest: done today');
   return true;
 }
@@ -2434,13 +2211,6 @@ async function waitForReserveAtLeast(page, threshold, { waitMs = 7 * 60 * 1000, 
   };
 
   for (let attempt = 0; attempt <= maxWaits; attempt++) {
-    // Re-reading the same page's DOM without reloading it returns the same stale
-    // reserve value forever (the header is server-rendered, not live-updating).
-    // Reload so the header actually reflects current server state before checking.
-    if (attempt > 0) {
-      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
-    }
-
     // While waiting, an incoming attack can appear. Handle it as soon as possible.
     try {
       const text = await getBodyText(page);
@@ -2454,7 +2224,7 @@ async function waitForReserveAtLeast(page, threshold, { waitMs = 7 * 60 * 1000, 
       // ignore other errors
     }
 
-    const reserve = await getReserveMinutesSafe(page);
+    const reserve = await readReserveFromLocationInNewTab(page);
     if (typeof reserve === 'number') {
       console.log(`Reserve check: ${reserve} (need >= ${threshold})`);
       if (reserve >= threshold) return true;
@@ -2483,12 +2253,6 @@ async function waitForReserveAtLeast(page, threshold, { waitMs = 7 * 60 * 1000, 
 
 async function waitForHpAbove(page, threshold, { waitMs = 5 * 60 * 1000, maxWaits = 24 } = {}) {
   for (let attempt = 0; attempt <= maxWaits; attempt++) {
-    // Same staleness issue as the reserve gate: without a reload the DOM keeps
-    // showing the HP value from whenever the page was last loaded.
-    if (attempt > 0) {
-      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
-    }
-
     const hp = await getHpCurrentSafe(page);
     if (hp !== null) {
       console.log(`HP check: ${hp} (need > ${threshold})`);
@@ -3073,7 +2837,6 @@ async function progressShtolniQuest(page) {
     shtolniTakenToday = false;
     shtolniSuppressedUntil = 0;
     shtolniFocusStartedAt = 0;
-    persistDailyQuestState();
     return true;
   }
 
@@ -3173,22 +2936,12 @@ function shouldGoChaosByStats(stats) {
   return stats.hpCurrent < 0;
 }
 
-// Below this HP a simple Chaos Fist heal is not enough; go recover at Форпост/Последний дом instead.
-const LAST_HOUSE_HP_THRESHOLD = -1500;
-
-function shouldGoLastHouseByStats(stats) {
-  return typeof stats?.hpCurrent === 'number' && stats.hpCurrent < LAST_HOUSE_HP_THRESHOLD;
-}
-
 function shouldRecoverByStoneguard(stats) {
   return stats.cooldown <= 0;
 }
 
-// Dead zone: HP is not deeply negative (that's Последний дом's job) but too low to fight Blake
-// and quests for this cycle are already done -> wait it out in Стоунгард (safe, can't be attacked)
-// instead of idling wherever the last action left the character.
 function shouldRecoverByStoneguardLowHp(stats) {
-  return stats.hpCurrent >= 0 && stats.hpCurrent < BLAKE_MIN_HP;
+  return stats.hpCurrent >= 0 && stats.hpCurrent < 1000 && stats.cooldown < 20;
 }
 
 function shouldRecoverByStats(stats) {
@@ -3201,11 +2954,6 @@ function shouldUseFishByStats(stats) {
 
 function shouldFightByStats(stats) {
   return stats.hpCurrent >= 1000 && stats.cooldown > 0;
-}
-
-// Blake hits harder than goblins, so farming there needs a bigger HP buffer (matches bleyk.js).
-function shouldFightBlakeByStats(stats) {
-  return stats.hpCurrent >= BLAKE_MIN_HP && stats.cooldown > 0;
 }
 
 function detectPvpFromText(text) {
@@ -3311,18 +3059,6 @@ function detectIncomingAttack(text) {
   }
 
   return attacker;
-}
-
-// Fight screens show "VS.\n<Opponent> [level] (hp/max)..." right after the header. Player
-// nicknames on lbast.ru are Latin-only (see ATTACK_LINE_RE above); farm NPCs (Блейк, goblins)
-// have Cyrillic names. Used to tell a genuine incoming PvP attack apart from our own farm fight
-// surfacing the same round-based block/hit zone-select UI.
-const VS_OPPONENT_RE = /VS\.\s*\r?\n\s*([A-Za-zА-Яа-яЁё_]+)/i;
-const LATIN_NICK_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-function getFightOpponentName(text) {
-  const match = VS_OPPONENT_RE.exec(String(text || ''));
-  return match ? match[1] : null;
 }
 
 function emitAttackAlert(payload) {
@@ -3515,14 +3251,14 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
 
   if (!/В\s*бой/i.test(text)) return false;
 
-  // If HP is already massively negative, skip the fight — recover first (Последний дом: station
-  // rotation + fishing, same as the main HP-recovery path), not the old blind Chaos+90min wait.
+  // If HP is already massively negative, skip the fight — recover first.
   const preHpMatch = text.match(/\((-?\d+)\s*\/\s*(\d+)\)/);
   const preHpVal = preHpMatch ? Number(preHpMatch[1]) : null;
-  if (Number.isFinite(preHpVal) && shouldGoLastHouseByStats({ hpCurrent: preHpVal })) {
-    console.log(`Pre-attack: HP already < ${LAST_HOUSE_HP_THRESHOLD} (${preHpVal}) -> skip fight, recover at Последний дом`);
-    await runLastHouseRecovery(page);
-    return true;
+  if (Number.isFinite(preHpVal) && preHpVal <= -10000) {
+    console.log(`Pre-attack: HP already <= -10000 (${preHpVal}) -> skip fight, go to Chaos + 90min rest`);
+    await goToChaosByAmulet(page).catch(() => {});
+    scheduleLongRestMinutes(90, 'hp_big_negative_pre_attack');
+    throw new Error(`hp_big_negative_pre_attack:${preHpVal}`);
   }
 
   const now = Date.now();
@@ -3535,27 +3271,6 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   await pause(page, 700, 1400);
 
   const afterText = await getBodyText(page);
-
-  // "В бой" also covers our own farm fight surfacing this same round-based block/hit zone-select
-  // UI (Blake/goblins can present the identical PvP-style multi-round format). Player nicknames on
-  // lbast.ru are Latin-only (see ATTACK_LINE_RE); a Cyrillic "VS." opponent (e.g. "Блейк") means
-  // this is NOT a hostile attack -> don't alert or log it as one, and let the cycle continue
-  // normally afterward (farm accounting) instead of ending the cycle like a real attack does.
-  const opponentName = getFightOpponentName(afterText);
-  const isRealAttacker = opponentName ? LATIN_NICK_RE.test(opponentName) : true;
-
-  if (!isRealAttacker) {
-    console.log(`"В бой" -> противник "${opponentName}" (не игрок) -> это бой с ${FARM_LABEL}, не атака`);
-    await runIncomingAttackPvpLoop(page).catch(() => {});
-    try {
-      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await pause(page, 800, 1600);
-    } catch (e) {
-      // ignore — best-effort return to a normal page, downstream retry logic will recover.
-    }
-    return false;
-  }
-
   if (!isBattleScreenText(afterText)) {
     const attackerAfter = detectIncomingAttack(afterText);
     if (attackerAfter) {
@@ -3573,31 +3288,25 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   // If the incoming attack leads to a PvP-like fight UI, do random block+hit turns.
   await runIncomingAttackPvpLoop(page).catch(() => {});
 
-  // After handling an incoming attack, immediately check HP and recover in the same cycle instead
-  // of silently ending the cycle and leaving the character at negative HP for a full random sleep
-  // (up to ~21 min) until the next cycle's top-of-doScenario check would catch it. Same two-tier
-  // logic as the top of doScenario: deep negative -> Последний дом (stations + fishing), moderate
-  // negative -> quick Кулак хаоса heal.
+  // After handling an incoming attack, immediately check for "huge negative HP" and recover in the same cycle.
+  // Do this only after we interacted with the incoming-attack screen (we already got pulled into a fight anyway).
   try {
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await pause(page, 800, 1600);
     const locText = await getBodyText(page);
     const m = locText.match(/\((-?\d+)\s*\/\s*(\d+)\)/);
     const hpVal = m ? Number(m[1]) : null;
-    if (Number.isFinite(hpVal) && shouldGoLastHouseByStats({ hpCurrent: hpVal })) {
-      console.log(`Post-attack: HP < ${LAST_HOUSE_HP_THRESHOLD} (${hpVal}) -> recover at Последний дом`);
-      await runLastHouseRecovery(page);
-    } else if (Number.isFinite(hpVal) && shouldGoChaosByStats({ hpCurrent: hpVal })) {
-      console.log(`Post-attack: HP below zero (${hpVal}) -> quick heal via Кулак хаоса`);
-      await goToChaosByAmulet(page);
+    if (Number.isFinite(hpVal) && hpVal <= -10000) {
+      console.log(`Post-attack: HP <= -10000 (${hpVal}) -> Chaos + 90min rest`);
+      await goToChaosByAmulet(page).catch(() => {});
+      scheduleLongRestMinutes(90, 'hp_big_negative_post_attack');
+      throw new Error(`hp_big_negative_post_attack:${hpVal}`);
     }
   } catch (e) {
-    // Recovery itself failed (e.g. "Форпост" not found from a transient page-load race) — don't
-    // fail the whole cycle over it, but don't silently sit on it either: at this point HP can be
-    // deeply critical, so a full default ~21 min sleep before the next attempt is too long. Log it
-    // and retry soon instead of relying on the caller's default cycle delay.
-    console.log(`Post-attack recovery failed (${e.message}) -> retry soon`);
-    scheduleLongRestMinutes(2, 'post_attack_recovery_failed');
+    if (String(e?.message || '').startsWith('hp_big_negative_post_attack:')) {
+      throw e;
+    }
+    // ignore
   }
 
   return true;
@@ -3718,30 +3427,6 @@ async function clickByTextsLoose(page, texts, stepName) {
         return true;
       } catch (e) {
         console.log(`Не смог кликнуть ${stepName} -> ${text} (loose): ${e.message}`);
-      }
-    }
-  }
-
-  return false;
-}
-
-// Last resort for buttons confirmed real in-game but that clickByTextsLoose still can't click
-// (e.g. its "must be the only match" safety check refuses due to a hidden duplicate/tooltip).
-// Clicks the first match regardless of count, with force to bypass any overlay.
-async function clickByTextsForced(page, texts, stepName) {
-  const ok = await clickByTextsLoose(page, texts, stepName);
-  if (ok) return true;
-
-  for (const text of texts) {
-    const locator = page.locator(`text=${text}`).first();
-    const count = await locator.count().catch(() => 0);
-    if (count > 0) {
-      try {
-        await locator.click({ timeout: 8000, force: true, noWaitAfter: true });
-        console.log(`OK: ${stepName} -> ${text} (forced)`);
-        return true;
-      } catch (e) {
-        console.log(`Не смог кликнуть ${stepName} -> ${text} (forced): ${e.message}`);
       }
     }
   }
@@ -3873,11 +3558,6 @@ async function performStep(page, config) {
     .trim()
     .slice(0, 500);
 
-  // Occasionally a navigation lands on a nearly-empty page (just the clock, no menu links) — the
-  // step can't find anything to click and would fail. Reload location.php once to recover; only
-  // the first step of a route lives on location.php, so deeper steps stay unaffected.
-  let didBlankReload = false;
-
   for (let attempt = 1; attempt <= retries; attempt++) {
     console.log(`Шаг "${stepName}", попытка ${attempt}/${retries}`);
 
@@ -3971,23 +3651,6 @@ async function performStep(page, config) {
     if (nextTexts.length > 0 && await existsAnyText(page, nextTexts)) {
       console.log(`Хотя "${stepName}" не подтвердился, следующий шаг уже есть. Иду дальше.`);
       return true;
-    }
-
-    // Blank-page recovery: if the page has almost no content (e.g. only the clock rendered),
-    // reload location.php once and retry from a clean state instead of burning all retries.
-    if (!didBlankReload) {
-      const bodyNow = snapshot(await getBodyText(page));
-      if (bodyNow.replace(/\s+/g, '').length < 30) {
-        didBlankReload = true;
-        console.log(`Шаг "${stepName}": страница почти пустая ("${bodyNow}") -> перезагружаю location.php`);
-        try {
-          await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-          await pause(page, 1000, 2000);
-        } catch (e) {
-          console.log(`Не удалось перезагрузить location.php: ${e.message}`);
-        }
-        continue;
-      }
     }
 
     await pause(page, 1200, 2200);
@@ -4154,172 +3817,9 @@ async function ensureGoblinFightScreen(page) {
   await openGoblinFight(page);
 }
 
-// Blake farming route (ported from bleyk.js): Амулет -> Девтаун -> На восток, в ремесленный
-// район -> Идти на восток -> портовый район -> Пристань -> лодка на остров Блейка -> Идти на
-// север -> Зайти в хижину -> бой. The first leg is identical to the Fish Eye route.
-async function goRouteToBlake(page) {
-  console.log('Иду по маршруту к Блейку');
-
-  const AMULET    = 'Амулет';
-  const DEVTOWN   = 'Девтаун';
-  const EAST_CRAFT = 'На восток, в ремесленный район';
-  const GO_EAST   = 'Идти на восток';
-  const PORT      = 'портовый район';
-  const PIER      = 'Пристань';
-  const BOAT      = 'Взять лодку до острова Блейка за 10 дин';
-  const NEXT      = 'Далее';
-  const NORTH     = 'Идти на север';
-  const HUT       = 'Зайти в хижину';
-
-  const amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
-  if (amuletOk) await pause(page, 800, 1600);
-
-  await performStep(page, {
-    stepName: DEVTOWN,
-    currentTexts: [DEVTOWN, DEVTOWN.toLowerCase()],
-    nextTexts: [EAST_CRAFT, EAST_CRAFT.toLowerCase()],
-    retries: 3,
-  });
-
-  await performStep(page, {
-    stepName: EAST_CRAFT,
-    currentTexts: [EAST_CRAFT, EAST_CRAFT.toLowerCase()],
-    nextTexts: [GO_EAST, GO_EAST.toLowerCase()],
-    retries: 3,
-  });
-
-  await performStep(page, {
-    stepName: GO_EAST,
-    currentTexts: [GO_EAST, GO_EAST.toLowerCase()],
-    nextTexts: [PORT, PORT.toLowerCase(), PIER, PIER.toLowerCase()],
-    retries: 4,
-  });
-
-  if (await existsAnyText(page, [PIER, PIER.toLowerCase()])) {
-    console.log('После "Идти на восток" уже видна Пристань, шаг "портовый район" пропускаю');
-  } else {
-    await performStep(page, {
-      stepName: PORT,
-      currentTexts: [PORT, PORT.toLowerCase()],
-      nextTexts: [PIER, PIER.toLowerCase()],
-      retries: 4,
-    });
-  }
-
-  await performStep(page, {
-    stepName: PIER,
-    currentTexts: [PIER, PIER.toLowerCase()],
-    nextTexts: [BOAT, BOAT.toLowerCase()],
-    retries: 4,
-  });
-
-  await performStep(page, {
-    stepName: BOAT,
-    currentTexts: [BOAT, BOAT.toLowerCase()],
-    waitAfterClickMs: 7000,
-    nextTexts: [NEXT, NEXT.toLowerCase(), NORTH, NORTH.toLowerCase()],
-    retries: 3,
-  });
-
-  if (await existsAnyText(page, [NORTH, NORTH.toLowerCase()])) {
-    console.log('После лодки уже доступен шаг "Идти на север", шаг "Далее" пропускаю');
-  } else {
-    await performStep(page, {
-      stepName: NEXT,
-      currentTexts: [NEXT, NEXT.toLowerCase()],
-      nextTexts: [NORTH, NORTH.toLowerCase()],
-      retries: 3,
-    });
-  }
-
-  await performStep(page, {
-    stepName: NORTH,
-    currentTexts: [NORTH, NORTH.toLowerCase()],
-    nextTexts: [HUT, HUT.toLowerCase()],
-    retries: 3,
-  });
-
-  await performStep(page, {
-    stepName: HUT,
-    currentTexts: [HUT, HUT.toLowerCase()],
-    nextTexts: ['Ударить', 'ударить', 'В бой', 'в бой', 'Бой завершен!'],
-    retries: 3,
-  });
-}
-
-async function openBlakeFight(page) {
-  console.log('Открываю бой на Блейке');
-
-  const HUT = 'Зайти в хижину';
-  const UDAR_RE = /Ударить/i;
-  const DONE_RE = /Бой завершен!/i;
-
-  const text = await getBodyText(page);
-
-  if (UDAR_RE.test(text) || DONE_RE.test(text)) {
-    console.log('Экран боя уже открыт');
-    return;
-  }
-
-  if (new RegExp(HUT, 'i').test(text)) {
-    await performStep(page, {
-      stepName: HUT,
-      currentTexts: [HUT, HUT.toLowerCase()],
-      nextTexts: ['В бой', 'в бой', 'Ударить', 'ударить', 'Бой завершен!'],
-      retries: 3,
-    });
-    await pause(page, 800, 1600);
-  }
-
-  const refreshedText = await getBodyText(page);
-  if (/В\s*бой/i.test(refreshedText) && !UDAR_RE.test(refreshedText)) {
-    await performStep(page, {
-      stepName: 'В бой',
-      currentTexts: ['В бой', 'в бой'],
-      nextTexts: ['Ударить', 'ударить', 'Бой завершен!'],
-      retries: 3,
-    });
-    await pause(page, 1000, 2000);
-  }
-}
-
-function isBlakeLocation(text) {
-  return /Зайти в хижину/i.test(String(text || ''));
-}
-
-async function ensureBlakeFightScreen(page) {
-  const UDAR_RE = /Ударить/i;
-  const DONE_RE = /Бой завершен!/i;
-
-  const text = await getBodyText(page);
-  if (UDAR_RE.test(text) || DONE_RE.test(text)) return;
-
-  if (isBlakeLocation(text) || /В\s*бой/i.test(text)) {
-    await openBlakeFight(page);
-    return;
-  }
-
-  await goRouteToBlake(page);
-  await openBlakeFight(page);
-}
-
-// Farm-target-aware wrappers: pick Blake or goblins depending on FARM_TARGET so doScenario's
-// farm loop stays generic. Goblins reach their spot via the same Амулет -> Последний портал
-// shortcut, so the "stay put and resume next cycle" behaviour works for both.
-function shouldFightFarmByStats(stats) {
-  return FARM_TARGET === 'goblins' ? shouldFightByStats(stats) : shouldFightBlakeByStats(stats);
-}
-
-function isFarmLocation(text) {
-  return FARM_TARGET === 'goblins' ? isGoblinsLocation(text) : isBlakeLocation(text);
-}
-
-async function ensureFarmFightScreen(page) {
-  return FARM_TARGET === 'goblins' ? ensureGoblinFightScreen(page) : ensureBlakeFightScreen(page);
-}
-
 const STONEGUARD_FASTWAY_URL = 'http://lbast.ru/location.php?r=6174&mod=fastway&lway=2';
 const CITY_FASTWAY_URL = 'http://lbast.ru/location.php?r=7900&mod=fastway&lway=2';
+const LOW_HP_FASTWAY_URL = 'http://lbast.ru/location.php?r=3018&mod=fastway&lway=4';
 
 async function navigateFastway(page, url, label) {
   try {
@@ -4361,6 +3861,10 @@ async function recoverToCity(page, reason) {
   }
 }
 
+async function goToLowHpRestViaFastway(page, label = 'low_hp_rest') {
+  return navigateFastway(page, LOW_HP_FASTWAY_URL, label);
+}
+
 function scheduleLongRestMinutes(minutes, reason) {
   nextCycleDelayOverrideMs = minutes * 60 * 1000;
   console.log(`Long rest scheduled: ${minutes} min (${reason})`);
@@ -4383,14 +3887,6 @@ async function fightLoop(page) {
     '\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f',
     '\u0432\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f',
   ];
-  const RESET_PAIRS_TEXTS = ['\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0430\u0440\u044b', '\u0441\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0430\u0440\u044b'];
-  const RECEPTION_TEXTS = ['\u041f\u0440\u0438\u0435\u043c', '\u043f\u0440\u0438\u0435\u043c', '\u041f\u0440\u0438\u0451\u043c', '\u043f\u0440\u0438\u0451\u043c'];
-
-  // Если несколько итераций подряд на странице нет ничего боевого (ни "Бой завершен"/"Вернуться",
-  // ни "В бой"/"Сбросить пары", ни "Ударить") — значит мы не на боевом экране (маршрут не довёл до
-  // боя). Не крутим 300 итераций (~10 мин), а быстро бросаем ошибку -> цикл восстановится.
-  const MAX_STUCK = 10;
-  let stuck = 0;
 
   for (let i = 0; i < 300; i++) {
     const text = await getBodyText(page);
@@ -4406,56 +3902,17 @@ async function fightLoop(page) {
     if (!/Ударить/i.test(text)) {
       const startOk = await clickByTexts(page, START_FIGHT_TEXTS, '\u0412 \u0431\u043e\u0439');
       if (startOk) {
-        stuck = 0;
         await pause(page, 800, 1800);
         continue;
-      }
-
-      // "\u041f\u0430\u0440\u044b" can build up mid-fight and block further hits until reset.
-      const resetOk = await clickByTexts(page, RESET_PAIRS_TEXTS, '\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0430\u0440\u044b');
-      if (resetOk) {
-        stuck = 0;
-        await pause(page, 800, 1800);
-        continue;
-      }
-
-      // \u041d\u0438 \u0431\u043e\u0435\u0432\u043e\u0433\u043e \u044d\u043a\u0440\u0430\u043d\u0430, \u043d\u0438 \u043a\u043d\u043e\u043f\u043a\u0438 \u0441\u0442\u0430\u0440\u0442\u0430 \u0431\u043e\u044f \u2014 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u043e, \u043c\u044b \u043d\u0435 \u043d\u0430 \u0431\u043e\u0435\u0432\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435.
-      stuck += 1;
-      if (stuck >= MAX_STUCK) {
-        throw new Error('fight_not_reached');
-      }
-      await pause(page, 700, 1500);
-      continue;
-    }
-
-    // "Прием" is an optional pre-hit action, available in most bot fights (quests, farm, etc.)
-    // but not always shown - in paired-bot fights it can appear on only one of the two bots.
-    // Use it whenever HP drops below 75% max, then proceed to the normal hit.
-    const stats = parseStats(text);
-    if (
-      typeof stats.hpCurrent === 'number' &&
-      typeof stats.hpMax === 'number' &&
-      stats.hpMax > 0 &&
-      stats.hpCurrent < stats.hpMax * 0.75 &&
-      await existsAnyText(page, RECEPTION_TEXTS)
-    ) {
-      const receptionOk = await clickByTexts(page, RECEPTION_TEXTS, 'Прием');
-      if (receptionOk) {
-        await pause(page, 500, 1200);
       }
     }
 
     const ok = await clickByTexts(page, [UDAR, UDAR.toLowerCase()], UDAR);
     if (!ok) {
-      stuck += 1;
-      if (stuck >= MAX_STUCK) {
-        throw new Error('fight_stuck');
-      }
       await pause(page, 700, 1800);
       continue;
     }
 
-    stuck = 0;
     await pause(page, 1000, 2000);
   }
 
@@ -4473,179 +3930,11 @@ async function goToChaosByAmulet(page) {
   const AMULET = '\u0410\u043c\u0443\u043b\u0435\u0442';
   const CHAOS = '\u041a\u0443\u043b\u0430\u043a \u0445\u0430\u043e\u0441\u0430';
 
-  // "\u0410\u043c\u0443\u043b\u0435\u0442" is the persistent top-nav link, so a miss here is almost always a transient page-load
-  // race, not a real absence \u2014 retry once after a short reload instead of silently stranding the
-  // caller wherever fishing/etc. left the page (observed: this cascaded into "\u0424\u043e\u0440\u043f\u043e\u0441\u0442" not found
-  // and the whole \u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 \u0434\u043e\u043c recovery throwing).
-  let amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
-  if (!amuletOk) {
-    await pause(page, 1000, 2000);
-    amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
-  }
+  const amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
   if (amuletOk) await pause(page, 800, 2000);
 
   const chaosOk = await clickByTexts(page, [CHAOS, CHAOS.toLowerCase()], CHAOS);
   if (chaosOk) await pause(page, 800, 2000);
-}
-
-// The number in "Лечение: N hp/мин" is itself a link that refreshes HP/cooldown; its text
-// changes every time, so we find it by walking to the nearest <a> on the same line as "Лечение".
-async function clickHealingRefreshLink(page) {
-  const links = page.locator('a');
-  const total = await links.count().catch(() => 0);
-
-  for (let i = 0; i < total; i++) {
-    const link = links.nth(i);
-
-    const lineText = await link.evaluate((el) => {
-      const normalize = (s) => String(s || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
-
-      let text = '';
-      let cur = el.previousSibling;
-      while (cur) {
-        if (cur.nodeName === 'BR') break;
-        text = (cur.textContent || '') + text;
-        cur = cur.previousSibling;
-      }
-      cur = el.nextSibling;
-      while (cur) {
-        if (cur.nodeName === 'BR') break;
-        text = text + (cur.textContent || '');
-        cur = cur.nextSibling;
-      }
-      return normalize(text);
-    }).catch(() => '');
-
-    if (/Лечение/i.test(lineText)) {
-      try {
-        await link.click({ timeout: 8000, noWaitAfter: true });
-        console.log('OK: обновил HP/кулдаун по ссылке "Лечение"');
-        await pause(page, 800, 1600);
-        return true;
-      } catch (e) {
-        console.log(`Не удалось кликнуть по ссылке "Лечение": ${e.message}`);
-      }
-    }
-  }
-
-  console.log('Ссылка "Лечение" не найдена, читаю статы как есть');
-  return false;
-}
-
-const LAST_HOUSE_MAX_ITERATIONS = 200;
-
-async function runLastHouseRecovery(page) {
-  console.log('Последний дом: HP критично низкое, иду восстанавливаться (Форпост -> Последний дом)');
-
-  const OUTPOST = 'Форпост';
-  const LAST_HOUSE = 'Последний дом';
-  const V_IGRU = 'В игру';
-
-  const STATIONS = [
-    'Исп. кухню',
-    'Исп. самогонный аппарат',
-    'Исп. набор травника',
-  ];
-
-  // Station cooldowns are long (20-25 min) but fishing's own cooldown is only 2 min. Sleeping the
-  // full station wait in one blocking call would starve fishing of almost all its opportunities
-  // during a long recovery (observed: ~5 casts across ~110 min instead of ~50) since the loop only
-  // re-checks canRunFishingNow() once per iteration. Sleep in short chunks and bail out early the
-  // moment fishing becomes available again, so the loop returns to it promptly instead of waiting
-  // out the whole station cooldown first.
-  async function waitStationCooldown(waitMinutes, reason) {
-    console.log(`Последний дом: ${reason}, жду ${waitMinutes} мин (проверяю рыбалку каждые ~2 мин)`);
-    const totalMs = waitMinutes * 60 * 1000;
-    const chunkMs = 2 * 60 * 1000;
-    let waited = 0;
-    while (waited < totalMs) {
-      const step = Math.min(chunkMs, totalMs - waited);
-      await fixedPause(page, step);
-      waited += step;
-      if (canRunFishingNow()) {
-        console.log('Последний дом: рыбалка снова доступна -> прерываю ожидание кулдауна станции');
-        return;
-      }
-    }
-  }
-
-  async function enterLastHouse() {
-    await performStep(page, {
-      stepName: OUTPOST,
-      currentTexts: [OUTPOST, OUTPOST.toLowerCase()],
-      nextTexts: [LAST_HOUSE, LAST_HOUSE.toLowerCase()],
-      retries: 3,
-    });
-
-    await performStep(page, {
-      stepName: LAST_HOUSE,
-      currentTexts: [LAST_HOUSE, LAST_HOUSE.toLowerCase()],
-      retries: 3,
-    });
-  }
-
-  await enterLastHouse();
-
-  let stationIndex = 0;
-
-  for (let i = 0; i < LAST_HOUSE_MAX_ITERATIONS; i++) {
-    await clickHealingRefreshLink(page);
-    let stats = parseStats(await getBodyText(page));
-
-    if (typeof stats.hpCurrent === 'number' && stats.hpCurrent >= BLAKE_MIN_HP) {
-      console.log(`Последний дом: HP восстановлено до ${stats.hpCurrent} (>= ${BLAKE_MIN_HP}) -> выхожу`);
-      break;
-    }
-
-    // Combine station use with fishing: whenever fishing is due (daily catches left, 2-minute
-    // cooldown elapsed), take that detour instead of a station, then jump to Кулак хаоса
-    // (fastest heal) and come back to the Последний дом station rotation.
-    if (canRunFishingNow()) {
-      console.log('Последний дом: пробую совместить с рыбалкой');
-      await runFishingViaLastPortalOrRoute(page);
-      await enterLastHouse();
-      continue;
-    }
-
-    const stationText = STATIONS[stationIndex % STATIONS.length];
-    const used = await clickByTexts(page, [stationText, stationText.toLowerCase()], stationText);
-
-    if (!used) {
-      console.log(`Последний дом: не удалось использовать "${stationText}", жду и пробую снова`);
-      await pause(page, 2000, 4000);
-      continue;
-    }
-
-    stationIndex += 1;
-    await pause(page, 800, 1600);
-
-    await clickByTexts(page, ['Назад', 'назад'], 'Назад');
-    await pause(page, 800, 1600);
-
-    await clickHealingRefreshLink(page);
-    const afterStats = parseStats(await getBodyText(page));
-    const cooldown = typeof afterStats.cooldown === 'number' ? afterStats.cooldown : afterStats.reserveMinutes;
-
-    if (typeof cooldown === 'number' && cooldown < 0) {
-      // The cooldown value itself isn't a reliable minutes-to-wait figure (it doesn't regen
-      // 1:1 per minute) — just wait a fixed 20-25 min, same as the "unparseable" fallback below.
-      const waitMinutes = 20 + Math.floor(Math.random() * 6);
-      await waitStationCooldown(waitMinutes, `кулдаун ушёл в минус (${cooldown})`);
-    } else if (typeof cooldown !== 'number') {
-      // Couldn't read the cooldown at all (e.g. header format didn't match) — rather than hammer
-      // the loop with instant retries, back off a fixed 20-25 min like a normal cooldown wait.
-      const waitMinutes = 20 + Math.floor(Math.random() * 6);
-      await waitStationCooldown(waitMinutes, 'не удалось прочитать кулдаун');
-    }
-  }
-
-  const returned = await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU);
-  if (returned) {
-    await pause(page, 800, 1600);
-  } else {
-    console.log('Последний дом: кнопка "В игру" не найдена, возвращаюсь через Стоунгард');
-    await useRecovery(page);
-  }
 }
 
 async function getStatsFromPage(page, label, providedText = null) {
@@ -4691,20 +3980,12 @@ async function goToLocationAndReadStats(page, label) {
       return { text, stats: null, attackHandled: true };
     }
 
-    // If HP is still critically negative after the quick Chaos Fist, do a full recovery
-    // at Форпост/Последний дом instead of just sleeping it off.
+    // If HP is massively negative, stop all actions for a long cooldown window.
     const postNeg = text.match(/\((-?\d+)\s*\/\s*(\d+)\)/);
     const postNegValue = postNeg ? Number(postNeg[1]) : null;
-    if (Number.isFinite(postNegValue) && postNegValue < LAST_HOUSE_HP_THRESHOLD) {
-      console.log(`HP still critical after Chaos (${postNegValue}) -> Форпост/Последний дом`);
-      await runLastHouseRecovery(page);
-      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await pause(page, 1000, 2000);
-      text = await getBodyText(page);
-      attackHandled = await handleIncomingAttackIfAny(page, text);
-      if (attackHandled) {
-        return { text, stats: null, attackHandled: true };
-      }
+    if (Number.isFinite(postNegValue) && postNegValue <= -10000) {
+      scheduleLongRestMinutes(90, 'hp_big_negative');
+      throw new Error(`hp_big_negative:${postNegValue}`);
     }
   }
 
@@ -4839,36 +4120,12 @@ async function runVinogradTask(page) {
     retries: 3,
   });
 
-  // Sometimes "В город (север)" already lands directly on the vineyard page
-  // (recognizable by "Посадить семя винограда"/"Сделать вино"), so the "Виноградники"
-  // link isn't there to click — skip straight to checking for the water option.
-  const preVinoText = await getBodyText(page);
-  const alreadyOnVineyardPage =
-    /Посадить семя винограда/i.test(preVinoText) || /Сделать вино/i.test(preVinoText);
-
-  if (!alreadyOnVineyardPage) {
-    // "Посадить семя винограда"/"Сделать вино" are always on the vineyard page, watering or
-    // not — treat arriving there as success even if "Полить виноград" itself isn't offered.
-    await performStep(page, {
-      stepName: VINO,
-      currentTexts: [VINO, VINO.toLowerCase()],
-      nextTexts: [
-        WATER, WATER.toLowerCase(),
-        'Посадить семя винограда', 'посадить семя винограда',
-        'Сделать вино', 'сделать вино',
-      ],
-      retries: 3,
-    });
-  }
-
-  // Watering can be unavailable (e.g. "Сделать вино (квестзапрет 6ч)" shown instead) —
-  // that's a normal state, not an error. Just bail out; VINOGRAD_INTERVAL_MS handles retiming.
-  const vineyardText = await getBodyText(page);
-  if (!/Полить виноград/i.test(vineyardText)) {
-    console.log('Виноград: полить сейчас нельзя (не готово/квестзапрет) — это нормально, следующая попытка через 8 часов');
-    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
-    return;
-  }
+  await performStep(page, {
+    stepName: VINO,
+    currentTexts: [VINO, VINO.toLowerCase()],
+    nextTexts: [WATER, WATER.toLowerCase()],
+    retries: 3,
+  });
 
   await performStep(page, {
     stepName: WATER,
@@ -4884,285 +4141,6 @@ async function runVinogradTask(page) {
     nextTexts: [],
     retries: 3,
   });
-}
-
-function isStatueOfGloryDue() {
-  if (!lastStatueRunAt || !nextStatueDueAt) {
-    return true;
-  }
-  return Date.now() >= nextStatueDueAt;
-}
-
-function scheduleNextStatueOfGlory() {
-  lastStatueRunAt = Date.now();
-  const minutes = randomInt(STATUE_MIN_INTERVAL_MINUTES, STATUE_MAX_INTERVAL_MINUTES);
-  nextStatueDueAt = lastStatueRunAt + minutes * 60 * 1000;
-  persistDailyQuestState();
-}
-
-async function runStatueOfGloryTask(page) {
-  console.log('Статуя славы: начинаю маршрут Конь -> Клановый замок -> Идти к замку -> Статуя славы -> В игру');
-
-  const HORSE       = 'Конь';
-  const CLAN_CASTLE = 'Клановый замок';
-  const V_PUTI      = 'В пути';
-  const V_PUTI_E    = 'В пути еще';
-  const V_PUTI_Y    = 'В пути ещё';
-  const TO_CASTLE   = 'Идти к замку';
-  // На странице замка кнопка называется "Статуя Cлавы", где "C" — ЛАТИНСКАЯ буква (U+0043), а
-  // не кириллическая "С", плюс вторая буква заглавная. Поэтому ищем по первому слову "Статуя"
-  // (чистая кириллица, однозначное) — оно уникально на странице замка и матчится как подстрока.
-  const STATUE      = 'Статуя';
-  // Confirmed real success message — "В игру" is always in the top nav (present even before the
-  // click), so it can't be used to tell whether the click actually worked.
-  const STATUE_DONE = 'Мощь статуи будет поддерживать вас в бою';
-  const V_IGRU      = 'В игру';
-
-  await performStep(page, {
-    stepName: HORSE,
-    currentTexts: [HORSE, HORSE.toLowerCase()],
-    nextTexts: [CLAN_CASTLE, CLAN_CASTLE.toLowerCase()],
-    retries: 3,
-  });
-
-  // После выбора клановый замок нужно 7 сек — затем появляется экран поездки
-  // ("В пути"/"В пути еще"), и только после подтверждения — "Идти к замку".
-  await performStep(page, {
-    stepName: CLAN_CASTLE,
-    currentTexts: [CLAN_CASTLE, CLAN_CASTLE.toLowerCase()],
-    waitAfterClickMs: 7000,
-    nextTexts: [
-      V_PUTI, V_PUTI.toLowerCase(),
-      V_PUTI_E, V_PUTI_E.toLowerCase(),
-      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
-      TO_CASTLE, TO_CASTLE.toLowerCase(),
-    ],
-    retries: 3,
-  });
-
-  // Кликаем "В пути" (подтверждение) и ждём до 30 сек пока появится "Идти к замку".
-  await tryPerformStepOptional(page, {
-    stepName: V_PUTI,
-    currentTexts: [
-      V_PUTI_E, V_PUTI_E.toLowerCase(),
-      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
-      V_PUTI, V_PUTI.toLowerCase(),
-    ],
-    nextTexts: [TO_CASTLE, TO_CASTLE.toLowerCase()],
-    waitForNextMs: 30000,
-  });
-
-  await performStep(page, {
-    stepName: TO_CASTLE,
-    currentTexts: [TO_CASTLE, TO_CASTLE.toLowerCase()],
-    nextTexts: [STATUE, STATUE.toLowerCase()],
-    retries: 3,
-  });
-
-  await performStep(page, {
-    stepName: STATUE,
-    currentTexts: [STATUE, STATUE.toLowerCase()],
-    nextTexts: [STATUE_DONE, STATUE_DONE.toLowerCase()],
-    retries: 3,
-    skipIfNextVisible: false,
-    // The button isn't a plain a/button/input element, and clickByTextsLoose's "must be the only
-    // match" safety check was still refusing to click it — force through as a last resort.
-    clickFn: clickByTextsForced,
-  });
-
-  await performStep(page, {
-    stepName: V_IGRU,
-    currentTexts: [V_IGRU, V_IGRU.toLowerCase()],
-    nextTexts: [],
-    retries: 3,
-  });
-}
-
-// Рыбалка (ловим карасей на кухню для Последнего дома): Конь -> Клановый замок -> В пути ->
-// Идти на север -> Рыбачить -> Забросить удочку -> В игру. Первые шаги совпадают со Статуей
-// славы вплоть до подтверждения поездки, дальше маршрут расходится.
-function isFishingSpotLocation(text) {
-  return /Рыбачить/i.test(String(text || ''));
-}
-
-// Конь -> Клановый замок -> В пути (7 сек) -> Идти на север -> [Рыбачить видно на странице].
-async function goRouteToFishingSpot(page) {
-  const HORSE       = 'Конь';
-  const CLAN_CASTLE  = 'Клановый замок';
-  const V_PUTI       = 'В пути';
-  const V_PUTI_E     = 'В пути еще';
-  const V_PUTI_Y     = 'В пути ещё';
-  const NORTH        = 'Идти на север';
-  const FISH_SPOT     = 'Рыбачить';
-
-  await performStep(page, {
-    stepName: HORSE,
-    currentTexts: [HORSE, HORSE.toLowerCase()],
-    nextTexts: [CLAN_CASTLE, CLAN_CASTLE.toLowerCase()],
-    retries: 3,
-  });
-
-  // После выбора клановый замок нужно 7 сек — затем появляется экран поездки
-  // ("В пути"/"В пути еще"), и только после подтверждения — "Идти на север".
-  await performStep(page, {
-    stepName: CLAN_CASTLE,
-    currentTexts: [CLAN_CASTLE, CLAN_CASTLE.toLowerCase()],
-    waitAfterClickMs: 7000,
-    nextTexts: [
-      V_PUTI, V_PUTI.toLowerCase(),
-      V_PUTI_E, V_PUTI_E.toLowerCase(),
-      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
-      NORTH, NORTH.toLowerCase(),
-    ],
-    retries: 3,
-  });
-
-  // Кликаем "В пути" (подтверждение) и ждём до 30 сек пока появится "Идти на север".
-  await tryPerformStepOptional(page, {
-    stepName: V_PUTI,
-    currentTexts: [
-      V_PUTI_E, V_PUTI_E.toLowerCase(),
-      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
-      V_PUTI, V_PUTI.toLowerCase(),
-    ],
-    nextTexts: [NORTH, NORTH.toLowerCase()],
-    waitForNextMs: 30000,
-  });
-
-  await performStep(page, {
-    stepName: NORTH,
-    currentTexts: [NORTH, NORTH.toLowerCase()],
-    nextTexts: [FISH_SPOT, FISH_SPOT.toLowerCase()],
-    retries: 3,
-  });
-}
-
-// Post-fishing result screen usually has "В игру", but sometimes the game returns straight to the
-// normal location view (Ивовое озеро с навигацией Амулет|Конь), where "В игру" isn't present.
-// Click it if there; otherwise we're already back in the game — don't throw. Fall back to location.php.
-async function leaveFishingResultToGame(page) {
-  const clicked = await clickByTexts(page, ['В игру', 'в игру'], 'В игру (после рыбалки)');
-  if (clicked) {
-    await pause(page, 800, 1600);
-    return;
-  }
-
-  const text = await getBodyText(page);
-  if (/Амулет/i.test(text) || /Рыбачить/i.test(text)) {
-    // Уже на обычной странице локации (есть навигация Амулет / действие Рыбачить) — всё ок.
-    return;
-  }
-
-  try {
-    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await pause(page, 800, 1600);
-  } catch (e) { /* ignore */ }
-}
-
-// Assumes we're already at the fishing spot ("Рыбачить" visible). Does NOT navigate away
-// afterward — the caller decides where to go next (В игру, or Кулак хаоса during recovery).
-async function castFishingRodAndDetectCatch(page) {
-  const FISH_SPOT = 'Рыбачить';
-  const CAST = 'Забросить удочку';
-
-  await performStep(page, {
-    stepName: FISH_SPOT,
-    currentTexts: [FISH_SPOT, FISH_SPOT.toLowerCase()],
-    nextTexts: [CAST, CAST.toLowerCase()],
-    retries: 3,
-  });
-
-  // Дневной лимит рыбы кончился: после "Рыбачить" игра показывает "Похоже, вы выловили всю рыбу,
-  // приходите завтра" вместо кнопки "Забросить удочку". Наш счётчик может ещё показывать <6 (лимит
-  // считается на сервере), поэтому выставляем его в лимит, чтобы canRunFishingNow больше не гонял
-  // на рыбалку, и выходим чисто — без ошибки и общего бэкоффа "Retry after N min".
-  const afterRodText = await getBodyText(page);
-  if (/выловили\s+всю\s+рыбу/i.test(afterRodText)) {
-    console.log('Рыбалка: на сегодня рыба закончилась ("выловили всю рыбу") -> отмечаю лимит и выхожу');
-    syncFishingDayState();
-    fishingCatchesToday = FISHING_DAILY_CATCH_LIMIT;
-    lastFishingAttemptAt = Date.now();
-    persistDailyQuestState();
-    await leaveFishingResultToGame(page);
-    return false;
-  }
-
-  await performStep(page, {
-    stepName: CAST,
-    currentTexts: [CAST, CAST.toLowerCase()],
-    nextTexts: [],
-    retries: 3,
-    skipIfNextVisible: false,
-  });
-
-  // Confirmed real success text: "...Вы с легким усилием вытаскиваете из воды карася! Далее".
-  // Match on the "карас" stem anywhere in the result rather than the exact phrasing, since a
-  // failed attempt presumably doesn't mention the fish at all.
-  const resultText = await getBodyText(page);
-  const caught = /карас[а-я]*/i.test(resultText);
-
-  lastFishingAttemptAt = Date.now();
-
-  if (caught) {
-    syncFishingDayState();
-    fishingCatchesToday += 1;
-    persistDailyQuestState();
-    console.log(`Рыбалка: поймали карася (${fishingCatchesToday}/${FISHING_DAILY_CATCH_LIMIT} today)`);
-  } else {
-    console.log('Рыбалка: не повезло в этот раз');
-  }
-
-  // The result (catch or miss) is usually a separate confirmation screen with "В игру", but the
-  // game sometimes drops us straight back to the location view (no "В игру"). Handle both cleanly.
-  await leaveFishingResultToGame(page);
-
-  return caught;
-}
-
-// Used between quests: full route there, fish once, return to the city.
-// castFishingRodAndDetectCatch already clicks "В игру" at the end, landing back on the main
-// location page.
-async function runFishingTask(page) {
-  console.log('Рыбалка: начинаю маршрут Конь -> Клановый замок -> В пути -> Идти на север -> Рыбачить -> Забросить удочку -> В игру');
-
-  await goRouteToFishingSpot(page);
-  await castFishingRodAndDetectCatch(page);
-}
-
-// Used during critical-HP recovery (Последний дом): try the "Последний портал" shortcut first
-// (same pattern as goblins — if it lands at the fishing spot, great; otherwise the full manual
-// route). After fishing, jump to Кулак хаоса (fastest heal) instead of returning to the city.
-async function runFishingViaLastPortalOrRoute(page) {
-  console.log('Рыбалка (во время восстановления): пробую Последний портал');
-
-  const AMULET = 'Амулет';
-  const LAST_PORTAL = 'Последний портал';
-
-  const amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
-  if (amuletOk) {
-    await pause(page, 800, 2000);
-    const portalOk = await clickByTexts(page, [LAST_PORTAL, LAST_PORTAL.toLowerCase()], LAST_PORTAL);
-    if (portalOk) {
-      await pause(page, 800, 2000);
-      const afterPortalText = await getBodyText(page);
-      if (isFishingSpotLocation(afterPortalText)) {
-        await castFishingRodAndDetectCatch(page);
-        await goToChaosByAmulet(page);
-        return;
-      }
-      console.log('Fishing last portal did not reach the fishing spot -> routing manually.');
-    } else {
-      await clickByTexts(page, ['Вернуться', 'вернуться'], 'Вернуться');
-      await pause(page, 800, 1600);
-    }
-  }
-
-  // Fallback: manual route.
-  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await pause(page, 1000, 2000);
-  await goRouteToFishingSpot(page);
-  await castFishingRodAndDetectCatch(page);
-  await goToChaosByAmulet(page);
 }
 
 async function doScenario(page) {
@@ -5186,9 +4164,10 @@ async function doScenario(page) {
     throw new Error('failed to parse HP/cooldown');
   }
 
-  if (shouldGoLastHouseByStats(stats)) {
-    console.log(`HP < ${LAST_HOUSE_HP_THRESHOLD} (${stats.hpCurrent}) -> Форпост/Последний дом`);
-    await runLastHouseRecovery(page);
+  if (stats.hpCurrent !== null && stats.hpCurrent < -10000) {
+    console.log(`HP < -10000 (${stats.hpCurrent}) -> go to rest location and sleep 90 min`);
+    await goToLowHpRestViaFastway(page, 'low_hp_rest');
+    scheduleLongRestMinutes(90, 'low_hp');
     return;
   }
 
@@ -5204,34 +4183,6 @@ async function doScenario(page) {
     console.log(`Виноград: ${vinogradDue ? 'прошло 8 часов' : 'обнаружено задание'}, выполняю маршрут`);
     await runVinogradTask(page);
     lastVinogradRunAt = Date.now();
-    persistDailyQuestState();
-  }
-
-  // Статуя славы: раз в 12-14 часов. Если не удалось — не роняем весь цикл в общий бэкофф
-  // "Retry after N min", а логируем, планируем следующую попытку и продолжаем цикл дальше.
-  if (isStatueOfGloryDue()) {
-    console.log('Статуя славы: подошёл интервал 12-14 часов, выполняю маршрут');
-    try {
-      await runStatueOfGloryTask(page);
-    } catch (e) {
-      console.log(`Статуя славы: не удалось (${e.message}) -> пропускаю, продолжаю цикл`);
-      try {
-        await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await pause(page, 800, 1600);
-      } catch (e2) { /* ignore */ }
-    }
-    scheduleNextStatueOfGlory();
-  }
-
-  // Рыбалка: между квестами, до 6 успешных уловов в день. Эта проверка стоит только здесь,
-  // в верхней части цикла — фарм ниже её никогда не запускает. Если персонаж уже на локации
-  // фарма (между боями), рыбалку пропускаем, чтобы не гонять туда-обратно (для Блейка проход
-  // ещё и платный) ради необязательного филлера.
-  if (canRunFishingNow() && isFarmLocation(read.text)) {
-    console.log('Рыбалка: пропускаю в этом цикле (уже на локации фарма)');
-  } else if (canRunFishingNow()) {
-    console.log('Рыбалка: пробую поймать карася');
-    await runFishingTask(page);
   }
 
   let didAnyQuest = false;
@@ -5374,7 +4325,8 @@ async function doScenario(page) {
   if (canRunFishEyeFightNow()) {
     didAttemptNonQQuestThisCycle = true;
     const fightResult = await runNonQQuestSafe(page, 'Fish Eye fight', async () => {
-      return await runFishEyeFight(page);
+      await runFishEyeFight(page);
+      return true;
     });
 
     if (fightResult === null) {
@@ -5391,14 +4343,6 @@ async function doScenario(page) {
       didAnyQuest = true;
 
       read = await goToLocationAndReadStats(page, 'stats after fish eye fight');
-      if (read.attackHandled) {
-        return;
-      }
-      stats = read.stats;
-    } else {
-      // fightResult === false: arena reported its own in-game cooldown, already rescheduled
-      // and backed out cleanly (no error). Just refresh stats before moving on.
-      read = await goToLocationAndReadStats(page, 'stats after fish eye cooldown');
       if (read.attackHandled) {
         return;
       }
@@ -5421,11 +4365,7 @@ async function doScenario(page) {
     stats = read.stats;
   }
 
-  // Don't pay the Blake boat fee twice: if we're already at the farm location, ride out a low-HP
-  // dead zone in place (falls through to the farm loop below, which will just stay put) instead of
-  // taking a "free" Fastway trip to Стоунгард that then requires paying to get back to Blake.
-  // (For goblins there's no paid passage, but staying put is harmless and consistent.)
-  if (shouldRecoverByStats(stats) && !isFarmLocation(read.text)) {
+  if (shouldRecoverByStats(stats)) {
     console.log('recovery condition met -> go to stoneguard');
     await useRecovery(page);
     return;
@@ -5433,18 +4373,18 @@ async function doScenario(page) {
 
   const noTargetQuestsInQ = !hadAnyTargetQuestInQMenu;
   const noNonQQuestDueNow = !canRunAnyNonQQuestNow(stats);
-  const canSwitchToFarmNow = noTargetQuestsInQ && noNonQQuestDueNow;
+  const canSwitchToGoblinsNow = noTargetQuestsInQ && noNonQQuestDueNow;
 
-  if (didAnyQuest && !canSwitchToFarmNow) {
-    console.log('Some quests were handled this cycle -> skip farm fights');
+  if (didAnyQuest && !canSwitchToGoblinsNow) {
+    console.log('Some quests were handled this cycle -> skip goblin fights');
     scheduleQuestFollowup('quests_progress');
     return;
   }
 
   // If our configured Q quests are available but we couldn't progress them (errors / missing buttons),
-  // don't get stuck in a fast-retry loop: go to the farm if nothing else was done this cycle.
+  // don't get stuck in a fast-retry loop: go goblins if nothing else was done this cycle.
   if (hadAnyTargetQuestInQMenu && !didAnyQuest) {
-    console.log(`Target quests are available in Q menu but none were progressed -> go ${FARM_TARGET}`);
+    console.log('Target quests are available in Q menu but none were progressed -> go goblins');
   } else if (hadAnyTargetQuestInQMenu) {
     console.log('Target quests are available in Q menu but none were progressed -> retry quests soon');
     scheduleQuestFollowup('quests_available_but_no_progress');
@@ -5453,44 +4393,28 @@ async function doScenario(page) {
 
   // If there are no target quests in Q and a priority non-Q quest is due:
   // - if we DID NOT attempt it this cycle, retry soon
-  // - if we attempted it and it failed, continue to the farm (no retry loop)
+  // - if we attempted it and it failed, continue to goblins (no retry loop)
   if (canRunAnyNonQQuestNow(stats) && !didAttemptNonQQuestThisCycle) {
     console.log('No target Q quests, but a non-Q quest is due -> retry quests soon');
     scheduleQuestFollowup('non_q_due');
     return;
   }
 
-  if (canSwitchToFarmNow && didAnyQuest) {
-    console.log(`No target quests remain and no non-Q quest is due -> go ${FARM_TARGET} now`);
+  if (canSwitchToGoblinsNow && didAnyQuest) {
+    console.log('No target quests remain and no non-Q quest is due -> go goblins now');
   }
 
-  // Прощальный заброс перед переездом на Блейка. Мы всё равно уходим с материка (после квестов /
-  // Рыбьего глаза / восстановления мы уже НЕ на острове), а лодка на Блейка всё равно одна и та же —
-  // поэтому если дневной лимит рыбы не выбран и кулдаун рыбалки прошёл, делаем ОДНУ попытку на
-  // материке (Ивовое озеро бесплатно) и в этом же цикле едем фармить. Фарм не откладывается на
-  // будущие циклы (нет return/ожидания) — это чистое использование уже открытого окна вне острова,
-  // без лишних платных проходов (лодка на остров всё равно одна). На острове рыбалку по-прежнему
-  // пропускаем: !isFarmLocation гарантирует, что с Блейка ради рыбалки мы не уходим.
-  if (!isFarmLocation(read.text) && canRunFishingNow()) {
-    console.log('Прощальный заброс на материке перед переездом на Блейка');
-    await runFishingTask(page);
-  }
-
-  let didAnyFarmFight = false;
-  while (shouldFightFarmByStats(stats)) {
+  let didAnyGoblinFight = false;
+  while (shouldFightByStats(stats)) {
     console.log('can fight -> start fight');
 
     try {
-      await ensureFarmFightScreen(page);
+      await ensureGoblinFightScreen(page);
       await fightLoop(page);
-      didAnyFarmFight = true;
+      didAnyGoblinFight = true;
     } catch (e) {
-      console.log(`Farm fight flow error: ${e.message}`);
-      await recoverToCity(page, `${FARM_TARGET}: ${e.message}`);
-      // Usually a one-off page-load glitch (empty page, route link not found yet) rather than a
-      // real problem -> retry almost immediately instead of sleeping the full default cycle.
-      nextCycleDelayOverrideMs = 10 * 1000;
-      console.log('Retry in 10 sec (farm_fight_flow_error)');
+      console.log(`Goblin fight flow error: ${e.message}`);
+      await recoverToCity(page, `goblins: ${e.message}`);
       return;
     }
 
@@ -5513,35 +4437,36 @@ async function doScenario(page) {
       return;
     }
 
-    if (shouldGoLastHouseByStats(stats)) {
-      console.log(`post-fight HP < ${LAST_HOUSE_HP_THRESHOLD} (${stats.hpCurrent}) -> Форпост/Последний дом`);
-      await runLastHouseRecovery(page);
-      return;
-    }
-
     if (shouldGoChaosByStats(stats)) {
       console.log('post-fight HP below zero -> go to chaos fist');
       await goToChaosByAmulet(page);
       return;
     }
 
-    if (shouldFightFarmByStats(stats)) {
+    if (shouldRecoverByStats(stats)) {
+      console.log('post-fight recovery condition met');
+      await useRecovery(page);
+      return;
+    }
+
+    if (shouldFightByStats(stats)) {
       console.log('next fight is available');
       await pause(page, 1000, 2000);
       continue;
     }
 
-    // Stay at the farm location instead of returning to the city — leaving only happens above for
-    // negative HP (Последний дом / Кулак хаоса) or (outside this loop) when a quest needs attention.
-    // A depleted cooldown alone is not a reason to travel back; staying put means ensureFarmFightScreen
-    // can resume next cycle via the Последний портал shortcut instead of re-running the whole route.
-    console.log('no condition matched -> stay at farm location, stop cycle');
-    scheduleFarmNextCycle(stats, didAnyFarmFight);
+    await goToStoneguardViaFastway(page, 'Стоунгард после боя');
+    console.log('no condition matched, stop cycle');
+    if (didAnyGoblinFight) {
+      scheduleQuestFollowup('goblins');
+    }
     return;
   }
 
   console.log('nothing to do this cycle');
-  scheduleFarmNextCycle(stats, didAnyFarmFight);
+  if (didAnyGoblinFight) {
+    scheduleQuestFollowup('goblins');
+  }
 }
 
 (async () => {
@@ -5558,20 +4483,10 @@ async function doScenario(page) {
     page = await context.newPage();
   }
 
-  while (true) {
-    try {
-      await page.goto('http://lbast.ru/location.php', {
-        waitUntil: 'domcontentloaded',
-        timeout: 60000,
-      });
-      break;
-    } catch (e) {
-      console.log('Initial goto failed:', e.message);
-      const waitMs = isNetworkError(e) ? 60 * 1000 : 5 * 60 * 1000;
-      console.log('Retry in ' + Math.round(waitMs / 60000) + ' min.');
-      await fixedPause(page, waitMs);
-    }
-  }
+  await page.goto('http://lbast.ru/location.php', {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
 
   console.log('Browser opened. Start loop.');
 
@@ -5610,7 +4525,7 @@ async function doScenario(page) {
         scheduleLongRestMinutes(2, 'ui_stuck_recovery');
       }
 
-      const delayMs = nextCycleDelayOverrideMs ?? (isNetworkError(e) ? 60 * 1000 : getRandomCycleDelayMs());
+      const delayMs = nextCycleDelayOverrideMs ?? getRandomCycleDelayMs();
       nextCycleDelayOverrideMs = null;
       const delayMinutes = Math.round(delayMs / 60000);
       console.log('Retry after ' + delayMinutes + ' min.');

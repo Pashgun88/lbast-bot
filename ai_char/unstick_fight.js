@@ -1,0 +1,89 @@
+// Развязать залипший бой БЕЗОПАСНО.
+//
+// Незавершённый бой блокирует игру целиком: location.php отдаёт голый "В бой!", Q-меню не
+// открывается, parseStats даёт null/null. Выйти можно только пройдя бой. HP при этом
+// читается из АНКЕТЫ (pers.php) - она работает даже в залипшем состоянии.
+const { chromium } = require('playwright');
+const path = require('path');
+const { getBodyText, parseStats, fightLoop, clickByTexts, fixedPause } = require('./module');
+
+const FLOOR = 0.7;
+const MAX_WAIT_MS = 45 * 60 * 1000;
+
+async function readHpFromAnketa(page) {
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const m = (await getBodyText(page)).match(/\((-?\d+)\s*\/\s*(\d+)\)/);
+  return m ? { current: Number(m[1]), max: Number(m[2]) } : null;
+}
+
+async function ackFinishedFightIfAny(page) {
+  await page.goto("http://lbast.ru/location.php", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+  const boj = await page.evaluate(() => {
+    const a = Array.from(document.querySelectorAll("a")).find((x) => (x.getAttribute("href") || "").includes("boj="));
+    return a ? a.getAttribute("href") : null;
+  }).catch(() => null);
+  if (!boj) return false;
+  await page.goto("http://lbast.ru/" + (boj[0] === "/" ? boj.slice(1) : boj), { waitUntil: "domcontentloaded", timeout: 60000 });
+  const text = await getBodyText(page);
+  if (!/Бой завершен/i.test(text)) return false;
+  await clickByTexts(page, ["Бой завершен!", "Бой завершен"], "Бой завершен (подтверждение итога)").catch(() => {});
+  return true;
+}
+
+(async () => {
+  const ctx = await chromium.launchPersistentContext(path.join(process.cwd(), 'chrome-profile-ai-char'), {
+    headless: false,
+    viewport: null,
+  });
+  const page = ctx.pages()[0] || (await ctx.newPage());
+
+  // 18.09.2026: голый "В бой!" на локации бывает не висящим, а УЖЕ ЗАВЕРШЁННЫМ боем, итог
+  // которого просто не подтвердили. Игра держит персонажа на экране итога, и HP при этом НЕ
+  // восстанавливается. Раньше скрипт сначала ждал HP - и прождал впустую 15 часов на 0/380,
+  // хотя разблокировка была одним заходом на экран боя. Поэтому сначала смотрим экран боя.
+  if (await ackFinishedFightIfAny(page)) {
+    console.log("Бой был уже завершён - итог подтверждён, игра свободна.");
+    await ctx.close();
+    return;
+  }
+
+  let hp = await readHpFromAnketa(page);
+  if (!hp) {
+    console.log('HP не читается даже из анкеты -> в бой не иду, нужна ручная проверка.');
+    await ctx.close();
+    return;
+  }
+  console.log(`HP из анкеты: ${hp.current}/${hp.max} (${Math.round((hp.current / hp.max) * 100)}%)`);
+
+  const need = Math.ceil(hp.max * FLOOR);
+  const deadline = Date.now() + MAX_WAIT_MS;
+  while (hp.current < need && Date.now() < deadline) {
+    console.log(`Жду восстановления: ${hp.current}/${hp.max}, нужно ${need}`);
+    await fixedPause(page, 60_000);
+    // 17.09.2026: разовый сетевой обрыв (page.goto: Timeout 60000ms) внутри цикла ожидания
+    // ронял ВЕСЬ скрипт необработанным отклонением - персонаж так и оставался в залипшем бою.
+    // DNS от VPN шатается, такие обрывы здесь норма: ждём дальше, а не падаем.
+    const next = await readHpFromAnketa(page).catch((e) => {
+      console.log("Не смог прочитать анкету (" + e.message + ") - подожду ещё минуту и повторю.");
+      return null;
+    });
+    if (next) hp = next;
+  }
+  if (hp.current < need) {
+    console.log(`HP не дотянуло (${hp.current}/${hp.max}) -> бой не начинаю.`);
+    await ctx.close();
+    return;
+  }
+
+  console.log(`HP в порядке (${hp.current}/${hp.max}) -> развязываю бой.`);
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await clickByTexts(page, ['В бой!', 'в бой!', 'В бой', 'в бой'], 'В бой! (развязать залипший бой)').catch(() => {});
+  await fightLoop(page).catch((e) => console.log('fightLoop error:', e.message));
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const after = parseStats(await getBodyText(page));
+  console.log(`ПОСЛЕ БОЯ: HP ${after.hpCurrent}/${after.hpMax}`);
+  console.log('Экран:', (await getBodyText(page)).slice(0, 300));
+
+  await ctx.close();
+})().catch((e) => { console.error("unstick_fight упал:", e.message); process.exit(1); });

@@ -216,25 +216,40 @@ if (!ALLOWED_CHAT_ID) {
 
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// Каждый сценарий: путь к скрипту + доп. переменные окружения при запуске.
-// "Квесты + Блейки" и "Квесты + Гоблины" — один и тот же главный скрипт, отличается только
-// цель фарма после квестов (FARM_TARGET читается в daily_quests_piraty.js).
 const SCRIPTS = {
-  'Квесты + Блейки': { path: './daily_quests_piraty.js', env: { FARM_TARGET: 'blake' } },
-  'Квесты + Гоблины': { path: './daily_quests_piraty.js', env: { FARM_TARGET: 'goblins' } },
-  'Янтарная гора': { path: './yantar_v_gore.js', env: {} },
+  'Квесты': './daily_quests_piraty.js',
+  'Волки': './volki_v_lesu.js',
+  'Гоблины': './gobliny_v_shahtah.js',
+  'Блейк': './bleyk.js',
+  'Янтарная гора': './yantar_v_gore.js',
 };
 
 const START_DELAYS = {
+  'Старт 2ч': 2,
+  'Старт 3ч': 3,
+  'Старт 4ч': 4,
   'Старт 6ч': 6,
+};
+
+const DURATIONS = {
+  'Длительность 1ч': 1,
+  'Длительность 2ч': 2,
+  'Длительность 3ч': 3,
+  'Длительность 8ч': 8,
+  'Длительность 24ч': 24,
+  'Длительность 48ч': 48,
+  'Длительность 72ч': 72,
 };
 
 const KEYBOARD = {
   keyboard: [
-    ['Квесты + Блейки', 'Квесты + Гоблины'],
-    ['Янтарная гора'],
-    ['Запустить сейчас', 'Статус', 'Стоп'],
-    ['Старт 6ч'],
+    ['Квесты'],
+    ['Волки', 'Гоблины', 'Блейк'],
+    ['Янтарная гора', 'Запустить сейчас', 'Статус'],
+    ['Стоп', 'Старт 2ч', 'Старт 3ч'],
+    ['Старт 4ч', 'Старт 6ч', 'Длительность 1ч'],
+    ['Длительность 2ч', 'Длительность 3ч', 'Длительность 8ч'],
+    ['Длительность 24ч', 'Длительность 48ч', 'Длительность 72ч'],
   ],
   resize_keyboard: true,
 };
@@ -243,8 +258,8 @@ const ENABLE_PVP_ALERTS = true;
 
 let selectedScriptName = null;
 let selectedScriptPath = null;
-let selectedScriptEnv = {};
 let selectedStartDelayHours = null;
+let selectedRunDurationHours = null;
 
 let isRunning = false;
 let currentProcess = null;
@@ -253,6 +268,8 @@ let currentLogPath = null;
 
 let startTimerId = null;
 let plannedStartAt = null;
+let stopTimerId = null;
+let runWindowEndAt = null;
 
 let lastRunStartedAt = null;
 let lastRunFinishedAt = null;
@@ -265,53 +282,11 @@ let pollDelayMs = 2000;
 
 let pvpAlertSentForCurrentRun = false;
 
-// Автоперерыв рандомизирован, чтобы расписание не было машинно-ровным:
-// активность 17–18ч, затем перерыв 6–6.6ч. Значения выбираются заново на каждый цикл.
-const AUTO_BREAK_AFTER_MIN_H = 17;
-const AUTO_BREAK_AFTER_MAX_H = 18;
-const AUTO_BREAK_DURATION_MIN_H = 6;
-const AUTO_BREAK_DURATION_MAX_H = 6.6;
+const AUTO_BREAK_AFTER_MS = 18 * 60 * 60 * 1000;
+const AUTO_BREAK_DURATION_MS = 6 * 60 * 60 * 1000;
 let autoBreakTimerId = null;
 let autoBreakRestartAt = null;
 let isAutoBreakStop = false;
-
-function randomHoursMs(minH, maxH) {
-  const h = minH + Math.random() * (maxH - minH);
-  return Math.round(h * 60 * 60 * 1000);
-}
-
-function formatHours(ms) {
-  return (ms / (60 * 60 * 1000)).toFixed(1);
-}
-
-function scheduleAutoBreak() {
-  clearAutoBreakTimer();
-  const activeMs = randomHoursMs(AUTO_BREAK_AFTER_MIN_H, AUTO_BREAK_AFTER_MAX_H);
-
-  autoBreakTimerId = setTimeout(async () => {
-    autoBreakTimerId = null;
-    if (!isRunning || !currentProcess) return;
-
-    isAutoBreakStop = true;
-    currentProcess.kill('SIGTERM');
-
-    const breakMs = randomHoursMs(AUTO_BREAK_DURATION_MIN_H, AUTO_BREAK_DURATION_MAX_H);
-    const restartAt = new Date(Date.now() + breakMs);
-    autoBreakRestartAt = restartAt;
-
-    await sendToAllowedChat(
-      `Автоперерыв: ${selectedScriptName} работал ${formatHours(activeMs)}ч.\n` +
-      `Перерыв на ${formatHours(breakMs)}ч. Перезапуск в: ${formatDate(restartAt)}`
-    );
-
-    autoBreakTimerId = setTimeout(async () => {
-      autoBreakTimerId = null;
-      autoBreakRestartAt = null;
-
-      await runSelectedScript('авто-перезапуск после перерыва');
-    }, breakMs);
-  }, activeMs);
-}
 
 function clearAutoBreakTimer() {
   if (autoBreakTimerId) {
@@ -319,6 +294,37 @@ function clearAutoBreakTimer() {
     autoBreakTimerId = null;
   }
   autoBreakRestartAt = null;
+}
+
+function scheduleAutoBreak() {
+  clearAutoBreakTimer();
+  autoBreakTimerId = setTimeout(async () => {
+    autoBreakTimerId = null;
+    if (!isRunning || !currentProcess) return;
+
+    isAutoBreakStop = true;
+    currentProcess.kill('SIGTERM');
+
+    const restartAt = new Date(Date.now() + AUTO_BREAK_DURATION_MS);
+    autoBreakRestartAt = restartAt;
+
+    await sendToAllowedChat(
+      `Автоперерыв: ${selectedScriptName} работал 18ч.\n` +
+      `Перерыв на 6ч. Перезапуск в: ${formatDate(restartAt)}`
+    );
+
+    autoBreakTimerId = setTimeout(async () => {
+      autoBreakTimerId = null;
+      autoBreakRestartAt = null;
+
+      if (runWindowEndAt && Date.now() >= runWindowEndAt.getTime()) {
+        await sendToAllowedChat('Автоперерыв завершен, но окно запуска уже истекло. Перезапуск пропущен.');
+        return;
+      }
+
+      await runSelectedScript('авто-перезапуск после 6ч перерыва');
+    }, AUTO_BREAK_DURATION_MS);
+  }, AUTO_BREAK_AFTER_MS);
 }
 
 function sleep(ms) {
@@ -342,7 +348,9 @@ function getStatusText() {
     `Статус: ${isRunning ? 'активен' : 'остановлен'}`,
     `Сценарий: ${selectedScriptName || 'не выбран'}`,
     `Задержка старта: ${selectedStartDelayHours ? `${selectedStartDelayHours} ч` : 'не задана'}`,
+    `Длительность: ${selectedRunDurationHours ? `${selectedRunDurationHours} ч` : 'не задана'}`,
     `Плановый старт: ${formatDate(plannedStartAt)}`,
+    `Окончание окна: ${formatDate(runWindowEndAt)}`,
     `Последний запуск: ${formatDate(lastRunStartedAt)}`,
     `Последнее завершение: ${formatDate(lastRunFinishedAt)}`,
     `Результат: ${lastRunResult}`,
@@ -574,6 +582,14 @@ function clearStartTimer() {
   plannedStartAt = null;
 }
 
+function clearStopTimer() {
+  if (stopTimerId) {
+    clearTimeout(stopTimerId);
+    stopTimerId = null;
+  }
+  runWindowEndAt = null;
+}
+
 function safeFilenamePart(value) {
   const raw = String(value || '').trim();
   if (!raw) return 'run';
@@ -724,9 +740,32 @@ async function maybeSendAttackAlert(lineText) {
   }
 }
 
+function scheduleStopTimer() {
+  clearStopTimer();
+  if (!selectedRunDurationHours) return;
+
+  runWindowEndAt = new Date(Date.now() + selectedRunDurationHours * 60 * 60 * 1000);
+  const delayMs = runWindowEndAt.getTime() - Date.now();
+
+  stopTimerId = setTimeout(async () => {
+    if (currentProcess && isRunning) {
+      currentProcess.kill('SIGTERM');
+      await sendToAllowedChat(`Достигнут лимит времени: ${selectedScriptName || 'сценарий'}`);
+    }
+    clearStopTimer();
+  }, delayMs);
+}
+
 async function runSelectedScript(reason = 'вручную') {
   if (!selectedScriptPath || !selectedScriptName) {
     await sendToAllowedChat('Сценарий не выбран. Выберите сценарий перед запуском.');
+    return;
+  }
+
+  const isManualStart = reason === 'вручную';
+  const isAutoRestart = reason.startsWith('авто-перезапуск');
+  if (!selectedRunDurationHours && !isManualStart && !isAutoRestart) {
+    await sendToAllowedChat('Выберите длительность, прежде чем запускать по таймеру.');
     return;
   }
 
@@ -750,11 +789,17 @@ async function runSelectedScript(reason = 'вручную') {
     writeRunLogLine('manager', `Script: ${selectedScriptPath}`);
   }
 
+  if (selectedRunDurationHours) {
+    scheduleStopTimer();
+  } else {
+    clearStopTimer();
+  }
+
   await sendToAllowedChat(
     `Запуск сценария: ${selectedScriptName}\n` +
     `Причина: ${reason}\n` +
     `Начало: ${formatDate(lastRunStartedAt)}\n` +
-    `Работает до остановки (автоперерыв 6ч каждые 18ч).`
+    `Окно до: ${formatDate(runWindowEndAt)}`
   );
 
   const fullScriptPath = path.resolve(__dirname, selectedScriptPath);
@@ -762,7 +807,6 @@ async function runSelectedScript(reason = 'вручную') {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: false,
-    env: { ...process.env, ...selectedScriptEnv },
   });
 
   let stdoutLineRemainder = '';
@@ -859,7 +903,7 @@ async function runSelectedScript(reason = 'вручную') {
 
 function scheduleDelayedStart() {
   clearStartTimer();
-  if (!selectedStartDelayHours || !selectedScriptPath) {
+  if (!selectedStartDelayHours || !selectedScriptPath || !selectedRunDurationHours) {
     return false;
   }
 
@@ -875,9 +919,11 @@ function scheduleDelayedStart() {
 
 async function stopEverything() {
   clearStartTimer();
+  clearStopTimer();
   clearAutoBreakTimer();
 
   selectedStartDelayHours = null;
+  selectedRunDurationHours = null;
 
   if (currentProcess && isRunning) {
     currentProcess.kill('SIGTERM');
@@ -897,8 +943,7 @@ async function handleText(chatId, text) {
 
   if (Object.prototype.hasOwnProperty.call(SCRIPTS, trimmed)) {
     selectedScriptName = trimmed;
-    selectedScriptPath = SCRIPTS[trimmed].path;
-    selectedScriptEnv = SCRIPTS[trimmed].env || {};
+    selectedScriptPath = SCRIPTS[trimmed];
     await sendMessage(chatId, `Выбран сценарий: ${selectedScriptName}`);
     return;
   }
@@ -906,6 +951,13 @@ async function handleText(chatId, text) {
   if (Object.prototype.hasOwnProperty.call(START_DELAYS, trimmed)) {
     selectedStartDelayHours = START_DELAYS[trimmed];
     await sendMessage(chatId, `Задержка старта: ${selectedStartDelayHours} ч.`);
+    await tryScheduleIfReady(chatId);
+    return;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(DURATIONS, trimmed)) {
+    selectedRunDurationHours = DURATIONS[trimmed];
+    await sendMessage(chatId, `Длительность: ${selectedRunDurationHours} ч.`);
     await tryScheduleIfReady(chatId);
     return;
   }
@@ -929,7 +981,7 @@ async function handleText(chatId, text) {
 }
 
 function hasScheduleParams() {
-  return Boolean(selectedScriptPath && selectedStartDelayHours);
+  return Boolean(selectedScriptPath && selectedStartDelayHours && selectedRunDurationHours);
 }
 
 async function tryScheduleIfReady(chatId) {
@@ -945,7 +997,7 @@ async function tryScheduleIfReady(chatId) {
   if (scheduleDelayedStart()) {
     await sendMessage(
       chatId,
-      `Запуск запланирован на ${formatDate(plannedStartAt)}.`
+      `Запуск запланирован на ${formatDate(plannedStartAt)}.\nДлительность окна: ${selectedRunDurationHours} ч.`
     );
   }
 }
@@ -1020,6 +1072,7 @@ async function main() {
 process.on('SIGINT', () => {
   pollingActive = false;
   clearStartTimer();
+  clearStopTimer();
   clearAutoBreakTimer();
 
   if (currentProcess && isRunning) {
