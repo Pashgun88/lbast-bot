@@ -29,6 +29,11 @@ const { recoverToCity } = require('./recovery');
 const { progressShtolniQuest } = require('./shtolni');
 const { progressTavernQuest } = require('./tavern');
 
+// Паша, 21.09.2026: «руму отключи». «Кузница Рума» каждую попытку платит 15 дин за лодку на
+// остров Глинбаг и упирается в fight_not_reached (20.09 это кончилось КО на -22/400). Пока
+// маршрут не починен, квест не запускаем и ферму он не держит.
+const RUMA_FORGE_ENABLED = false;
+
 // Квесты, которые мы РЕАЛЬНО умеем проходить и в которых есть бои. Нужны, чтобы решать, можно
 // ли сейчас тратить HP на ферму. Штольни СОЗНАТЕЛЬНО не включены: квест выключен
 // (SHTOLNI_ENABLED_FOR_AI = false) и висит в Q-меню всегда - иначе ферма выключилась бы навсегда.
@@ -72,6 +77,7 @@ function hasPendingFightQuests() {
     && (CHAIN_FIGHT_QUESTS.has(q) || /^Ордо/i.test(q) || /Рыбный ресторан/i.test(q));
   const skip = (q) => blockedByMode(q) || (merchantOut && /торгов/i.test(q))
     || (!FISH_RESTAURANT_ENABLED && q === 'Рыбный ресторан')
+    || (!RUMA_FORGE_ENABLED && q === 'Кузница Рума')
     || (q === 'Трактир «Рыбий глаз»' && !canRunFishEyeFightNow());
   return IMPLEMENTED_FIGHT_QUESTS
     .filter((q) => !skip(q))
@@ -135,7 +141,7 @@ async function runDailyQuests(page, stats) {
     'Дерево жизни',
     'Штольни',
     'Камни Драбаса',
-    'Кузница Рума',
+    ...(RUMA_FORGE_ENABLED ? ['Кузница Рума'] : []),
     'Еда для рыбака',
     'Грабим корованы',
   ];
@@ -187,7 +193,7 @@ async function runDailyQuests(page, stats) {
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
   }
 
-  if (isQQuestAllowed('Кузница Рума') && isQuestInMenu(listedQuests, 'Кузница Рума')) {
+  if (RUMA_FORGE_ENABLED && isQQuestAllowed('Кузница Рума') && isQuestInMenu(listedQuests, 'Кузница Рума')) {
     if (await runQuestStepSafe(page, 'Кузница Рума', () => progressRumaForgeQuest(page, { questCount }))) {
       didAnything = true;
     }

@@ -138,6 +138,35 @@ async function withHangGuard(page, label, ms, fn) {
   await page.goto('about:blank', { timeout: 30000 }).catch(() => {});
   return undefined;
 }
+// 21.09.2026 (Паша: «посмотри почему не запустился фарм утром / хром висел»): в 22:26 рендерер
+// Chrome завис на location.php, через три цикла драйвер пошёл пересоздавать вкладку - и не смог:
+// браузера уже не было («Target page, context or browser has been closed»). Дальше node крутился
+// девять часов вхолостую, ни фарма, ни сна, ни оповещения. Вкладку пересоздать нельзя, если
+// закрыт весь браузер, - значит нужен новый процесс. Перезапускаем себя тем же логом (append) и
+// выходим; Паше уходит строка в Telegram.
+const BROWSER_GONE_RE = /(context or browser has been closed|Browser has been closed|Target closed|browserContext\.newPage)/i;
+let restarting = false;
+function restartSelfBrowserGone(reason) {
+  if (restarting) return;
+  restarting = true;
+  console.log(`Браузер закрыт (${reason}) - вкладкой не спасти, перезапускаю драйвер.`);
+  try {
+    const { spawn } = require('child_process');
+    const fs = require('fs');
+    const out = fs.openSync(path.join(__dirname, 'driver_live.log'), 'a');
+    const err = fs.openSync(path.join(__dirname, 'driver_err.log'), 'a');
+    fs.writeSync(out, `
+===== RESTART (сам, браузер закрыт) ${new Date().toLocaleString('ru-RU')}
+`);
+    spawn(process.execPath, [__filename], {
+      cwd: __dirname, detached: true, stdio: ['ignore', out, err],
+    }).unref();
+  } catch (e) {
+    console.log('Самоперезапуск не удался:', e.message);
+  }
+  setTimeout(() => process.exit(1), 3000);
+}
+
 const HANG = Symbol('hang');
 
 async function readLocationStats(page) {
@@ -780,9 +809,13 @@ async function loginIfNeeded(page) {
             await page.close({ runBeforeUnload: false }).catch(() => {});
             page = fresh;
             await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-          } catch (e2) { console.log('Пересоздание вкладки не удалось:', e2.message); }
+          } catch (e2) {
+            console.log('Пересоздание вкладки не удалось:', e2.message);
+            if (BROWSER_GONE_RE.test(e2.message)) restartSelfBrowserGone(e2.message);
+          }
         }
       } else gotoFails = 0;
+      if (BROWSER_GONE_RE.test(e.message)) restartSelfBrowserGone(e.message);
     }
 
     if (didAnything) {
