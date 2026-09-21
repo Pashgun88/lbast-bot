@@ -347,8 +347,11 @@ const ASSASSIN_GUILD_QUESTS = [
 ];
 
 // Паша, 18.09.2026: "квесты асассинов - это прокачка морали в минус. Нам нужны квесты
-// Ордена". Выключено. Включить обратно: AI_ASSASSIN_QUESTS=1.
-const ASSASSIN_QUESTS_ENABLED = process.env.AI_ASSASSIN_QUESTS === '1';
+// Ордена". Было выключено.
+// Паша, 21.09.2026: «я вернул в информирование квесты ассасинов, делай их тоже, продадим» - предметы
+// (Четки торговца, Старая картина, Часы банкира) продаются игрокам по 50 дин (первая партия ушла Hank).
+// Включено по умолчанию; выключить снова: AI_ASSASSIN_QUESTS=0.
+const ASSASSIN_QUESTS_ENABLED = process.env.AI_ASSASSIN_QUESTS !== '0';
 
 async function runAssassinGuildQuestsIfAvailable(page) {
   if (!ASSASSIN_QUESTS_ENABLED) return false;
