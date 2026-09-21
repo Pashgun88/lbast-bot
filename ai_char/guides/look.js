@@ -23,7 +23,9 @@ const links = (page) => page.evaluate(() => Array.from(document.querySelectorAll
         await page.goto(`http://lbast.ru/location.php?mod=fastway&lway=${a.slice(5)}`, { waitUntil: "domcontentloaded", timeout: 60000 }); await sleep(6000); await page.goto("http://lbast.ru/location.php", { waitUntil: "domcontentloaded", timeout: 60000 });
       } else {
         const l = await links(page);
-        const hit = l.find((x) => norm(x.t).startsWith(norm(a)));
+        // 21.09.2026: «отказаться» совпало со ссылкой отмены Статуи славы (mod=statuenull) раньше, чем
+        // с отказом от задания, и бафф слетел. Эту ссылку разведка не нажимает никогда.
+        const hit = l.find((x) => norm(x.t).startsWith(norm(a)) && !/statuenull/i.test(x.h));
         if (!hit) { console.log(`НЕТ ССЫЛКИ: ${a}`); continue; }
         console.log(`клик: ${hit.t}`);
         await page.goto(new URL(hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });

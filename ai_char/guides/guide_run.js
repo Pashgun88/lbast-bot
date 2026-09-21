@@ -19,7 +19,8 @@ const LETTERS = process.env.LETTERS !== '0';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) => String(s || '').replace(/^[\s\-–—*•]+/, '').replace(/[«»"'.,!?…:;()]/g, '').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
 
-const links = (page) => page.evaluate(() => Array.from(document.querySelectorAll('a')).map((a) => ({ t: (a.innerText || '').trim().replace(/\s+/g, ' ').replace(/^[*•]\s*/, ''), h: a.getAttribute('href') || '' })).filter((x) => x.t)).catch(() => []);
+// statuenull - отмена Статуи славы; маршруты её не видят вовсе (21.09.2026, слетел бафф).
+const links = (page) => page.evaluate(() => Array.from(document.querySelectorAll('a')).map((a) => ({ t: (a.innerText || '').trim().replace(/\s+/g, ' ').replace(/^[*•]\s*/, ''), h: a.getAttribute('href') || '' })).filter((x) => x.t && !/statuenull/i.test(x.h))).catch(() => []);
 async function dump(page, tag) {
   const t = await m.getBodyText(page);
   const l = await links(page);
