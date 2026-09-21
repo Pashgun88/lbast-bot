@@ -251,10 +251,10 @@ async function runFarmSession(page) {
     await runFishingIfDue(page).catch((e) => console.log('Фарм-сессия: рыбалка:', e.message));
     const buffed = await isAnyBuffAleActive(page).catch(() => false);
     // Кабан первым; бизон - только пока его кож не больше кабаньих (счёт неизвестен - бьём обоих).
-    const k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
-    if (k) fights += 1;
     const g = await runSawmillGuardRound(page).catch((e) => { console.log('Фарм-сессия: сторож лесопилки:', e.message); return false; });
     if (g) fights += 1;
+    const k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
+    if (k) fights += 1;
     let b = false;
     if (!hides || hides.bison <= hides.boar) {
       b = await runBisonFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: бизон:', e.message); return false; });
@@ -760,6 +760,16 @@ async function loginIfNeeded(page) {
         console.log('Ферма пропущена: есть невыполненные квесты с боями - HP берегу под них.');
       }
 
+      // 21.09.2026, Паша: «встроить сторожа в ферму» - доски на бунгало (3 шт., шанс 10% за бой).
+      // Первым в ферме: сторожу нужно 85% HP, а после бизона и кабана столько не остаётся.
+      r = await runCycleStep(page, 'Sawmill guard round', () => {
+        if (!farmAllowedFull) return Promise.resolve(false);
+        if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
+        return runSawmillGuardRound(page);
+      });
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
       r = await runCycleStep(page, 'Harpy hunt (вторник)', () => {
         if (!farmAllowedFull) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
@@ -784,14 +794,6 @@ async function loginIfNeeded(page) {
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
-      // 21.09.2026, Паша: «встроить сторожа в ферму» - доски на бунгало (3 шт., шанс 10% за бой).
-      r = await runCycleStep(page, 'Sawmill guard round', () => {
-        if (!farmAllowedFull) return Promise.resolve(false);
-        if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
-        return runSawmillGuardRound(page);
-      });
-      didAnything = didAnything || r.didAnything;
-      if (r.ko) continue;
 
       // Боевые квесты на сегодня закрыты -> длинная фарм-сессия вместо одного боя за цикл.
       if (!hasPendingFightQuests() && process.env.AI_DISABLE_PODVALY !== '1' && getFightMode() === 'all') {
