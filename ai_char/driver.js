@@ -292,6 +292,8 @@ const SINGLE_FIGHT_STEPS = new Set([
   'assassin quest step',
   // Гайды: в 'none' выключены целиком, в 'single' внутри решает allowedInSingleMode (Штольни - да).
   'Квесты по гайду',
+  // Галерея: засады на поиске лазулитов - одиночные боты; в 'none' не идёт.
+  'gallery quest step',
   // Бизон разрешён даже в 'none' - Паша: «бизона можешь попробовать побить, он слабый».
 ]);
 let noFightLogged = false;

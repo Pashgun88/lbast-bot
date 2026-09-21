@@ -42,6 +42,16 @@ const GUIDE_QUESTS = [
     quietDone: true,
     allowedInSingleMode: true,
   },
+  {
+    // Паша, 21.09.2026: «делай эти квесты... кузницу и галерею». Квест повторяемый: снова висел в Q
+    // через неделю после сдачи. Меню Q решает, пора ли; старое исполнение в lib/quests_story.js
+    // (runGalleryQuestIfAvailable) выключено - сцена поиска лазулитов с тех пор изменилась.
+    name: 'Галерея искусств',
+    files: ['gallery.steps'],
+    periodDays: 1,
+    quietDone: true,
+    allowedInSingleMode: true,
+  },
 ];
 
 // Эль перед Штольнями. true - можно начинать.

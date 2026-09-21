@@ -4,6 +4,7 @@
 //   opts.quietDone: не писать письмо Tsunami об успешном проходе (ежедневные квесты - только сбои)
 // Step file lines:
 //   # comment            ignored
+//   @url path            open a game URL (e.g. location.php?mod=konj&lway=7 - horse to Рыбацкая деревня) and wait out travel
 //   @city N              fastway to city N (1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак, 8 Девтаун, 9 Дорожный крест)
 //   @fight               HP gate (>= HP_GATE of max, waits in place exactly as long as needed) + "В бой!" + fightLoop
 //   @stop text           stop here on purpose (write a letter with the text)
@@ -131,6 +132,12 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         // Для квестов со случайными экранами-виньетками (Рыбный ресторан): если шага нет, а на экране
         // ровно одна не-служебная ссылка, жмём её. Боевые ссылки, "Уйти" и "Отказаться" — никогда.
         autoLone = true;
+      } else if (step.startsWith('@url ')) {
+        // Прямой переход по адресу игры (поездка конём в город: location.php?mod=konj&lway=7 -
+        // Рыбацкая деревня). Добавлено 21.09.2026 для Галереи искусств.
+        await goto(page, step.slice(5).trim());
+        await travelWait(page);
+        await goto(page, 'location.php');
       } else if (step.startsWith('@qinfo')) {
         // Взять квест формально: Q -> [инфо] -> "К месту выполнения" (без этого сценарий не поднимается).
         const qn = step.slice(6).trim();

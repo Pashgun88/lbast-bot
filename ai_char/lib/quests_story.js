@@ -152,16 +152,22 @@ async function progressGalleryLazuliteQuest(page) {
 // делает то же самое, и путало состояние страницы (пустой список квестов на втором
 // клике). Теперь просто флаг galleryQuestDone: как только квест сдан один раз —
 // диспетчер больше никогда не ходит проверять Марсиуса.
+const GALLERY_OLD_CODE_ENABLED = false;
 async function runGalleryQuestIfAvailable(page) {
-  if (S.galleryQuestDone) {
+  // 21.09.2026: квест считался одноразовым (флаг galleryQuestDone, сдан 14.09), но «Галерея искусств»
+  // снова появилась в меню Q - он повторяемый, и драйвер неделю его не делал (Паша: «делай эти
+  // квесты... сначала кузницу и галерею»). Источник истины - меню Q из последнего runDailyQuests.
+  const GALLERY_QUEST = 'Галерея искусств';
+  // 21.09.2026: сцена поиска лазулитов стала развилкой (коса, девушки, угри) - этот код её не
+  // проходит. Галерея теперь идёт маршрутом guides/gallery.steps через guides/quests.js.
+  if (!GALLERY_OLD_CODE_ENABLED) return false;
+  if (!Array.isArray(S.lastListedQuestNames) || !isQuestInMenu(S.lastListedQuestNames, GALLERY_QUEST)) {
     return false;
   }
-
-  const GALLERY_QUEST = 'Галерея искусств';
   const ok = await runQuestStepSafe(page, GALLERY_QUEST, () => progressGalleryLazuliteQuest(page));
   if (ok) {
-    S.galleryQuestDone = true;
-    persistDailyQuestState();
+    // Сдан - в меню Q его больше нет; поправим кэш, чтобы до следующего чтения меню не повторять.
+    S.lastListedQuestNames = S.lastListedQuestNames.filter((n) => !/Галерея искусств/i.test(n));
   }
   return ok;
 }
