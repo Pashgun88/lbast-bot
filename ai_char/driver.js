@@ -276,7 +276,7 @@ const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
-  'Шепот quest step', 'Квесты по гайду',
+  'Шепот quest step',
   'Fish Restaurant quest step',
 ]);
 // Шаги с ОДИНОЧНЫМ ботом - разрешены в 'single' (Паша 20.09.2026: «Попробуй одиночных ботов бить»).
@@ -290,6 +290,8 @@ const SINGLE_FIGHT_STEPS = new Set([
   // 21.09.2026, Паша: «делай их тоже, продадим». У банкира и картины гаунтлет охраны/псов, но на 5 ур.
   // они стоили 0-100 HP из 400; решение Паши - делать и в этом режиме.
   'assassin quest step',
+  // Гайды: в 'none' выключены целиком, в 'single' внутри решает allowedInSingleMode (Штольни - да).
+  'Квесты по гайду',
   // Бизон разрешён даже в 'none' - Паша: «бизона можешь попробовать побить, он слабый».
 ]);
 let noFightLogged = false;
@@ -656,7 +658,9 @@ async function loginIfNeeded(page) {
 
       // Повторяемые квесты по записанному маршруту гайда (Смерть ростовщика, раз в 15 дней).
       // Паша, 18.09.2026: «это не одноразовый квест, потом заскриптуй прохождение».
-      r = await runCycleStep(page, 'Квесты по гайду', () => runGuideQuestsIfDue(page));
+      // 21.09.2026: в режиме одиночных боёв гайды не выключаются целиком - Штольни (с элем) идут,
+      // Смерть ростовщика (цепочка боёв) нет. Решает флаг allowedInSingleMode в guides/quests.js.
+      r = await runCycleStep(page, 'Квесты по гайду', () => runGuideQuestsIfDue(page, { singleMode: getFightMode() === 'single' }));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

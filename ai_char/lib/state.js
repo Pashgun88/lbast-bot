@@ -74,9 +74,9 @@ const SHTOLNI_MIN_RESERVE_MINUTES = Number(process.env.AI_SHTOLNI_MIN_RESERVE ||
 // квест отключен для AI__ до дальнейших указаний. Маршрут полностью записан в
 // LESSONS_AI_CHAR.md ("Штольни — полный маршрут") на случай, если вернёмся к нему позже
 // с лучшей экипировкой/уровнем.
-// 21.09.2026, Паша: «включи штольни, но с условием что должен быть эль». Без Праздничного эля
-// (или уже активного баффа) квест не начинаем - см. проверку в lib/shtolni.js.
-const SHTOLNI_ENABLED_FOR_AI = true;
+// Старое исполнение Штолен. Рабочее - маршрут guides/shtolni.steps (guides/quests.js), там же с
+// 21.09.2026 условие «должен быть эль». Это держим выключенным, иначе Штольни пойдут дважды.
+const SHTOLNI_ENABLED_FOR_AI = false;
 // const UGO_INTERVAL_MS = 65 * 60 * 1000; // "раз в час и 5 минут"
 // const UGO_DAILY_LIMIT = 10; // не более 10 раз в день
 // let lastUgoRunAt = 0;

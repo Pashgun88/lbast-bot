@@ -26,8 +26,32 @@ const GUIDE_QUESTS = [
     resetAtMidnight: true,
     lostEndsDay: true,
     quietDone: true,
+    // Паша, 21.09.2026: «включи штольни, но с условием что должен быть эль» - пьём Праздничный эль
+    // перед началом; без эля (и без висящего баффа) не начинаем. Разовое исключение - файл
+    // ../shtolni_no_ale.flag с сегодняшней датой ГГГГ-ММ-ДД («надо попробовать, это последнее
+    // задание в дейлике», 21.09.2026). Режим одиночных боёв Штольни не блокирует - решает эль.
+    needsAle: true,
+    allowedInSingleMode: true,
   },
 ];
+
+// Эль перед Штольнями. true - можно начинать.
+async function aleReadyForShtolni(page) {
+  const { tryDrinkBuffAle, isAnyBuffAleActive } = require('../lib/recovery');
+  if (await tryDrinkBuffAle(page, 'Праздничный эль').catch(() => false)) {
+    console.log('Штольни: выпил Праздничный эль перед маршрутом.');
+    return true;
+  }
+  if (await isAnyBuffAleActive(page).catch(() => false)) return true;
+  let flag = '';
+  try { flag = fs.readFileSync(path.join(__dirname, '..', 'shtolni_no_ale.flag'), 'utf8'); } catch { /* нет файла */ }
+  const today = new Date().toLocaleDateString('sv-SE'); // ГГГГ-ММ-ДД по местному времени
+  if (flag.includes(today)) {
+    console.log('Штольни: эля нет, но на сегодня Паша разрешил попробовать без него (shtolni_no_ale.flag).');
+    return true;
+  }
+  return false;
+}
 
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return {}; }
@@ -57,6 +81,13 @@ async function runGuideQuestIfDue(page, q) {
     if (!(await m.resetToQuestMenu(page))) return false;
     const qText = await m.getBodyText(page);
     if (!qText.includes(q.name)) return false;
+    if (q.needsAle && !(await aleReadyForShtolni(page))) {
+      qs.suppressedUntil = now + 30 * 60000;
+      st[q.name] = qs;
+      saveState(st);
+      console.log(`${q.name}: нет Праздничного эля -> не начинаю (эль покупает драйвер в лавке Стоунгарда), проверю через 30 мин.`);
+      return false;
+    }
     clearProgress(q);
     qs.part = 0;
     qs.startedAt = now;
@@ -104,9 +135,10 @@ async function runGuideQuestIfDue(page, q) {
   return true;
 }
 
-async function runGuideQuestsIfDue(page) {
+async function runGuideQuestsIfDue(page, { singleMode = false } = {}) {
   let did = false;
   for (const q of GUIDE_QUESTS) {
+    if (singleMode && !q.allowedInSingleMode) continue; // цепочки боёв в режиме одиночных ботов не идут
     if (await runGuideQuestIfDue(page, q)) did = true;
   }
   return did;
