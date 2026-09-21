@@ -273,6 +273,7 @@ async function runFarmSession(page) {
 // Мирное продолжает работать: рыбалка, травы, довольствие, дерево жизни, статуя, кухня, письма, чат.
 const { getFightMode } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
+const { sellFriedFishIfDue } = require('./lib/fish_sale');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
   'Шепот quest step', 'assassin quest step', 'Квесты по гайду',
@@ -626,6 +627,11 @@ async function loginIfNeeded(page) {
 
       // 21.09.2026, Паша: за 7 грамот Тригмагистрата Орден даёт премию 700 дин (lib/trig_premium.js).
       r = await runCycleStep(page, 'Премия Ордена', () => claimTrigPremiumIfReady(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // 21.09.2026, Паша: раз в 3 дня продавать всю жареную рыбу в Лавке боевых ресурсов Стоунгарда.
+      r = await runCycleStep(page, 'Продажа рыбы', () => sellFriedFishIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

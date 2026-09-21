@@ -144,6 +144,8 @@ S.drabasNoPetUntil = 0;
 // Полив винограда: каждые 8 часов.
 const VINOGRAD_INTERVAL_MS = 8 * 60 * 60 * 1000;
 S.lastVinogradRunAt = 0;
+// Продажа жареной рыбы в Лавке боевых ресурсов Стоунгарда (Паша 21.09.2026): раз в 3 дня.
+S.lastFishSaleAt = 0;
 
 // Статуя славы: раз в 12-14 часов (случайный интервал в этих пределах).
 const STATUE_MIN_INTERVAL_MINUTES = 12 * 60;
@@ -318,6 +320,7 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.drabasNoPetUntil)) S.drabasNoPetUntil = s.drabasNoPetUntil;
 
   if (Number.isFinite(s.lastVinogradRunAt)) S.lastVinogradRunAt = s.lastVinogradRunAt;
+  if (Number.isFinite(s.lastFishSaleAt)) S.lastFishSaleAt = s.lastFishSaleAt;
 
   if (Number.isFinite(s.lastStatueRunAt)) S.lastStatueRunAt = s.lastStatueRunAt;
   if (Number.isFinite(s.nextStatueDueAt)) S.nextStatueDueAt = s.nextStatueDueAt;
@@ -388,6 +391,7 @@ function persistDailyQuestState() {
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil,
     lastVinogradRunAt: S.lastVinogradRunAt,
+    lastFishSaleAt: S.lastFishSaleAt,
     lastStatueRunAt: S.lastStatueRunAt, nextStatueDueAt: S.nextStatueDueAt,
     shepotMonthKey: S.shepotMonthKey, shepotDoneThisMonth: S.shepotDoneThisMonth, shepotStage: S.shepotStage, shepotGauntletFightsDone: S.shepotGauntletFightsDone,
     tavernDayKey: S.tavernDayKey, tavernDoneToday: S.tavernDoneToday,
