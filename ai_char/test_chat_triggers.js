@@ -46,12 +46,20 @@ const tMention = detectChatTriggers(ROOM, prev, [fresh('Hacky', 'AI__, ты че
 check('обращение к AI__ -> mention', tMention.some((t) => t.type === 'mention'), JSON.stringify(tMention.map((t) => t.type)));
 
 const tGreet = detectChatTriggers(ROOM, prev, [fresh('Hacky', 'всем привет!'), OLD], { quietForMs: 0, now });
-check('приветствие -> greeting', tGreet.some((t) => t.type === 'greeting'), JSON.stringify(tGreet.map((t) => t.type)));
+// 21.09.2026, Паша: отвечать только на обращения - приветствие всем больше не повод.
+check('приветствие всем -> молчим', tGreet.length === 0, JSON.stringify(tGreet.map((t) => t.type)));
 
 const tRevival = detectChatTriggers(ROOM, prev,
   [fresh('Hacky', 'о, кто тут'), fresh('Universe', 'да вот сижу'), OLD],
   { quietForMs: 40 * 60_000, now });
-check('тишина + 2 сообщения -> revival', tRevival.some((t) => t.type === 'revival'), JSON.stringify(tRevival.map((t) => t.type)));
+check('тишина + 2 сообщения -> молчим (revival выключен)', tRevival.length === 0, JSON.stringify(tRevival.map((t) => t.type)));
+
+// Ответ на нашу реплику «Hacky, ...» засчитывается только от Hacky, реплика Universe - не нам.
+const OURS = { nick: 'AI__', hh, mm, text: 'Hacky, ну как там бизоны?' };
+const tReplyOk = detectChatTriggers(ROOM, [OURS, OLD], [fresh('Hacky', 'да бьются'), OURS, OLD], { quietForMs: 0, now });
+check('ответ собеседника -> reply', tReplyOk.some((t) => t.type === 'reply'), JSON.stringify(tReplyOk.map((t) => t.type)));
+const tReplyOther = detectChatTriggers(ROOM, [OURS, OLD], [fresh('Universe', 'а я вот рыбу жарю'), OURS, OLD], { quietForMs: 0, now });
+check('чужая реплика после нашей -> молчим', tReplyOther.length === 0, JSON.stringify(tReplyOther.map((t) => t.type)));
 
 const tInit = detectChatTriggers(ROOM, prev, [OLD], { quietForMs: 120 * 60_000, lastInitiativeAt: 0, now });
 check('долгая тишина -> initiative', tInit.some((t) => t.type === 'initiative'), JSON.stringify(tInit.map((t) => t.type)));

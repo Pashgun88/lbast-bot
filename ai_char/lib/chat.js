@@ -162,6 +162,8 @@ const CHAT_REVIVAL_MIN_MESSAGES = 2;
 // раз в 3 часа инициатива почти не срабатывала.
 // Паша, 18.09.2026 (вечер): "если в чате тишина более 2х часов днём с 4 утра по 23:00, то
 // пиши что-нибудь, заводи разговор". Ночью (23:00-04:00) AI__ первым не пишет.
+// 21.09.2026: оживление комнаты (revival) выключено - отвечаем только когда обращаются.
+const CHAT_REACT_TO_ROOM = false;
 const CHAT_INITIATIVE_QUIET_MS = 120 * 60_000;
 const CHAT_INITIATIVE_COOLDOWN_MS = 120 * 60_000;
 const CHAT_INITIATIVE_FROM_HOUR = 4;
@@ -211,6 +213,12 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   const ownLastForReply = nextMsgs.find((m) => AI_SELF_NICK_RE.test(m.nick));
   const inReplyWindow = ownLastForReply
     && chatMessageAgeMinutes(ownLastForReply, nowDate) <= CHAT_REPLY_WINDOW_MIN;
+  // 21.09.2026, Паша: «тебе не нужно на каждое сообщение отвечать в чате. Только если к тебе
+  // обращаются, поддерживай разговор, и иногда пиши, если тишина более двух часов». Ответом нам
+  // считаем только сообщение собеседника: если наша реплика начиналась с «Ник,», ждём ответа от
+  // этого ника; реплика без адресата (сами заговорили) - отвечать может любой.
+  const ownAddressee = ownLastForReply && (ownLastForReply.text.match(/^\s*([A-Za-z0-9_.-]+)\s*,/) || [])[1];
+  const isOurInterlocutor = (nick) => !ownAddressee || ownAddressee.toLowerCase() === String(nick).toLowerCase();
 
   for (const m of live) {
     if (AI_SELF_NICK_RE.test(m.text)) {
@@ -218,16 +226,15 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
         reason: `${m.nick} обратился к AI__` });
     // "Tsunami, и за месяц спустила..." - обращение к ДРУГОМУ нику: это не нам, даже если пришло
     // сразу после нашей реплики (первая ложная сработка 18.09.2026).
-    } else if (!firstObservation && inReplyWindow && !/^[A-Za-z0-9_.-]+\s*,/.test(m.text)) {
+    } else if (!firstObservation && inReplyWindow && isOurInterlocutor(m.nick)
+      && !/^[A-Za-z0-9_.-]+\s*,/.test(m.text)) {
       triggers.push({ ...base, type: 'reply', nick: m.nick, text: m.text,
         reason: `${m.nick} ответил после реплики AI__` });
-    } else if (!firstObservation && CHAT_GREETING_RE.test(m.text)) {
-      triggers.push({ ...base, type: 'greeting', nick: m.nick, text: m.text,
-        reason: `${m.nick} поздоровался` });
     }
+    // Приветствия всем подряд и «оживление» комнаты больше не повод (Паша, 21.09.2026) - см. выше.
   }
 
-  if (!firstObservation && live.length >= CHAT_REVIVAL_MIN_MESSAGES
+  if (CHAT_REACT_TO_ROOM && !firstObservation && live.length >= CHAT_REVIVAL_MIN_MESSAGES
       && quietForMs >= CHAT_QUIET_FOR_REVIVAL_MS
       && !triggers.some((t) => t.type === 'mention' || t.type === 'reply')) {
     triggers.push({ ...base, type: 'revival',
