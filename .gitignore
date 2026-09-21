@@ -12,6 +12,11 @@ logs/
 exit.log
 daily_quests_piraty.state.json
 
+# Состояние прогонов квестов по маршрутам (guides/*.steps сами в git идут)
+guides/guides_state.json
+guides/*.progress
+guides/*_run.log
+
 # PvP stats exports (large binary, personal data)
 pvp_statistika*.xlsx
 

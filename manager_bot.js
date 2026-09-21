@@ -366,7 +366,7 @@ function getStatusText() {
     `Статус: ${isRunning ? 'активен' : 'остановлен'}`,
     `Сценарий: ${selectedScriptName || 'не выбран'}`,
     `Задержка старта: ${selectedStartDelayHours ? `${selectedStartDelayHours} ч` : 'не задана'}`,
-    `Плановый старт: ${formatDate(plannedStartAt)}`,
+    `Плановый старт квестов/фарма: ${formatDate(plannedStartAt)}`,
     `Последний запуск: ${formatDate(lastRunStartedAt)}`,
     `Последнее завершение: ${formatDate(lastRunFinishedAt)}`,
     `Результат: ${lastRunResult}`,
@@ -772,7 +772,7 @@ async function maybeSendMorningScreenshot(lineText) {
   }
 }
 
-async function runSelectedScript(reason = 'вручную') {
+async function runSelectedScript(reason = 'вручную', extraEnv = {}) {
   if (!selectedScriptPath || !selectedScriptName) {
     await sendToAllowedChat('Сценарий не выбран. Выберите сценарий перед запуском.');
     return;
@@ -810,7 +810,7 @@ async function runSelectedScript(reason = 'вручную') {
     cwd: __dirname,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: false,
-    env: { ...process.env, ...selectedScriptEnv },
+    env: { ...process.env, ...selectedScriptEnv, ...extraEnv },
   });
 
   let stdoutLineRemainder = '';
@@ -907,6 +907,14 @@ async function runSelectedScript(reason = 'вручную') {
   });
 }
 
+// Раньше отложенный старт буквально ждал N часов и только потом поднимал браузер/скрипт --
+// из-за этого всё, что должно случиться ДО этого момента (например, мисттаунское событие
+// "призрак ворот" ночью в 01:29, а обычный отложенный старт в 6ч с 21:00 приходится на 3:00),
+// просто пропускалось. Теперь процесс запускается СРАЗУ, но получает env FARM_START_AFTER --
+// метку времени, до которой сам скрипт (см. daily_quests_piraty.js) не трогает квесты/фарм и
+// только ждёт да ловит мисттаунские события, а по достижении этой метки сам переключается в
+// обычный режим без перезапуска. Так "ночной режим" всегда активен как часть любого отложенного
+// старта, без отдельной кнопки.
 function scheduleDelayedStart() {
   clearStartTimer();
   if (!selectedStartDelayHours || !selectedScriptPath) {
@@ -914,11 +922,8 @@ function scheduleDelayedStart() {
   }
 
   plannedStartAt = new Date(Date.now() + selectedStartDelayHours * 60 * 60 * 1000);
-  const delayMs = plannedStartAt.getTime() - Date.now();
 
-  startTimerId = setTimeout(async () => {
-    await runSelectedScript('по таймеру старта');
-  }, delayMs);
+  runSelectedScript('отложенный старт', { FARM_START_AFTER: String(plannedStartAt.getTime()) });
 
   return true;
 }
@@ -995,7 +1000,7 @@ async function tryScheduleIfReady(chatId) {
   if (scheduleDelayedStart()) {
     await sendMessage(
       chatId,
-      `Запуск запланирован на ${formatDate(plannedStartAt)}.`
+      `Браузер запускаю сейчас (чтобы не пропустить мисттаунское событие), а квесты/фарм начнутся в ${formatDate(plannedStartAt)}.`
     );
   }
 }

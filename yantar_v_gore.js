@@ -552,7 +552,7 @@ function shouldUseFishByStats(stats) {
 }
 
 function shouldFightByStats(stats) {
-  return stats.hpCurrent != null && stats.cooldown != null && stats.hpCurrent >= 2200 && stats.cooldown >= 15;
+  return stats.hpCurrent != null && stats.cooldown != null && stats.hpCurrent >= 1800 && stats.cooldown >= 8;
 }
 
 function detectPvpFromText(text) {

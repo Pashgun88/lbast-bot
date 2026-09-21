@@ -5,6 +5,13 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+// Квесты, записанные маршрутом в guides/*.steps (см. guides/quests.js). Раннер общий и ничего
+// отсюда не импортирует -- бой и меню квестов передаются ему параметрами из runDailyQuests.
+const { runGuideQuestsIfDue, hasGuideQuestInProgress } = require('./guides/quests');
+
+// За сколько до мисттаунского события не начинать длинную цепочку по маршруту.
+const GUIDE_QUEST_MISTTOWN_GUARD_MS = 90 * 60 * 1000;
+
 const DEBUG_SNAPSHOTS_PATH = path.join(__dirname, 'logs', 'debug_snapshots.log');
 
 function setupWindowsConsoleUtf8() {
@@ -166,6 +173,13 @@ const FARM_TARGET = String(process.env.FARM_TARGET || 'blake').toLowerCase() ===
 const FARM_LABEL = FARM_TARGET === 'goblins' ? 'гоблинов' : 'Блейка';
 console.log(`Farm target: ${FARM_TARGET}`);
 
+// Отложенный старт (менеджер, кнопка "Старт Nч") передаёт момент, когда пора включать обычный
+// сценарий (квесты/фарм) -- сам браузер/процесс при этом поднимается сразу, а не через N часов,
+// чтобы не пропустить мисттаунское событие ("призрак ворот"), если оно выпадает раньше. До этого
+// момента процесс только ждёт и ловит due-событие; после -- сам переходит в обычный цикл без
+// перезапуска. При запуске без этой переменной (обычный/немедленный старт) ведёт себя как раньше.
+const FARM_START_AFTER_MS = Number(process.env.FARM_START_AFTER) || null;
+
 
 // Квесты без явно указанного кулдауна: 1 раз в день (в памяти процесса).
 let tavernDayKey = '';
@@ -192,6 +206,24 @@ let allowanceDayKey = '';
 let allowanceDoneToday = false;
 let elkHuntDayKey = '';
 let elkHuntDoneToday = false;
+let demonHuntDayKey = '';
+let demonHuntDoneToday = false;
+let schoolTempleDayKey = '';
+let schoolTempleDoneToday = false;
+// Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
+// уличного зазывалы и закэшированные, чтобы не ходить к нему каждый цикл (см. комментарий у
+// goToMisttownSecretArea/runMisttownSecretEventIfDue). misttownSecretAttemptedAt хранит,
+// какой именно запуск (по значению dueAt) уже пробовали, чтобы не повторять один и тот же запуск
+// после наступления его времени, пока не появится следующая дата.
+let misttownSecretDueAt = {};
+let misttownSecretAttemptedAt = {};
+let lastMisttownSecretCheckAt = 0;
+// Ставится в true сразу после выстрела из лука в мисттаунском событии; сбрасывается после
+// успешного фарма стрелы у Старого лучника (см. maybeFarmArrow). Требует >=10 резервных минут и
+// >2000 HP -- два обычных боя с волками, не должны начинаться на пустом резерве/HP.
+let needsArrowFarm = false;
+const ARROW_FARM_MIN_RESERVE_MINUTES = 10;
+const ARROW_FARM_MIN_HP = 2000;
 let extraDailyDayKey = '';
 let extraDailyDoneToday = false;
 // Thursday's 3 hunts each hit a real in-game per-target attack cooldown ("Вы слишком устали,
@@ -257,6 +289,17 @@ function restoreDailyQuestState() {
   if (typeof s.elkHuntDayKey === 'string') elkHuntDayKey = s.elkHuntDayKey;
   if (typeof s.elkHuntDoneToday === 'boolean') elkHuntDoneToday = s.elkHuntDoneToday;
 
+  if (typeof s.demonHuntDayKey === 'string') demonHuntDayKey = s.demonHuntDayKey;
+  if (typeof s.demonHuntDoneToday === 'boolean') demonHuntDoneToday = s.demonHuntDoneToday;
+
+  if (typeof s.schoolTempleDayKey === 'string') schoolTempleDayKey = s.schoolTempleDayKey;
+  if (typeof s.schoolTempleDoneToday === 'boolean') schoolTempleDoneToday = s.schoolTempleDoneToday;
+
+  if (s.misttownSecretDueAt && typeof s.misttownSecretDueAt === 'object') misttownSecretDueAt = s.misttownSecretDueAt;
+  if (s.misttownSecretAttemptedAt && typeof s.misttownSecretAttemptedAt === 'object') misttownSecretAttemptedAt = s.misttownSecretAttemptedAt;
+  if (Number.isFinite(s.lastMisttownSecretCheckAt)) lastMisttownSecretCheckAt = s.lastMisttownSecretCheckAt;
+  if (typeof s.needsArrowFarm === 'boolean') needsArrowFarm = s.needsArrowFarm;
+
   if (typeof s.extraDailyDayKey === 'string') extraDailyDayKey = s.extraDailyDayKey;
   if (typeof s.extraDailyDoneToday === 'boolean') extraDailyDoneToday = s.extraDailyDoneToday;
 
@@ -296,6 +339,9 @@ function persistDailyQuestState() {
     caravanRobberyDayKey, caravanRobberyDoneToday,
     allowanceDayKey, allowanceDoneToday,
     elkHuntDayKey, elkHuntDoneToday,
+    demonHuntDayKey, demonHuntDoneToday,
+    schoolTempleDayKey, schoolTempleDoneToday,
+    misttownSecretDueAt, misttownSecretAttemptedAt, lastMisttownSecretCheckAt, needsArrowFarm,
     extraDailyDayKey, extraDailyDoneToday,
     thursdayDayKey, thursdayGravediggerDoneToday, thursdayButcherFightsToday, thursdayWitchFightsToday,
     huntStateDayKey, wednesdayMountainSpiritDoneToday, wednesdayHyenaFightsToday,
@@ -1567,9 +1613,15 @@ async function runDailyQuests(page, stats) {
     'Кузница Рума',
     'Еда для рыбака',
     'Грабим корованы',
+    'Варьете',
+    'Смерть ростовщика',
   ];
 
-  const hasAnyTargetQuest = TARGET_Q_QUESTS.some((q) => isQuestInMenu(listedQuests, q));
+  // Начатая цепочка по маршруту (guides/*.steps) из меню Q пропадает -- квест уже взят, а сцена
+  // живёт на локации. Считаем её "целевым квестом", иначе цикл решит, что делать нечего, и уедет
+  // фармить на Блейка (платный проход), бросив недоигранную сцену.
+  const hasAnyTargetQuest = TARGET_Q_QUESTS.some((q) => isQuestInMenu(listedQuests, q))
+    || hasGuideQuestInProgress();
 
   if (!tavernSuppressed && isQQuestAllowed('Харчевня') && isQuestInMenu(listedQuests, 'Харчевня') && !(shtolniTakenToday && !shtolniDoneToday)) {
     if (await runQuestStepSafe(page, 'Харчевня', () => progressTavernQuest(page, { initialReserveMinutes: stats?.cooldown, questCount }))) {
@@ -1676,6 +1728,51 @@ async function runDailyQuests(page, stats) {
     }
     await resetToQuestMenu(page, questCount);
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
+  }
+
+  // Варьете: длинная линейная цепочка диалогов + один бой, появляется от случая к случаю (не
+  // привязана к дню недели). Требуем достаточный запас времени до кулдауна, как и другие
+  // Q-квесты с реальным переходом на карту, чтобы не начинать длинный маршрут перед самым
+  // кулдауном/атакой.
+  if (isQQuestAllowed('Варьете') && isQuestInMenu(listedQuests, 'Варьете')) {
+    if (typeof reserveMinutes !== 'number' || reserveMinutes < 15) {
+      console.log(`Quest step skip: Варьете (need >=15 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
+    } else {
+      if (await runQuestStepSafe(page, 'Варьете', () => progressVarieteQuest(page, { questCount }))) {
+        didAnything = true;
+      }
+    }
+    await resetToQuestMenu(page, questCount);
+    listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
+  }
+
+  // Квесты по записанным маршрутам (guides/*.steps): длинные цепочки из ЖГ-гайдов, которые
+  // расписаны пошагово и выполняются общим раннером. Он сам лечится на месте перед боями, ждёт
+  // отдых при кончившемся резерве и останавливается, если игра разошлась с маршрутом (тогда
+  // guides/quests.js ставит паузу, а не долбит одно и то же). Не запускаем, пока идёт
+  // эксклюзивный квест (Харчевня/Штольни) -- они занимают тот же слот задания.
+  if (exclusiveInProgress.length === 0) {
+    // Цепочка занимает цикл надолго (лечение на месте, отдых, десятки экранов), а мисттаунское
+    // событие идёт строго по часам -- поэтому перед ним за маршрут не беремся.
+    const misttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
+    if (misttownSoon) {
+      console.log(`Квесты по маршрутам: пропускаю, скоро мисттаунское событие (${misttownSoon}).`);
+    } else {
+      try {
+        const didGuide = await runGuideQuestsIfDue(page, {
+          fightLoop,
+          resetToQuestMenu,
+          clickInfoForQuest,
+          reserveMinutes,
+          isInMenu: (name) => isQuestInMenu(listedQuests, name),
+        });
+        if (didGuide) didAnything = true;
+      } catch (e) {
+        console.log(`Квесты по маршрутам: ошибка (${e.message})`);
+      }
+      await resetToQuestMenu(page, questCount);
+      listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
+    }
   }
 
   try {
@@ -1803,6 +1900,33 @@ function canRunElkHuntNow() {
     elkHuntDoneToday = false;
   }
   return !elkHuntDoneToday;
+}
+
+// Охота на демона: личный квест (взять у NPC в Цитадели -> убить -> доложить), раз в день,
+// не привязан к дню недели. Как оказалось на практике, сервер всё равно может показать "Вы уже
+// выполняли это задание сегодня" по пути к цели (см. проверку в runDemonHuntTask) -- обрабатываем
+// это как нормальный "уже сделано" исход, как и в Охоте на лосей.
+function canRunDemonHuntNow() {
+  const key = getDayKeyNow();
+  if (demonHuntDayKey !== key) {
+    demonHuntDayKey = key;
+    demonHuntDoneToday = false;
+  }
+  return !demonHuntDoneToday;
+}
+
+// Квест (школа/казарма/храм, название пока не уточнено): личный квест, раз в день, требует >=20
+// резервных минут (проверка в дозвоне ниже). Если маршрут внутри runSchoolTempleQuest прерывается
+// (в т.ч. из-за собственных действий пользователя в игре параллельно с ботом), попытка на сегодня
+// всё равно считается использованной -- сервер сам отменяет выполнение при нарушении маршрута, и
+// повторная попытка в тот же день не поможет, поэтому не ретраим внутри дня.
+function canRunSchoolTempleQuestNow() {
+  const key = getDayKeyNow();
+  if (schoolTempleDayKey !== key) {
+    schoolTempleDayKey = key;
+    schoolTempleDoneToday = false;
+  }
+  return !schoolTempleDoneToday;
 }
 
 // Extra daily ("дейлик"): a bonus task for extra reward whose route changes by day of week.
@@ -2133,6 +2257,162 @@ async function playHerbBoard(page) {
   return { outcome: 'error' };
 }
 
+// Тот же минёр-виджет (та же таблица с gamekl=-ссылками и числами-подсказками), что и в травах,
+// переиспользуется в квесте "Жертвоприношение" (поле 6x6, "Достаньте это, не напоровшись на
+// шип"). В отличие от трав здесь нет своих "наваждение"/"не выросло" веток -- только шип (провал,
+// текст тот же движковый "укололись о ядовитый шип") и успех (текст меняется от квеста к квесту,
+// поэтому не проверяем его конкретно -- как и в травах, судим об успехе по тому, что сетка
+// пропала со страницы).
+async function playSapperBoardOnce(page) {
+  for (let round = 0; round < HERB_BOARD_MAX_ROUNDS; round++) {
+    const text = await getBodyText(page);
+
+    if (/укололись о ядовитый шип/i.test(text)) {
+      return { outcome: 'thorn' };
+    }
+
+    const board = await parseHerbBoard(page);
+
+    if (!board.hasGrid || board.unopenedCells.length === 0) {
+      return { outcome: 'done', text };
+    }
+
+    const pick = solveHerbBoard(board.openedNumbers, board.unopenedCells);
+    if (pick === null) {
+      console.log('Сапёр: решатель не смог выбрать клетку');
+      return { outcome: 'error' };
+    }
+
+    const clicked = await clickHerbCell(page, pick);
+    if (!clicked) {
+      return { outcome: 'error' };
+    }
+  }
+
+  console.log('Сапёр: превышен лимит раундов, прекращаю');
+  return { outcome: 'error' };
+}
+
+// Провал сапёра здесь роняет HP в глубокий минус вместо обычного игрового кулдауна ("растение не
+// выросло") -- восстановление происходит через ~1 минуту ожидания и клик "Продолжить квест"/
+// "Далее", после чего попытка начинается заново с новой (пере-сгенерированной) доски. Ограничиваем
+// число попыток, чтобы неудачная серия не зависала в этой функции на весь цикл бота.
+async function solveSapperUntilDone(page, { maxAttempts = 6, label = 'Сапёр' } = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await playSapperBoardOnce(page);
+
+    if (result.outcome === 'done') {
+      return true;
+    }
+
+    if (result.outcome === 'thorn') {
+      console.log(`${label}: наступили на шип (попытка ${attempt}/${maxAttempts}), жду ~65 сек и продолжаю`);
+      await fixedPause(page, 65000);
+      // Пользователь не уверен, какая именно кнопка появится после провала -- пробуем "Далее"
+      // первым (наиболее вероятный вариант), "Продолжить квест" оставляем как запасной.
+      const continued = await clickByTexts(
+        page,
+        ['Далее', 'далее', 'Продолжить квест', 'продолжить квест'],
+        `${label}: продолжить после провала`
+      );
+      if (!continued) {
+        console.log(`${label}: не нашёл кнопку продолжения после провала`);
+        return false;
+      }
+      await pause(page, 800, 1600);
+      continue;
+    }
+
+    console.log(`${label}: не удалось разобрать доску (outcome=${result.outcome})`);
+    return false;
+  }
+
+  console.log(`${label}: превышен лимит попыток (${maxAttempts}), прекращаю`);
+  return false;
+}
+
+// Квест "Жертвоприношение": особый, длится 3 дня, появляется в Q-меню от случая к случаю (как
+// Варьете). Маршрут продиктован пользователем по дням; здесь только день 1 -- дни 2 и 3 будут
+// дописаны позже. Клики форсированные (без nextTexts), как и в Варьете, т.к. большинство экранов
+// не имеют предсказуемого "следующего шага". Реплики выбора матчатся по короткой уникальной
+// подстроке без начального тире-маркера и без опечаток пользователя там, где они могли быть
+// (напр. "дщбвинили" -> матчим по "в колдовстве", а не по всей фразе).
+async function runSacrificeQuestDay1(page) {
+  async function click(text, label) {
+    await performStep(page, {
+      stepName: label || text,
+      currentTexts: [text, text.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  async function stepMany(text, count) {
+    for (let i = 0; i < count; i++) {
+      const ok = await tryPerformStepOptional(page, {
+        stepName: `${text} (${i + 1}/${count})`,
+        currentTexts: [text, text.toLowerCase()],
+      });
+      if (!ok) break;
+    }
+  }
+
+  console.log('Жертвоприношение (день 1): начинаю маршрут');
+
+  await click('Амулет', 'Амулет');
+  await performStep(page, {
+    stepName: 'Таверна «Три поросенка»',
+    currentTexts: ['Таверна «Три поросенка»', 'таверна «три поросенка»', 'Таверна'],
+    retries: 3,
+  });
+  await click('Крестьянин', 'Крестьянин');
+
+  await click('стряслось', '"Что стряслось?"');
+  await click('в колдовстве', '"Почему ее обвинили в колдовстве?"');
+  await click('давай карту', '"Хорошо, давай карту."');
+
+  if (await existsAnyText(page, ['В игру', 'в игру'])) {
+    await clickByTexts(page, ['В игру', 'в игру'], 'В игру').catch(() => {});
+    await pause(page, 800, 1600);
+  }
+
+  await click('Юг', 'Юг');
+  await stepMany('Восток', 2);
+
+  await click('Помощь Ахмату', 'Помощь Ахмату');
+  await click('охраняете, хлопцы', '"Кого охраняете, хлопцы?"');
+  await click('Подожди. Они', '"Подожди. Они?"');
+  await click('Скатор и где его найти', '"Кто такой Скатор и где его найти?"');
+  await click('где содержатся', '"А две другие ведьмы где содержатся?"');
+  await click('можно поговорить', '"А с ведьмой можно поговорить?"');
+  await click('к дому Скатора', '"Что ж, идти к дому Скатора"');
+  await click('по поводу ведьм', '"по поводу ведьм хочу поговорить"');
+  await click('вичхантеров', '"А в гильдию вичхантеров вы обращались?"');
+  await click('почему вообще решили', '"А кто две остальные ведьмы..."');
+  await click('единственная вина', '"Черные волосы это ее единственная вина?"');
+  await click('продлится расследование', '"Сколько продлится расследование?..."');
+
+  await click('Выйти на улицу', 'Выйти на улицу');
+  await click('Идти к знахарке Раке', 'Идти к знахарке Раке');
+  await click('не боитесь', '"Рака, вы не боитесь?"');
+  await click('есть враги', '"У вас есть враги?"');
+  await click('этим Киркиным', '"Спасибо. Я поговорю с этим Киркиным."');
+
+  await click('Идти к месту ритуала', 'Идти к месту ритуала');
+  await click('Осмотреться', 'Осмотреться');
+
+  const sapperSolved = await solveSapperUntilDone(page, { label: 'Жертвоприношение (сапёр)' });
+  if (!sapperSolved) {
+    console.log('Жертвоприношение (день 1): не удалось решить сапёр, прекращаю на сегодня');
+    return false;
+  }
+
+  await stepMany('Далее', 1);
+  await click('Уйти', 'Уйти');
+
+  console.log('Жертвоприношение (день 1): маршрут завершён');
+  return true;
+}
+
 // В меню квестов травы перечислены обычным форматом "• Травы: <название> [инфо]", как и
 // остальные Q-квесты (Харчевня, Дерево жизни и т.д.) -- открываются через [инфо] рядом со строкой.
 function herbMenuLabel(herbName) {
@@ -2437,6 +2717,146 @@ async function runDrabasQuest(page) {
 
   if (await existsAnyText(page, ['\u0412 \u0438\u0433\u0440\u0443', '\u0432 \u0438\u0433\u0440\u0443'])) {
     await clickByTexts(page, ['\u0412 \u0438\u0433\u0440\u0443', '\u0432 \u0438\u0433\u0440\u0443'], '\u0412 \u0438\u0433\u0440\u0443 (after Drabas)');
+    await pause(page, 800, 1600);
+  }
+
+  return true;
+}
+
+// Квест "Варьете": появляется в Q-меню от случая к случаю (не привязан к дню недели), длинная
+// линейная цепочка диалогов с одним обычным боем в середине. Маршрут продиктован пользователем
+// целиком (см. runQuestStepSafe caller ниже) -- клики форсированные (без nextTexts/skip-эвристики,
+// см. route-steps-forced-clicks), т.к. большинство экранов не имеют предсказуемого "следующего
+// шага" для проверки. Реплики выбора (варианты с "—") матчатся по короткой уникальной подстроке
+// без начального тире и знаков пунктуации на конце -- сам тире, скорее всего, лишь маркер списка
+// в описании квеста, а не часть текста кнопки в игре.
+async function progressVarieteQuest(page, { questCount } = {}) {
+  const QUEST = 'Варьете'; // "Варьете"
+
+  if (!await existsAnyText(page, [QUEST])) {
+    return false;
+  }
+
+  const infoClicked = await clickInfoForQuest(page, QUEST);
+  if (!infoClicked) {
+    console.log('Варьете: не удалось открыть инфо квеста.');
+    return false;
+  }
+
+  // "Выполнение" -- кнопка/ссылка перехода к месту исполнения квеста, как и в других Q-квестах
+  // (там она называется иначе, напр. "К месту выполнения") -- пробуем оба варианта.
+  await tryPerformStepOptional(page, {
+    stepName: 'Выполнение',
+    currentTexts: [
+      'Выполнение', 'выполнение',
+      'К месту выполнения', 'к месту выполнения',
+    ],
+    waitAfterClickMs: 3000,
+  });
+
+  async function click(text, label) {
+    await performStep(page, {
+      stepName: label || text,
+      currentTexts: [text, text.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  async function stepMany(text, count) {
+    for (let i = 0; i < count; i++) {
+      const ok = await tryPerformStepOptional(page, {
+        stepName: `${text} (${i + 1}/${count})`,
+        currentTexts: [text, text.toLowerCase()],
+      });
+      if (!ok) break;
+    }
+  }
+
+  const DALEE = 'Далее'; // "Далее"
+
+  await click('Амулет', 'Амулет'); // Амулет
+  await click('Три поросенка', 'Три поросенка'); // Три поросенка
+  await performStep(page, {
+    stepName: 'Таверна «Три поросенка»',
+    currentTexts: ['Таверна «Три поросенка»', 'таверна «три поросенка»', 'Таверна'],
+    retries: 3,
+  }); // Таверна «Три поросенка»
+  await click('Пройти в зал варьете', 'Пройти в зал варьете'); // Пройти в Зал варьете
+
+  await stepMany(DALEE, 2);
+  await click('занять место', 'Занять место за столиком рядом со сценой'); // Занять место за столиком рядом со сценой
+  await stepMany(DALEE, 4);
+  await click('к скамьям в конец зала', 'Молча подняться и пройти к скамьям в конец зала'); // Молча подняться и пройти к скамьям в конец зала
+
+  await click('когда начнется представление', '"когда начнется представление"'); // — Хм, уважаемый, когда начнется представление?
+  await click('интересно посмотреть, что это такое', '"интересно посмотреть, что это такое"'); // — Да, интересно посмотреть, что это такое вообще.
+  await click('Рад знакомству', 'Рад знакомству'); // — Рад знакомству
+  await click('люблю посмотр', '"да, люблю посмотреть"'); // — Да, люблю посмотреть.
+  await click('больше посмотреть', '"нет, я больше посмотреть"'); // — Нет, я больше посмотреть.
+
+  await stepMany(DALEE, 9);
+
+  await click('не хочется', '"нет, не хочется"'); // — Нет, не хочется.
+  await click('займу столик', '"займу столик"'); // — Да, я пожалуй займу столик, спасибо.
+  await stepMany(DALEE, 1);
+
+  await click('сесть за столик к ашаи', 'Сесть за столик к Ашаи'); // Сесть за столик к Ашаи
+  await stepMany(DALEE, 1);
+
+  await click('просто потерять', '"могла его просто потерять"'); // — Она могла его просто потерять?
+  await click('именно украли', '"почему именно украли"'); // — Почему именно украли?
+  await click('зацепки откуда начать поиски', '"какие-то зацепки откуда начать поиски"'); // — Хорошо, я посмотрю что можно сделать. Есть какие-то зацепки откуда начать поиски?
+  await stepMany(DALEE, 1);
+
+  await click('давно вы работаете', '"как давно вы работаете здесь"'); // — Это все? Как давно вы работаете здесь?
+  await click('да уж', 'Да уж'); // Да уж
+  await stepMany(DALEE, 1);
+
+  await click('найти дим пупса', 'Найти Дим Пупса'); // Найти Дим Пупса
+  await click('поговорить об одной из танцовщиц', '"поговорить об одной из танцовщиц"'); // — Я хочу поговорить об одной из танцовщиц.
+  await click('Мара', 'Мара'); // Мара
+  await click('какие у тебя с ней отношения', '"какие у тебя с ней отношения"'); // — А какие у тебя с ней отношения?
+  await click('догадки кто мог украсть', '"есть догадки кто мог украсть"'); // — Да говорят ожерелье у нее пропало... может есть догадки кто мог украсть?
+  await click('спасибо, помог', '"спасибо, помог"'); // — Спасибо, помог.
+
+  await click('поговорить с двумя наемниками', 'Поговорить с двумя наемниками'); // Поговорить с двумя наемниками
+  await stepMany(DALEE, 1);
+
+  await click('хотите их обсудить', '"хотите их обсудить"'); // — Проблем много в этом мире. Хотите их обсудить?
+  await click('однако он беспокоится', '"однако он беспокоится"'); // — Однако он беспокоится.
+
+  await click('незаметно подставить официанту подножку', 'Незаметно подставить официанту подножку'); // Незаметно подставить официанту подножку
+  await stepMany(DALEE, 2);
+
+  await click('в бой', 'В бой'); // В бой (обычный бой)
+  await fightLoop(page);
+  await click('продолжить квест', 'Продолжить квест'); // Продолжить квест
+  await stepMany(DALEE, 1);
+
+  await click('поговорить с брумом', 'Поговорить с Брумом'); // Поговорить с Брумом
+  await stepMany(DALEE, 2);
+
+  await click('спасибо за информацию', '"спасибо за информацию"'); // — Спасибо за информацию.
+  await click('клэр хитцу', 'Найти эльфийку-фокусницу Клэр хитцу'); // Найти эльфийку-фокусницу Клэр Хитцу
+  await click('присесть рядом', 'Присесть рядом'); // Присесть рядом
+
+  await click('номер был шикарен', '"ваш номер был шикарен"'); // — Ваш номер был шикарен!
+  await click('не трудно выступать после танцовщиц', '"не трудно выступать после танцовщиц"'); // — Не трудно выступать после танцовщиц?
+  await click('танцовщицам вы нрав', '"а девушкам-танцовщицам вы нравитесь"'); // — М-м-м, да... А девушкам-танцовщицам вы нравитесь?
+
+  await click('хочу помочь Маре', '"хочу помочь Маре"'); // — Нет, я просто хочу помочь Маре, у нее пропало ожерелье...
+  await click('очень помогли', '"спасибо, очень помогли"'); // — Спасибо, очень помогли.
+
+  await click('пройти в комнату к маре', 'Пройти в комнату к Маре в комнату'); // Пройти в комнату к Маре в комнату
+
+  // "Свидетели говорят..." -- финальная реплика-описание, не кнопка (в отличие от "Задание
+  // завершено", которое пользователь явно пометил как кнопку).
+  await click('задание завершено', 'задание завершено'); // Задание завершено
+
+  console.log('Варьете: квест завершён.');
+
+  if (await existsAnyText(page, ['В игру', 'в игру'])) {
+    await clickByTexts(page, ['В игру', 'в игру'], 'В игру (after Варьете)');
     await pause(page, 800, 1600);
   }
 
@@ -4920,12 +5340,20 @@ async function fightLoop(page) {
     // "Прием" is an optional pre-hit action, available in most bot fights (quests, farm, etc.)
     // but not always shown - in paired-bot fights it can appear on only one of the two bots.
     // Use it whenever HP drops below 75% max, then proceed to the normal hit.
-    const stats = parseStats(text);
+    //
+    // parseStats() requires a third "(reserve/cooldown)" parenthetical group after "(hp/max)" --
+    // that group is only present on the location/stats page, not on the fight screen itself, so it
+    // always returned null HP here and "Прием" never actually got clicked. Same simple "(hp/max)"
+    // pattern already used elsewhere for combat-screen HP (see handleIncomingAttackIfAny) works
+    // reliably on this screen.
+    const hpMatch = text.match(/\((-?\d+)\s*\/\s*(\d+)\)/);
+    const fightHpCurrent = hpMatch ? Number(hpMatch[1]) : null;
+    const fightHpMax = hpMatch ? Number(hpMatch[2]) : null;
     if (
-      typeof stats.hpCurrent === 'number' &&
-      typeof stats.hpMax === 'number' &&
-      stats.hpMax > 0 &&
-      stats.hpCurrent < stats.hpMax * 0.75 &&
+      Number.isFinite(fightHpCurrent) &&
+      Number.isFinite(fightHpMax) &&
+      fightHpMax > 0 &&
+      fightHpCurrent < fightHpMax * 0.75 &&
       await existsAnyText(page, RECEPTION_TEXTS)
     ) {
       const receptionOk = await clickByTexts(page, RECEPTION_TEXTS, 'Прием');
@@ -5540,6 +5968,830 @@ async function runMorningScreenshotTask(page) {
 
   await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
   return true;
+}
+
+// Охота на демона: личный квест у NPC в Цитадели, раз в день. Взять задание: Амулет ->
+// Дорожный крест -> Цитадель Ордена Тригмагистров -> Получить задание -> В игру. Дойти до цели:
+// Конь -> Ивовое озеро -> (ожидание 7с/подтверждение поездки) -> Запад -> Поросль камышей ->
+// Идти по левой -> Идти дальше -> обычный бой (fightLoop). Сдать: Амулет -> Дорожный крест ->
+// Цитадель Ордена Тригмагистров -> Доложить о задании.
+async function runDemonHuntTask(page) {
+  console.log('Охота на демона: маршрут Амулет -> Дорожный крест -> Цитадель -> Получить задание -> Конь -> Ивовое озеро -> Запад -> Поросль камышей -> Идти по левой -> Идти дальше -> бой -> сдать задание');
+
+  const AMULET = 'Амулет';
+  const ROAD_CROSS = 'Дорожный крест';
+  const CITADEL = 'Цитадель Ордена Тригмагистров';
+  const GET_QUEST = 'Получить задание';
+  const V_IGRU = 'В игру';
+  const HORSE = 'Конь';
+  const WILLOW_LAKE = 'Ивовое озеро';
+  const V_PUTI   = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const WEST = 'Запад';
+  const REEDS = 'Поросль камышей';
+  const GO_LEFT = 'Идти по левой';
+  const GO_FURTHER = 'Идти дальше';
+  const REPORT_QUEST = 'Доложить о задании';
+
+  // Взять задание.
+  await performStep(page, {
+    stepName: AMULET,
+    currentTexts: [AMULET, AMULET.toLowerCase()],
+    nextTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ROAD_CROSS,
+    currentTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    nextTexts: [CITADEL, CITADEL.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: CITADEL,
+    currentTexts: [CITADEL, CITADEL.toLowerCase()],
+    nextTexts: [GET_QUEST, GET_QUEST.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: GET_QUEST,
+    currentTexts: [GET_QUEST, GET_QUEST.toLowerCase()],
+    retries: 3,
+  });
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+
+  // Дойти до демона и убить.
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [WILLOW_LAKE, WILLOW_LAKE.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: WILLOW_LAKE,
+    currentTexts: [WILLOW_LAKE, WILLOW_LAKE.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      WEST, WEST.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [WEST, WEST.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  // Сервер может на любом шаге между "Ивовое озеро" и самим боем внезапно показать "Вы уже
+  // выполняли это задание сегодня" вместо ожидаемого продолжения маршрута -- на практике это
+  // всплыло именно после "Поросль камышей" (перед "Идти по левой"), а не сразу на "Ивовое озеро"
+  // как предполагалось раньше, так что проверяем после КАЖДОГО шага этого участка, а не только в
+  // одном месте. Раньше необработанный случай приводил к исключению глубже по маршруту и общему
+  // бэкоффу цикла на ~20+ минут -- вместо этого просто уходим и завершаем на сегодня, как и в
+  // Охоте на лосей.
+  async function bailIfAlreadyDoneToday() {
+    const text = await getBodyText(page);
+    if (/уже\s+выполняли\s+(это\s+)?задание/i.test(text)) {
+      console.log('Охота на демона: "уже выполняли это задание сегодня" — квест уже засчитан, ухожу');
+      await clickByTexts(page, ['Уйти', 'уйти'], 'Уйти').catch(() => {});
+      await pause(page, 800, 1600);
+      return true;
+    }
+    return false;
+  }
+
+  if (await bailIfAlreadyDoneToday()) return;
+
+  await performStep(page, {
+    stepName: WEST,
+    currentTexts: [WEST, WEST.toLowerCase()],
+    nextTexts: [REEDS, REEDS.toLowerCase()],
+    retries: 3,
+  });
+
+  if (await bailIfAlreadyDoneToday()) return;
+
+  await performStep(page, {
+    stepName: REEDS,
+    currentTexts: [REEDS, REEDS.toLowerCase()],
+    nextTexts: [GO_LEFT, GO_LEFT.toLowerCase()],
+    retries: 3,
+  });
+
+  if (await bailIfAlreadyDoneToday()) return;
+
+  await performStep(page, {
+    stepName: GO_LEFT,
+    currentTexts: [GO_LEFT, GO_LEFT.toLowerCase()],
+    nextTexts: [GO_FURTHER, GO_FURTHER.toLowerCase()],
+    retries: 3,
+  });
+
+  if (await bailIfAlreadyDoneToday()) return;
+
+  // Демон иногда нападает сразу после "Идти по левой", минуя "Идти дальше" -- вместо ссылки на
+  // следующий шаг сразу показывается "На вас кидается демон! В бой!". Раньше это считалось
+  // ошибкой маршрута (3 неудачные попытки найти "Идти дальше" -> Cycle error -> ~17-минутный
+  // бэкофф), а бой в итоге доставался общему обработчику входящих атак в начале СЛЕДУЮЩЕГО цикла
+  // (бьётся с любым не-игроком как с блейком) -- из-за этого маршрут никогда не доходил до
+  // "Доложить о задании" и квест не сдавался, хотя демон был убит.
+  const FIGHT_PROMPT_TEXTS = ['В бой!', 'в бой!', 'В бой', 'в бой'];
+  if (await existsAnyClickable(page, FIGHT_PROMPT_TEXTS)) {
+    console.log('Охота на демона: демон напал сразу после "Идти по левой", пропускаю "Идти дальше"');
+  } else {
+    await performStep(page, {
+      stepName: GO_FURTHER,
+      currentTexts: [GO_FURTHER, GO_FURTHER.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  if (await bailIfAlreadyDoneToday()) return;
+
+  await fightLoop(page);
+
+  // Сдать задание.
+  await performStep(page, {
+    stepName: `${AMULET} (сдать)`,
+    currentTexts: [AMULET, AMULET.toLowerCase()],
+    nextTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: `${ROAD_CROSS} (сдать)`,
+    currentTexts: [ROAD_CROSS, ROAD_CROSS.toLowerCase()],
+    nextTexts: [CITADEL, CITADEL.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: `${CITADEL} (сдать)`,
+    currentTexts: [CITADEL, CITADEL.toLowerCase()],
+    nextTexts: [REPORT_QUEST, REPORT_QUEST.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: REPORT_QUEST,
+    currentTexts: [REPORT_QUEST, REPORT_QUEST.toLowerCase()],
+    retries: 3,
+  });
+
+  if (await existsAnyText(page, [V_IGRU, V_IGRU.toLowerCase()])) {
+    await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU).catch(() => {});
+    await pause(page, 800, 1600);
+  }
+}
+
+// Название квеста пока не уточнено у пользователя. Требует >=20 резервных минут (проверка на
+// стороне вызывающего кода, здесь не реализована -- см. TODO при подключении к диспетчеру).
+// Маршрут: Амулет -> Дорожный крест -> Север x2 -> школа (три обычных боя подряд: тренажёрный
+// зал, вторая комната в казарме, храм) -> В игру. В отличие от других личных квестов, здесь НЕТ
+// обычного "доложить о задании" -- квест не завершается сам после боёв, вместо этого его нужно
+// вручную отклонить на странице персонажа (свой ник -> строка "Текущее задание" -> "отказаться").
+// Пользователь явно предупредил: кликать "отказаться" ТОЛЬКО в строке "Текущее задание" -- на
+// странице персонажа есть другие похожие ссылки, отказ не в той строке отменит не то, что нужно.
+// Поэтому используем clickLinkNextToQuest (тот же приём, что и для "инфо" рядом с квестом), а не
+// простой clickByTexts по одному лишь слову "отказаться".
+const PLAYER_NICK = 'Tsunami';
+
+async function runSchoolTempleQuest(page) {
+  console.log('Квест (школа/казарма/храм): маршрут Амулет -> Дорожный крест -> Север x2 -> школа -> 3 боя -> отказ от задания на странице персонажа');
+
+  async function click(text, label) {
+    await performStep(page, {
+      stepName: label || text,
+      currentTexts: [text, text.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  // Маршрут может быть нарушен по ходу (в т.ч. собственными действиями пользователя в игре
+  // параллельно с ботом) -- сервер в этом случае сам отменяет выполнение квеста. Независимо от
+  // того, прошли ли все 3 боя успешно или маршрут где-то сломался, ФИНАЛЬНЫЙ шаг один и тот же и
+  // обязателен в обоих случаях: вернуться в игру и отказаться от задания в анкете (иначе
+  // "Текущее задание" останется висеть незавершённым до следующей попытки).
+  let routeError = null;
+  try {
+    await click('Амулет', 'Амулет');
+    await click('Дорожный крест', 'Дорожный крест');
+    await click('Север', 'Север (1/2)');
+    await click('Север', 'Север (2/2)');
+    await click('Идти к школе', 'Идти к школе');
+    await click('Осмотреться', 'Осмотреться');
+    await click('Подняться по ступеням', 'Подняться по ступеням');
+    await click('Идти по парку', 'Идти по парку');
+
+    // Бой 1: тренажёрный зал.
+    await click('Войти в тренажерный зал', 'Войти в тренажерный зал');
+    await click('Принять бой', 'Принять бой (тренажёрный зал)');
+    await click('В бой', 'В бой (тренажёрный зал)');
+    await fightLoop(page);
+    await click('Продолжить квест', 'Продолжить квест (тренажёрный зал)');
+
+    // Бой 2: казарма.
+    await click('Выйти из зала', 'Выйти из зала');
+    await click('Войти в казарму', 'Войти в казарму');
+    await click('Открыть дверь ключом', 'Открыть дверь ключом');
+    await click('Зайти во вторую комнату', 'Зайти во вторую комнату');
+    await click('Принять бой', 'Принять бой (казарма)');
+    await click('В бой', 'В бой (казарма)');
+    await fightLoop(page);
+    await click('Продолжить квест', 'Продолжить квест (казарма)');
+
+    // Бой 3: храм.
+    await click('Идти дальше по дорожке', 'Идти дальше по дорожке');
+    await click('Идти к строениям', 'Идти к строениям');
+    await click('Войти в храм', 'Войти в храм');
+    await click('Опустить белый рычаг', 'Опустить белый рычаг');
+    await click('Напасть на степняка', 'Напасть на степняка');
+    await click('В бой', 'В бой (храм)');
+    await fightLoop(page);
+    await click('Продолжить квест', 'Продолжить квест (храм)');
+
+    await click('Выйти из храма', 'Выйти из храма');
+  } catch (e) {
+    routeError = e;
+    console.log(`Квест (школа/казарма/храм): маршрут нарушен (${e.message}) -- всё равно иду отказываться от задания в анкете`);
+  }
+
+  // Вернуться в игру перед открытием анкеты -- после обрыва маршрута мы можем быть где угодно.
+  try {
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 800, 1600);
+  } catch (e) {
+    console.log(`Квест (школа/казарма/храм): не удалось вернуться в игру перед анкетой (${e.message})`);
+  }
+
+  await performStep(page, {
+    stepName: PLAYER_NICK,
+    currentTexts: [PLAYER_NICK, PLAYER_NICK.toLowerCase()],
+    retries: 3,
+  }).catch((e) => {
+    console.log(`Квест (школа/казарма/храм): не удалось открыть анкету (${e.message})`);
+  });
+
+  const declined = await clickLinkNextToQuest(
+    page,
+    'Текущее задание',
+    ['отказаться', 'Отказаться'],
+    'Отказаться (строка "Текущее задание")'
+  );
+  if (!declined) {
+    console.log('Квест (школа/казарма/храм): не нашёл "отказаться" в строке "Текущее задание"');
+  }
+
+  if (routeError) {
+    console.log('Квест (школа/казарма/храм): день завершён с обрывом маршрута, попытка на сегодня использована');
+    return false;
+  }
+
+  console.log('Квест (школа/казарма/храм): маршрут пройден успешно, задание отклонено в анкете');
+  return true;
+}
+
+// "Старый лучник": не отдельный квест из Q-меню, а способ зафармить стрелу для лука -- вызывается
+// после того, как стрела была выпущена в групповом бою (см. runMisttownSecretEventIfDue, которая
+// зовёт эту функцию сразу после fightLoopMisttownEvent, если bowUsed). Сами бои здесь обычные
+// (без лука/стрел -- пользователь явно пометил "обычный бой"), 2 волка подряд.
+// Конь -> Леса Эльсены -> Лесопилка -> Старый лучник -> Охотиться на волков -> Напасть на волка x2
+// (каждый через В бой -> fightLoop -> Продолжить квест) -> Уйти.
+async function runOldArcherWolfQuest(page) {
+  console.log('Квест (Старый лучник): маршрут Конь -> Леса Эльсены -> Лесопилка -> Старый лучник -> Охотиться на волков x2 -> Уйти');
+
+  const HORSE    = 'Конь';
+  const ELSENA   = 'Леса Эльсены';
+  const V_PUTI   = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const TO_SAWMILL = 'к лесопилке';
+  const SAWMILL    = 'Лесопилка';
+  const OLD_ARCHER = 'Старый лучник';
+  const HUNT_WOLVES = 'Охотиться на волков';
+  const ATTACK_WOLF = 'Напасть на волка';
+  const FIGHT = 'В бой';
+  const CONTINUE_QUEST = 'Продолжить квест';
+  const LEAVE = 'Уйти';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [ELSENA, ELSENA.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: ELSENA,
+    currentTexts: [ELSENA, ELSENA.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      TO_SAWMILL, TO_SAWMILL.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [TO_SAWMILL, TO_SAWMILL.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  await performStep(page, {
+    stepName: TO_SAWMILL,
+    currentTexts: [TO_SAWMILL, TO_SAWMILL.toLowerCase()],
+    nextTexts: [SAWMILL, SAWMILL.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: SAWMILL,
+    currentTexts: [SAWMILL, SAWMILL.toLowerCase()],
+    nextTexts: [OLD_ARCHER, OLD_ARCHER.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: OLD_ARCHER,
+    currentTexts: [OLD_ARCHER, OLD_ARCHER.toLowerCase()],
+    nextTexts: [HUNT_WOLVES, HUNT_WOLVES.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: HUNT_WOLVES,
+    currentTexts: [HUNT_WOLVES, HUNT_WOLVES.toLowerCase()],
+    nextTexts: [ATTACK_WOLF, ATTACK_WOLF.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = 0; i < 2; i++) {
+    await performStep(page, {
+      stepName: `${ATTACK_WOLF} (${i + 1}/2)`,
+      currentTexts: [ATTACK_WOLF, ATTACK_WOLF.toLowerCase()],
+      retries: 3,
+    });
+
+    await performStep(page, {
+      stepName: `${FIGHT} (волк ${i + 1}/2)`,
+      currentTexts: [FIGHT, FIGHT.toLowerCase()],
+      retries: 3,
+    });
+
+    await fightLoop(page);
+
+    await performStep(page, {
+      stepName: `${CONTINUE_QUEST} (волк ${i + 1}/2)`,
+      currentTexts: [CONTINUE_QUEST, CONTINUE_QUEST.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  await performStep(page, {
+    stepName: LEAVE,
+    currentTexts: [LEAVE, LEAVE.toLowerCase()],
+    retries: 3,
+  });
+
+  console.log('Квест (Старый лучник): маршрут завершён');
+  return true;
+}
+
+// Вызывается каждый цикл из doScenario. Если стрела была выпущена (needsArrowFarm), но HP/резерва
+// не хватает на ещё два боя с волками -- просто ждём следующего цикла, флаг остаётся выставленным.
+async function maybeFarmArrow(page, stats) {
+  if (!needsArrowFarm) return false;
+
+  const reserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
+  const hpCurrent = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
+
+  if (typeof reserveMinutes !== 'number' || reserveMinutes < ARROW_FARM_MIN_RESERVE_MINUTES || hpCurrent === null || hpCurrent <= ARROW_FARM_MIN_HP) {
+    console.log(`Фарм стрелы: пропускаю цикл (нужно >=${ARROW_FARM_MIN_RESERVE_MINUTES} резервных минут и >${ARROW_FARM_MIN_HP} HP, есть резерв=${reserveMinutes ?? 'n/a'}, HP=${hpCurrent ?? 'n/a'})`);
+    return false;
+  }
+
+  console.log('Фарм стрелы: условия позволяют, иду к Старому лучнику');
+  await runOldArcherWolfQuest(page);
+  needsArrowFarm = false;
+  persistDailyQuestState();
+  return true;
+}
+
+// Мисттаунское событие "Тайны ...": объявляется уличным зазывалой в Стоунгарде с конкретной датой
+// и временем старта ("Миссию можно начать на N-й день месяца в HH:MM:SS"). Окно на вход всего
+// ~20-30 секунд, обычный цикл бота (~10-14 мин) для этого слишком редкий -- расписание читается у
+// зазывалы и кэшируется (misttownSecretDueAt), следующее пробуждение цикла подгоняется под момент
+// старта (см. scheduleMisttownSecretWakeupIfSoon / runMisttownSecretEventIfDue ниже). 50 мест по
+// словам пользователя реально не заканчиваются -- отдельного детекта "опоздал по местам" не нужно.
+// После боя ничего особенного не происходит, как в обычном бою.
+//
+// Общий выход из города один для всех 4 тем, дальше расходится по улице на запад: каждая
+// "остановка" имеет свою кнопку "Спуститься вниз" (текст одинаковый, ведёт в разную тему в
+// зависимости от того, где на улице её нажали) -- огонь (запад x2) -> земля (ещё запад, x3) ->
+// смерть (ещё запад, x4) -> жизнь (от точки смерти на юг, а не на запад).
+//
+// "Спуститься вниз" доступна всегда (не привязана ко времени старта), но страница статична --
+// просто стоять на уже загруженной странице и перечитывать её текст бесполезно, сервер не
+// обновит её сам. Поэтому НЕ спускаемся заранее: встаём на уличную точку перед "Спуститься вниз"
+// (goToMisttownSecretStreetSpot), ждём заявленное время +1-2 сек (запас на рассинхрон часов), и
+// только тогда нажимаем её -- каждый клик это свежая загрузка страницы, так что при необходимости
+// повторяем клик с коротким интервалом, а не проверяем один и тот же статичный DOM в цикле
+// (см. runMisttownSecretEventIfDue).
+const MISTTOWN_SECRET_WEST_COUNT = {
+  'огонь': 2,
+  'земля': 3,
+  'смерть': 4,
+  'жизнь': 4, // + Юг после этого
+};
+
+async function goToMisttownSecretStreetSpot(page, theme) {
+  if (!Object.prototype.hasOwnProperty.call(MISTTOWN_SECRET_WEST_COUNT, theme)) {
+    throw new Error(`unknown misttown secret theme: ${theme}`);
+  }
+
+  console.log(`Мисттаунское событие (${theme}): маршрут Конь -> Мисттоун -> Идти в город -> Запад -> (место перед "Спуститься вниз")`);
+
+  const HORSE    = 'Конь';
+  const MISTTOWN = 'Мисттоун';
+  const V_PUTI   = 'В пути';
+  const V_PUTI_E = 'В пути еще';
+  const V_PUTI_Y = 'В пути ещё';
+  const GO_CITY  = 'Идти в город';
+  const WEST     = 'Запад';
+  const SOUTH    = 'Юг';
+
+  await performStep(page, {
+    stepName: HORSE,
+    currentTexts: [HORSE, HORSE.toLowerCase()],
+    nextTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: MISTTOWN,
+    currentTexts: [MISTTOWN, MISTTOWN.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [
+      V_PUTI, V_PUTI.toLowerCase(),
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      GO_CITY, GO_CITY.toLowerCase(),
+    ],
+    retries: 3,
+  });
+
+  await tryPerformStepOptional(page, {
+    stepName: V_PUTI,
+    currentTexts: [
+      V_PUTI_E, V_PUTI_E.toLowerCase(),
+      V_PUTI_Y, V_PUTI_Y.toLowerCase(),
+      V_PUTI, V_PUTI.toLowerCase(),
+    ],
+    nextTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    waitForNextMs: 30000,
+  });
+
+  await performStep(page, {
+    stepName: GO_CITY,
+    currentTexts: [GO_CITY, GO_CITY.toLowerCase()],
+    retries: 3,
+  });
+
+  const westCount = MISTTOWN_SECRET_WEST_COUNT[theme];
+  for (let i = 0; i < westCount; i++) {
+    await performStep(page, {
+      stepName: `${WEST} (${i + 1}/${westCount})`,
+      currentTexts: [WEST, WEST.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  if (theme === 'жизнь') {
+    await performStep(page, {
+      stepName: SOUTH,
+      currentTexts: [SOUTH, SOUTH.toLowerCase()],
+      retries: 3,
+    });
+  }
+}
+
+// Массовый бой мисттаунского события: десятки участников бьют одновременно за ограниченное время,
+// поэтому обычный fightLoop с паузами 700-2000мс между действиями категорически не годится --
+// нужно жать "Ударить" 3-4 раза в секунду (интервал ~250-330мс). "Лук" -- активная кнопка сразу
+// при входе в бой, нажимается один раз (не по условию HP, как "Прием" в обычном fightLoop) --
+// в групповых боях стрельнуть можно только один раз за бой, дальше только "Ударить".
+// 50 мест не заканчиваются (по словам пользователя), и после боя ничего особенного не происходит --
+// обычные DONE_TEXTS ("Бой завершен!"/"Вернуться") без дополнительных шагов, как в обычном бою.
+//
+// Возвращает { bowUsed }: если стрела была выпущена в этом бою, вызывающий код (см.
+// runMisttownSecretEventIfDue) должен потом сходить зафармить новую через runOldArcherWolfQuest --
+// если стрелы не было (кнопка "Лук" не появилась), фармить нечего.
+async function fightLoopMisttownEvent(page) {
+  const UDAR = 'Ударить';
+  const BOW = 'Лук';
+  const START_FIGHT_TEXTS = ['В бой!', 'в бой!', 'В бой', 'в бой'];
+  const DONE_TEXTS = ['Бой завершен!', 'Вернуться', 'вернуться'];
+  const MAX_STUCK = 15;
+
+  if (!/Ударить/i.test(await getBodyText(page))) {
+    const startOk = await clickByTexts(page, START_FIGHT_TEXTS, 'В бой (мисттаунское событие)');
+    if (!startOk) {
+      throw new Error('misttown_event_fight_not_reached');
+    }
+    await pause(page, 300, 600);
+  }
+
+  let bowUsed = false;
+  if (await existsAnyText(page, [BOW, BOW.toLowerCase()])) {
+    bowUsed = await clickByTexts(page, [BOW, BOW.toLowerCase()], BOW);
+    await pause(page, 150, 300);
+  }
+
+  let stuck = 0;
+  for (let i = 0; i < 1200; i++) {
+    if (await existsAnyText(page, DONE_TEXTS)) {
+      const ok = await clickByTexts(page, DONE_TEXTS, 'misttown event fight done/return');
+      if (!ok) throw new Error('misttown_event_fight_done_click_failed');
+      return { bowUsed };
+    }
+
+    const ok = await clickByTexts(page, [UDAR, UDAR.toLowerCase()], UDAR);
+    if (!ok) {
+      stuck += 1;
+      if (stuck >= MAX_STUCK) throw new Error('misttown_event_fight_stuck');
+      await pause(page, 150, 300);
+      continue;
+    }
+
+    stuck = 0;
+    await pause(page, 250, 330);
+  }
+
+  throw new Error('misttown_event_fight_timeout');
+}
+
+// Расписание мисттаунского события читается у "Уличного зазывалы" (Стоунгард -> Центральная
+// площадь), тот же NPC, что и для утреннего скриншота (см. runMorningScreenshotTask). Текст вида:
+// "Спешите, только пятьдесят человек смогут познать тайны огня! ... Миссию можно начать на
+// 23-й день месяца в 15:51:32". Кэшируем результат в misttownSecretDueAt, чтобы не ходить туда
+// каждый цикл -- см. needMisttownSecretRefresh/refreshMisttownSecretSchedule.
+const MISTTOWN_SECRET_THEMES = ['огонь', 'земля', 'смерть', 'жизнь'];
+const MISTTOWN_SECRET_THEME_WORDS = {
+  'огня': 'огонь',
+  'земли': 'земля',
+  'смерти': 'смерть',
+  'жизни': 'жизнь',
+};
+
+function parseMisttownSecretSchedule(text) {
+  const normalized = String(text || '').replace(/ /g, ' ');
+  const result = {};
+  const blockRe = /тайны\s+(огня|земли|смерти|жизни)[\s\S]{0,200}?на\s+(\d{1,2})-\S*\s*день\s+месяца\s+в\s+(\d{2}):(\d{2}):(\d{2})/gi;
+  let m;
+  while ((m = blockRe.exec(normalized)) !== null) {
+    const theme = MISTTOWN_SECRET_THEME_WORDS[m[1].toLowerCase()];
+    if (!theme) continue;
+    result[theme] = {
+      day: Number(m[2]),
+      hour: Number(m[3]),
+      minute: Number(m[4]),
+      second: Number(m[5]),
+    };
+  }
+  return result;
+}
+
+// "N-й день месяца" без указания месяца -- если этот день в текущем месяце уже прошёл, значит
+// речь про следующий месяц (JS Date сам корректно переносит переполнение через setMonth).
+function misttownSecretDayTimeToDate({ day, hour, minute, second }, now) {
+  const candidate = new Date(now.getFullYear(), now.getMonth(), day, hour, minute, second, 0);
+  if (candidate.getTime() <= now.getTime()) {
+    candidate.setMonth(candidate.getMonth() + 1);
+  }
+  return candidate;
+}
+
+const MISTTOWN_SECRET_RECHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function needMisttownSecretRefresh(now) {
+  if (MISTTOWN_SECRET_THEMES.some((t) => !Number.isFinite(misttownSecretDueAt[t]))) return true;
+  if (MISTTOWN_SECRET_THEMES.some((t) => misttownSecretDueAt[t] <= now)) return true;
+  if (now - lastMisttownSecretCheckAt >= MISTTOWN_SECRET_RECHECK_INTERVAL_MS) return true;
+  return false;
+}
+
+async function refreshMisttownSecretSchedule(page) {
+  console.log('Мисттаунское событие: иду к Уличному зазывале обновить расписание');
+
+  const CENTRAL_SQUARE = 'Центральная площадь';
+  const STREET_TOUT = 'Уличный зазывала';
+
+  const stoneguardOk = await goToStoneguardViaFastway(page, 'Стоунгард (расписание мисттаунского события)');
+  if (!stoneguardOk) {
+    console.log('Мисттаунское событие: не удалось попасть в Стоунгард, попробую в следующем цикле');
+    return false;
+  }
+
+  const squareOk = await performStep(page, {
+    stepName: CENTRAL_SQUARE,
+    currentTexts: [CENTRAL_SQUARE, CENTRAL_SQUARE.toLowerCase()],
+    nextTexts: [STREET_TOUT, STREET_TOUT.toLowerCase()],
+    retries: 3,
+  });
+  if (!squareOk) {
+    console.log('Мисттаунское событие: не удалось попасть на Центральную площадь, попробую в следующем цикле');
+    return false;
+  }
+
+  const toutOk = await clickByTexts(page, [STREET_TOUT, STREET_TOUT.toLowerCase()], STREET_TOUT);
+  if (!toutOk) {
+    console.log('Мисттаунское событие: не нашёл "Уличный зазывала" на площади, попробую в следующем цикле');
+    return false;
+  }
+  await pause(page, 800, 1600);
+
+  const text = await getBodyText(page);
+  const parsed = parseMisttownSecretSchedule(text);
+  const now = Date.now();
+
+  for (const theme of MISTTOWN_SECRET_THEMES) {
+    if (!parsed[theme]) continue;
+    const dueAt = misttownSecretDayTimeToDate(parsed[theme], new Date(now)).getTime();
+    if (misttownSecretDueAt[theme] !== dueAt) {
+      misttownSecretDueAt[theme] = dueAt;
+      console.log(`Мисттаунское событие (${theme}): дата старта ${new Date(dueAt).toLocaleString()}`);
+    }
+  }
+  lastMisttownSecretCheckAt = now;
+  persistDailyQuestState();
+
+  if (await existsAnyText(page, ['В игру', 'в игру'])) {
+    await clickByTexts(page, ['В игру', 'в игру'], 'В игру').catch(() => {});
+    await pause(page, 800, 1600);
+  }
+
+  return true;
+}
+
+// Насколько заранее вставать на уличную точку и как долго после заявленного времени ещё пытаться
+// (окно входа ~20-30 сек по словам пользователя, берём с запасом на рассинхрон часов/сервера).
+const MISTTOWN_SECRET_PRE_POSITION_MS = 3 * 60 * 1000;
+const MISTTOWN_SECRET_POLL_WINDOW_MS = 90 * 1000;
+// Не подгоняем пробуждение цикла, если до нужного момента ещё дольше, чем обычный цикл и так бы
+// сработал (getRandomCycleDelayMs даёт 10-14 мин) -- иначе рискуем внезапно проспать 3 часа вместо
+// обычных 10-14 минут, если это событие ещё далеко.
+const MISTTOWN_SECRET_MAX_OVERRIDE_LOOKAHEAD_MS = 15 * 60 * 1000;
+
+function findDueMisttownSecretTheme(now) {
+  for (const theme of MISTTOWN_SECRET_THEMES) {
+    const dueAt = misttownSecretDueAt[theme];
+    if (!Number.isFinite(dueAt)) continue;
+    if (misttownSecretAttemptedAt[theme] === dueAt) continue;
+    if (now >= dueAt - MISTTOWN_SECRET_PRE_POSITION_MS && now <= dueAt + MISTTOWN_SECRET_POLL_WINDOW_MS) {
+      return theme;
+    }
+  }
+  return null;
+}
+
+// Есть ли неотработанное мисттаунское событие в ближайшие windowMs. Нужно длинным задачам, которые
+// занимают цикл надолго (цепочки квестов по маршрутам, см. runDailyQuests): событие идёт по часам,
+// окно на вход ~20-30 сек, и опоздать из-за двухчасового квеста нельзя.
+function misttownSecretDueWithinMs(windowMs) {
+  const now = Date.now();
+  for (const theme of MISTTOWN_SECRET_THEMES) {
+    const dueAt = misttownSecretDueAt[theme];
+    if (!Number.isFinite(dueAt)) continue;
+    if (misttownSecretAttemptedAt[theme] === dueAt) continue;
+    if (dueAt + MISTTOWN_SECRET_POLL_WINDOW_MS >= now && dueAt - now <= windowMs) return theme;
+  }
+  return null;
+}
+
+// Подводит следующее пробуждение цикла к моменту, когда пора вставать на уличную точку заранее --
+// вызывается в конце каждого цикла (см. doScenario), не только когда событие уже "due".
+function scheduleMisttownSecretWakeupIfSoon() {
+  const now = Date.now();
+  let soonestWakeAt = null;
+
+  for (const theme of MISTTOWN_SECRET_THEMES) {
+    const dueAt = misttownSecretDueAt[theme];
+    if (!Number.isFinite(dueAt)) continue;
+    if (misttownSecretAttemptedAt[theme] === dueAt) continue;
+
+    const wakeAt = dueAt - MISTTOWN_SECRET_PRE_POSITION_MS;
+    if (wakeAt > now && (soonestWakeAt === null || wakeAt < soonestWakeAt)) {
+      soonestWakeAt = wakeAt;
+    }
+  }
+
+  if (soonestWakeAt === null) return;
+
+  const msUntilWake = soonestWakeAt - now;
+  if (msUntilWake <= 0 || msUntilWake > MISTTOWN_SECRET_MAX_OVERRIDE_LOOKAHEAD_MS) return;
+
+  if (nextCycleDelayOverrideMs === null || msUntilWake < nextCycleDelayOverrideMs) {
+    nextCycleDelayOverrideMs = msUntilWake;
+    console.log(`Мисттаунское событие: подвожу следующее пробуждение цикла к ${new Date(soonestWakeAt).toLocaleString()} (через ${Math.round(msUntilWake / 1000)} сек)`);
+  }
+}
+
+// Главная точка входа, вызывается каждый цикл из doScenario. Возвращает true, если что-то делали
+// (не даёт остальным пунктам цикла считать, что "ничего не произошло").
+async function runMisttownSecretEventIfDue(page) {
+  const now = Date.now();
+
+  const dueTheme = findDueMisttownSecretTheme(now);
+  if (dueTheme) {
+    const dueAt = misttownSecretDueAt[dueTheme];
+    console.log(`Мисттаунское событие (${dueTheme}): время подошло (${new Date(dueAt).toLocaleString()}), иду занимать место`);
+
+    try {
+      // Встаём на уличную точку заранее, но "Спуститься вниз" НЕ нажимаем сразу -- страница
+      // статична, стоять на уже загруженной и перечитывать её бесполезно (сервер её не обновит).
+      // Ждём заявленное время +1-2 сек запаса на рассинхрон часов и только тогда жмём вниз --
+      // это свежая загрузка страницы, так что сразу увидим бой, если он уже начался.
+      await goToMisttownSecretStreetSpot(page, dueTheme);
+
+      const clickBufferMs = 1000 + Math.round(Math.random() * 1000);
+      const clickAt = dueAt + clickBufferMs;
+      if (Date.now() < clickAt) {
+        await sleepPlain(clickAt - Date.now());
+      }
+
+      const GO_DOWN = 'Спуститься вниз';
+      const FIGHT_TEXTS = ['В бой!', 'в бой!', 'В бой', 'в бой'];
+
+      // Один точно рассчитанный клик вниз (не полагаемся на повторные клики "Спуститься вниз" --
+      // после первого клика мы уже не на уличной странице, где эта ссылка была, так что повторить
+      // именно её нельзя; если не получилось с первого раза, честно сообщаем и не пытаемся дальше).
+      const clicked = await clickByTexts(page, [GO_DOWN, GO_DOWN.toLowerCase()], GO_DOWN);
+      if (!clicked) {
+        console.log(`Мисттаунское событие (${dueTheme}): не нашёл "Спуститься вниз"`);
+      } else {
+        await pause(page, 300, 600);
+
+        if (await existsAnyClickable(page, FIGHT_TEXTS)) {
+          const { bowUsed } = await fightLoopMisttownEvent(page);
+          console.log(`Мисттаунское событие (${dueTheme}): бой пройден${bowUsed ? ' (стрела выпущена)' : ''}`);
+
+          // Фарм стрелы не срочный (в отличие от самого события) -- не лезем в ещё один бой сразу
+          // после мисттаунского (могло не хватить HP/резерва), просто ставим флаг, а обычный
+          // диспетчер (maybeFarmArrow в doScenario) сходит зафармить, когда условия позволят.
+          if (bowUsed) {
+            needsArrowFarm = true;
+            persistDailyQuestState();
+            console.log('Стрела выпущена -> отмечено "нужно зафармить" (Старый лучник), сделаем когда позволят HP/резерв');
+          }
+        } else {
+          console.log(`Мисттаунское событие (${dueTheme}): спустился вниз, но бой ещё не появился -- похоже, опоздал или разошёлся по времени с сервером`);
+        }
+      }
+    } catch (e) {
+      console.log(`Мисттаунское событие (${dueTheme}): ошибка (${e.message})`);
+    }
+
+    misttownSecretAttemptedAt[dueTheme] = dueAt;
+    persistDailyQuestState();
+
+    try {
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 800, 1600);
+    } catch (e) { /* ignore, main loop will recover if needed */ }
+
+    return true;
+  }
+
+  if (needMisttownSecretRefresh(now)) {
+    return await refreshMisttownSecretSchedule(page);
+  }
+
+  return false;
 }
 
 // Охота на лосей: раз в день, ходовая точка убивается кем-то на сервере, поэтому "бота" (цели
@@ -7043,6 +8295,30 @@ async function doScenario(page) {
     return;
   }
 
+  // Мисттаунское событие: проверяем максимально рано и раньше остальных подзадач -- если время
+  // уже подошло, окно на вход всего ~20-30 сек и опаздывать нельзя. В остальные циклы это дешёвая
+  // проверка (без похода к зазывале, см. needMisttownSecretRefresh) либо подгонка следующего
+  // пробуждения цикла под скорое время старта.
+  const misttownEventHappened = await runMisttownSecretEventIfDue(page);
+  scheduleMisttownSecretWakeupIfSoon();
+
+  // Массовый бой мисттаунского события реально бьёт по HP (50 ударов с несколькими противниками),
+  // а `stats` на этот момент — снимок ДО боя. Без обновления farm-логика ниже принимала решение
+  // "можно драться" по старому полному HP, хотя после события реальный HP мог упасть до опасного
+  // уровня (баг: ушли на Блейка с ~420 HP сразу после события).
+  if (misttownEventHappened) {
+    read = await goToLocationAndReadStats(page, 'stats after misttown event');
+    if (read.attackHandled) {
+      return;
+    }
+    stats = read.stats;
+    lastCycleStats = stats;
+  }
+
+  // Фарм стрелы (после выстрела в мисттаунском событии): не срочный, просто ждём, пока условия
+  // позволят (>=10 резервных минут, >2000 HP).
+  await maybeFarmArrow(page, stats);
+
   // Утренний скриншот: раз в день, максимально рано (первый же цикл после смены дня) —
   // выполняется раньше остальных подзадач, чтобы не зависеть от их таймингов.
   if (canRunMorningScreenshotNow()) {
@@ -7086,6 +8362,29 @@ async function doScenario(page) {
     await runElkHuntTask(page);
     elkHuntDoneToday = true;
     persistDailyQuestState();
+  }
+
+  // Охота на демона: раз в день, личный квест (не общий на сервер "бот", как лоси).
+  if (canRunDemonHuntNow()) {
+    console.log('Охота на демона: ещё не выполнена сегодня, иду выполнять');
+    await runDemonHuntTask(page);
+    demonHuntDoneToday = true;
+    persistDailyQuestState();
+  }
+
+  // Квест (школа/казарма/храм): раз в день, требует >=20 резервных минут (3 боя подряд). Попытка
+  // считается использованной независимо от исхода -- см. runSchoolTempleQuest и
+  // canRunSchoolTempleQuestNow.
+  if (canRunSchoolTempleQuestNow()) {
+    const schoolReserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
+    if (typeof schoolReserveMinutes !== 'number' || schoolReserveMinutes < 20) {
+      console.log(`Квест (школа/казарма/храм): пропускаю сегодня (нужно >=20 резервных минут, есть=${schoolReserveMinutes ?? 'n/a'})`);
+    } else {
+      console.log('Квест (школа/казарма/храм): ещё не выполнен сегодня, иду выполнять');
+      await runSchoolTempleQuest(page);
+      schoolTempleDoneToday = true;
+      persistDailyQuestState();
+    }
   }
 
   // Дейлик (доп. задание дня, меняется по дням недели): раз в день, только для дней,
@@ -7440,7 +8739,21 @@ async function doScenario(page) {
   scheduleFarmNextCycle(stats, didAnyFarmFight);
 }
 
-(async () => {
+// Чистый таймер, НЕ завязанный на page -- в отличие от fixedPause/pause (page.waitForTimeout),
+// не бросает исключение, если браузер/страница к этому моменту уже закрылись. Все ожидания-бэкоффы
+// (между попытками запуска/навигации/циклами) должны использовать именно это, а не page-версии --
+// иначе браузер, закрывшийся сам по себе во время долгого ожидания (краш, ручное закрытие окна,
+// авто-перерыв менеджера), роняет необработанным исключением весь процесс (см. isClosedTargetError
+// ниже и историю в памяти already-done-today-message/incoming-attack-recovery).
+function sleepPlain(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isClosedTargetError(e) {
+  return /has been closed|target closed/i.test(String(e?.message || ''));
+}
+
+async function launchBrowserAndPage() {
   const userDataDir = path.join(__dirname, 'chrome-profile');
 
   let context;
@@ -7458,7 +8771,7 @@ async function doScenario(page) {
       // uncaught rejection here kills node and nothing farms until someone restarts it manually.
       console.log('Browser launch failed:', e.message);
       console.log('Retry launch in 1 min.');
-      await new Promise((resolve) => setTimeout(resolve, 60 * 1000));
+      await sleepPlain(60 * 1000);
     }
   }
 
@@ -7478,8 +8791,61 @@ async function doScenario(page) {
       console.log('Initial goto failed:', e.message);
       const waitMs = isNetworkError(e) ? 60 * 1000 : 5 * 60 * 1000;
       console.log('Retry in ' + Math.round(waitMs / 60000) + ' min.');
-      await fixedPause(page, waitMs);
+      await sleepPlain(waitMs);
     }
+  }
+
+  return { context, page };
+}
+
+async function returnToLocationPage(page) {
+  await page.goto('http://lbast.ru/location.php', {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await pause(page, 1000, 2000);
+}
+
+(async () => {
+  let { context, page } = await launchBrowserAndPage();
+
+  if (FARM_START_AFTER_MS && Date.now() < FARM_START_AFTER_MS) {
+    console.log(`Ночное ожидание: квесты/фарм начнутся в ${new Date(FARM_START_AFTER_MS).toLocaleString()}, до этого только слежу за мисттаунским событием`);
+
+    while (Date.now() < FARM_START_AFTER_MS) {
+      try {
+        await page.bringToFront().catch(() => {});
+
+        await runMisttownSecretEventIfDue(page);
+        scheduleMisttownSecretWakeupIfSoon();
+
+        const remainingMs = FARM_START_AFTER_MS - Date.now();
+        if (remainingMs <= 0) break;
+
+        const waitMs = Math.min(nextCycleDelayOverrideMs ?? getRandomCycleDelayMs(), remainingMs);
+        nextCycleDelayOverrideMs = null;
+        console.log(`Ночное ожидание: сплю ${Math.round(waitMs / 60000)} мин (до старта обычного сценария ${Math.round(remainingMs / 60000)} мин)`);
+        await sleepPlain(waitMs);
+
+        if (Date.now() >= FARM_START_AFTER_MS) break;
+
+        const read = await goToLocationAndReadStats(page, 'ночное ожидание stats');
+        if (read.attackHandled) {
+          console.log('Ночное ожидание: отбились от атаки, продолжаю ждать.');
+        }
+      } catch (e) {
+        if (isClosedTargetError(e)) {
+          console.log('Ночное ожидание: браузер закрылся сам по себе -- перезапускаю:', e.message);
+          try { await context.close(); } catch (e2) { /* ignore */ }
+          ({ context, page } = await launchBrowserAndPage());
+          continue;
+        }
+        console.log('Ночное ожидание: ошибка цикла:', e.message);
+        await sleepPlain(60 * 1000);
+      }
+    }
+
+    console.log('Ночное ожидание: время пришло, перехожу к обычному сценарию.');
   }
 
   console.log('Browser opened. Start loop.');
@@ -7504,10 +8870,27 @@ async function doScenario(page) {
       nextCycleDelayOverrideMs = null;
       const delayMinutes = Math.round(delayMs / 60000);
       console.log('Cycle done. Sleep ' + delayMinutes + ' min.');
-      await fixedPause(page, delayMs);
+      await sleepPlain(delayMs);
+
+      await returnToLocationPage(page);
     } catch (e) {
+      // Браузер/страница закрылись сами по себе (краш Chrome, ручное закрытие окна пользователем,
+      // авто-перерыв менеджера и т.п.) -- раньше это било необработанным исключением из fixedPause/
+      // page.goto прямо в этом месте и убивало весь процесс до следующего ручного перезапуска.
+      // Вместо этого просто поднимаем браузер заново и продолжаем цикл.
+      if (isClosedTargetError(e)) {
+        console.log('Браузер/страница закрылись сами по себе -- перезапускаю браузер:', e.message);
+        try {
+          await context.close();
+        } catch (e2) { /* ignore */ }
+        ({ context, page } = await launchBrowserAndPage());
+        continue;
+      }
+
       console.log('Cycle error:', e.message);
-      await saveSnapshot(page, 'cycle_error');
+      try {
+        await saveSnapshot(page, 'cycle_error');
+      } catch (e2) { /* page может быть недоступна -- не мешаем восстановлению ниже */ }
 
       if (String(e?.message || '').startsWith('ui_stuck:')) {
         try {
@@ -7523,18 +8906,21 @@ async function doScenario(page) {
       nextCycleDelayOverrideMs = null;
       const delayMinutes = Math.round(delayMs / 60000);
       console.log('Retry after ' + delayMinutes + ' min.');
-      await fixedPause(page, delayMs);
-    }
+      await sleepPlain(delayMs);
 
-    try {
-      await page.goto('http://lbast.ru/location.php', {
-        waitUntil: 'domcontentloaded',
-        timeout: 60000,
-      });
-    } catch (e) {
-      console.log('Could not open location.php, retry later.');
+      try {
+        await returnToLocationPage(page);
+      } catch (e2) {
+        if (isClosedTargetError(e2)) {
+          console.log('Браузер/страница закрылись во время ожидания повтора -- перезапускаю браузер:', e2.message);
+          try {
+            await context.close();
+          } catch (e3) { /* ignore */ }
+          ({ context, page } = await launchBrowserAndPage());
+        } else {
+          console.log('Could not open location.php, retry later.');
+        }
+      }
     }
-
-    await pause(page, 1000, 2000);
   }
 })();
