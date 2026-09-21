@@ -272,6 +272,7 @@ async function runFarmSession(page) {
 // файл проверяется каждый цикл, поэтому режим снимается и включается без перезапуска драйвера.
 // Мирное продолжает работать: рыбалка, травы, довольствие, дерево жизни, статуя, кухня, письма, чат.
 const { getFightMode } = require('./lib/state');
+const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
   'Шепот quest step', 'assassin quest step', 'Ордо экзекуторс', 'Квесты по гайду',
@@ -617,6 +618,11 @@ async function loginIfNeeded(page) {
       // 17.09.2026, Паша: "Довольствие" - короткий ежедневный квест без боя (Амулет ->
       // Дорожный крест -> Казначейство Тригмагистрата -> Получить довольствие -> В игру).
       r = await runCycleStep(page, 'Довольствие quest step', () => runDovolstvieIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // 21.09.2026, Паша: за 7 грамот Тригмагистрата Орден даёт премию 700 дин (lib/trig_premium.js).
+      r = await runCycleStep(page, 'Премия Ордена', () => claimTrigPremiumIfReady(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
