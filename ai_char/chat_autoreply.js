@@ -103,7 +103,7 @@ function affairsBlock() {
 // Что AI__ делал сегодня - данные для промпта, чтобы разговор шёл про реальную жизнь персонажа.
 function todayBlock() {
   const d = dayLog.digest(400);
-  return d ? `<today>\nСегодня с тобой было: ${d}\n</today>\n` : '';
+  return d ? `<today>\nСегодня с тобой было (в чате ещё не рассказывал): ${d}\n</today>\n` : '';
 }
 
 let queue = Promise.resolve();
@@ -232,6 +232,7 @@ function handleChatTrigger(trigger, roomText) {
       reply = addressOnce(reply, nick);
     }
     appendOutbox(room, reply);
+    try { dayLog.markTold(reply); } catch (e) { /* дневник не критичен */ } // рассказанное не повторять
     lastReplyAt[room] = Date.now();
     repliesToday += 1;
     console.log(`Автоответ [${trigger.type}] -> outbox room=${room}: ${reply}${noteText ? ` | заметка о ${nickRaw}: ${noteText}` : ''}`);
@@ -259,6 +260,7 @@ async function composeLetterReply(sender, body, { owner = false } = {}) {
   const f = filterReply(res.text, { oneLine: false, max: 450 });
   if (!f.text) { console.log(`Автоответ: письмо от ${who} без ответа (${f.reason})`); return null; }
   memory.remember({ kind: 'letter', nick: 'AI__', text: f.text, self: true });
+  try { dayLog.markTold(f.text); } catch (e) { /* дневник не критичен */ }
   if (noteText) console.log(`Автоответ: заметка о ${who}: ${noteText}`);
   return f.text;
 }

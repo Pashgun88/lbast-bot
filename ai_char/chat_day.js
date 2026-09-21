@@ -79,8 +79,39 @@ function readToday() {
 const plural = (n) => (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'раза' : 'раз');
 
 // Строка для промпта: одинаковые события сворачиваются в «×N», свежие впереди.
-function digest(maxChars = 400) {
+// 21.09.2026, Паша: «ты это уже 3 раза повторил на моих глазах» - про бизонов у Дорожного креста,
+// рыбу и грамоту. Дневник подавал модели одни и те же события в каждый промпт, и она вставляла их
+// в любой ответ. Теперь, что уже рассказано в чате, из дневника выпадает - до следующего такого же
+// события (новый бизон после рассказа - снова новость).
+const TOLD_FILE = path.join(DIR, 'day_told.json');
+function readTold() {
+  try {
+    const t = JSON.parse(fs.readFileSync(TOLD_FILE, 'utf8'));
+    return t && t.day === dayKey() ? t : { day: dayKey(), told: {} };
+  } catch (e) { return { day: dayKey(), told: {} }; }
+}
+// Основы значимых слов события (5 букв от слов длиннее 4): «валил бизонов у Дорожного креста» ->
+// валил, бизон, дорож, крест. Кириллица явными классами - \w в JS её не видит.
+const eventStems = (text) => String(text).toLowerCase().replace(/ё/g, 'е')
+  .split(/[^а-яa-z]+/).filter((w) => w.length > 4).map((w) => w.slice(0, 5));
+function markTold(reply) {
+  const said = String(reply || '').toLowerCase().replace(/ё/g, 'е');
+  if (!said) return;
   const rows = readToday();
+  const t = readTold();
+  let changed = false;
+  for (const r of rows) {
+    const stems = eventStems(r.text);
+    const hits = stems.filter((st) => said.includes(st)).length;
+    if (hits >= 1 && (t.told[r.text] || 0) < r.ts) { t.told[r.text] = r.ts; changed = true; }
+  }
+  if (changed) { try { ensureDir(); fs.writeFileSync(TOLD_FILE, JSON.stringify(t)); } catch (e) { /* ладно */ } }
+}
+
+function digest(maxChars = 400) {
+  const told = readTold().told;
+  // Событие, рассказанное после последнего своего повторения, - уже не новость.
+  const rows = readToday().filter((r) => !(told[r.text] >= r.ts));
   if (!rows.length) return '';
   const counts = new Map();
   const lastAt = new Map();
@@ -99,4 +130,4 @@ function digest(maxChars = 400) {
   return s;
 }
 
-module.exports = { noteEvent, digest, FILE };
+module.exports = { noteEvent, digest, markTold, FILE };
