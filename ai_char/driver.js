@@ -275,7 +275,7 @@ const { getFightMode } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
-  'Шепот quest step', 'assassin quest step', 'Ордо экзекуторс', 'Квесты по гайду',
+  'Шепот quest step', 'assassin quest step', 'Квесты по гайду',
   'Fish Restaurant quest step',
 ]);
 // Шаги с ОДИНОЧНЫМ ботом - разрешены в 'single' (Паша 20.09.2026: «Попробуй одиночных ботов бить»).
@@ -283,6 +283,9 @@ const SINGLE_FIGHT_STEPS = new Set([
   'demon lake quest step', 'shipwreck quest step', 'Fish Eye step',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)', 'Harpy hunt (вторник)',
   'Boar farm round',
+  // 21.09.2026, Паша: «почему не идёт ордо делать?» Ордо стоял в цепочках зря: по логу его бои
+  // снимают 0-100 HP из 400 (главарь и бандит-мародёр по одному), это одиночные бои.
+  'Ордо экзекуторс',
   // Бизон разрешён даже в 'none' - Паша: «бизона можешь попробовать побить, он слабый».
 ]);
 let noFightLogged = false;

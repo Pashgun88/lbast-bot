@@ -2,8 +2,7 @@
 // Тригмагистров - за 7 грамот можно получить премию»). Проверено вживую 21.09.2026 09:19:
 // Амулет -> Дорожный крест -> Цитадель Ордена Тригмагистров -> Получить премию ->
 // «Получено 700 динар! Орден выражает вам благодарность за службу!». Грамоты списались все.
-// Грамоты приходят с Демона озера и других заданий Ордена - по одной, так что проверять
-// инвентарь чаще раза в час незачем.
+// Грамоты приходят с Демона озера и других заданий Ордена - по одной. Паша: «можно раз в день».
 
 module.exports = { claimTrigPremiumIfReady };
 
@@ -11,8 +10,8 @@ const { getBodyText, pause } = require('./core');
 const { clickByTexts, existsAnyText } = require('./ui');
 
 const PREMIUM_GRAMOTY = 7;
-const CHECK_EVERY_MS = 60 * 60 * 1000;
-let lastCheckAt = 0;
+const { getDayKeyNow } = require('./state');
+let checkedDayKey = '';
 
 // В инвентаре строка вида «Грамота Тригмагистрата  7»; одна штука - без числа.
 function countGramoty(invText) {
@@ -22,8 +21,8 @@ function countGramoty(invText) {
 }
 
 async function claimTrigPremiumIfReady(page) {
-  if (Date.now() - lastCheckAt < CHECK_EVERY_MS) return false;
-  lastCheckAt = Date.now();
+  if (checkedDayKey === getDayKeyNow()) return false;
+  checkedDayKey = getDayKeyNow();
 
   await page.goto('http://lbast.ru/inv.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
   const n = countGramoty(await getBodyText(page));

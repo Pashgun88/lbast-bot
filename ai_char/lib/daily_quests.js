@@ -74,7 +74,7 @@ function hasPendingFightQuests() {
   const mode = getFightMode();
   if (mode === 'none') return false; // боёв нет вовсе - ферме ждать нечего (бизон идёт всегда)
   const blockedByMode = (q) => mode === 'single'
-    && (CHAIN_FIGHT_QUESTS.has(q) || /^Ордо/i.test(q) || /Рыбный ресторан/i.test(q));
+    && (CHAIN_FIGHT_QUESTS.has(q) || /Рыбный ресторан/i.test(q)); // Ордо - одиночные бои (21.09)
   const skip = (q) => blockedByMode(q) || (merchantOut && /торгов/i.test(q))
     || (!FISH_RESTAURANT_ENABLED && q === 'Рыбный ресторан')
     || (!RUMA_FORGE_ENABLED && q === 'Кузница Рума')
