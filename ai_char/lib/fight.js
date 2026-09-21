@@ -96,6 +96,10 @@ async function fightLoop(page) {
     // but not always shown - in paired-bot fights it can appear on only one of the two bots.
     // Use it whenever HP drops below 75% max, then proceed to the normal hit.
     const stats = parseStats(text);
+    // 21.09.2026: на экране боя первым стоит противник («Телохранитель[6] (-36/330) VS. AI__[6]
+    // (278/460)»), и общий разбор мог взять его HP вместо нашего. Своё HP берём по своему нику.
+    const selfHp = text.match(/AI__\s*\[\d+\]\s*\(\s*(-?\d+)\s*\/\s*(\d+)\s*\)/);
+    if (selfHp) { stats.hpCurrent = Number(selfHp[1]); stats.hpMax = Number(selfHp[2]); }
 
     // Эликсир лечения (HP+40), экипированный в подсумок, доступен в бою через "Пояс" ->
     // "Использовать Эликсир лечения". Порог и число попыток - см. HEALING_ELIXIR_HP_FRACTION

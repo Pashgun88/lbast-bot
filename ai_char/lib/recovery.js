@@ -151,24 +151,31 @@ async function ensureHealingGearEquipped(page) {
 // функция считала это успехом (`return true`), fightLoop продолжал ждать боевую кнопку и
 // зависал на 10 итераций (`fight_not_reached`), оставляя location.php потом застрявшим на
 // голом "В бой!" на много циклов подряд. Теперь проверяем текст ответа явно.
+// 21.09.2026, Паша: «лечилку не использовал? они уже 80 HP в бою добавляют». В подсумке давно лежит
+// Большой эликсир лечения (HP+80, oid 1029) с Дерева жизни, а бой просил только старый эликсир на
+// +40 (oid 1005), которого нет, - и лечения в бою не было. Пробуем по очереди: сначала большой.
+const HEALING_ELIXIR_IDS = [['1029', 'Большой эликсир лечения (HP+80)'], [HEALING_ELIXIR_ITEM_ID, 'Эликсир лечения (HP+40)']];
 async function tryUseHealingElixir(page) {
-  try {
-    await page.goto(`http://lbast.ru/arena_go.php?poyas=1&zapoyasom=${HEALING_ELIXIR_ITEM_ID}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000,
-    });
-    const text = await getBodyText(page);
-    if (/Предмет не найден/i.test(text)) {
-      console.log('Эликсир лечения: закончился в инвентаре ("Предмет не найден!") -> возвращаюсь в бой без лечения.');
-      // Эта страница - тупик (нет ни "Ударить", ни "В бой"), нужно вернуться на сам бой.
-      await page.goBack({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      return false;
+  for (const [id, name] of HEALING_ELIXIR_IDS) {
+    try {
+      await page.goto(`http://lbast.ru/arena_go.php?poyas=1&zapoyasom=${id}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+      });
+      const text = await getBodyText(page);
+      if (/Предмет не найден/i.test(text)) {
+        // Эта страница - тупик (нет ни "Ударить", ни "В бой"), нужно вернуться на сам бой.
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        continue;
+      }
+      console.log(`Used ${name} mid-fight.`);
+      return true;
+    } catch (e) {
+      /* следующий вид */
     }
-    console.log('Used Эликсир лечения (HP+40) mid-fight.');
-    return true;
-  } catch (e) {
-    return false;
   }
+  console.log('Эликсир лечения: в подсумке нет ни большого, ни обычного -> бой без лечения.');
+  return false;
 }
 
 // Надеть следующий эликсир СРАЗУ ПОСЛЕ использования. Паша, 17.09.2026: "пояс не пустой
