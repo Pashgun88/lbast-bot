@@ -33,6 +33,15 @@ const GUIDE_QUESTS = [
     needsAle: true,
     allowedInSingleMode: true,
   },
+  {
+    // Паша, 21.09.2026: «делай эти квесты... сначала кузницу и галерею». Старое исполнение в
+    // lib/quests_basic.js выключено (RUMA_FORGE_ENABLED=false) - шло без лечения и падало.
+    name: 'Кузница Рума',
+    files: ['ruma.steps'],
+    periodDays: 1.5, // «раз в 36 часов» (инфо квеста); меню Q всё равно решает, доступен ли
+    quietDone: true,
+    allowedInSingleMode: true,
+  },
 ];
 
 // Эль перед Штольнями. true - можно начинать.
