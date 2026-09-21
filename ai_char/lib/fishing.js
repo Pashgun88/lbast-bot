@@ -179,6 +179,10 @@ async function finishFishingBiteWait(page) {
     const waitingScreen = mm || /подсекай|не клюет|подождем/i.test(text);
     if (!waitingScreen) return;
     const secs = mm ? Number(mm[1]) + 1 : 3;
+    // 21.09.2026, Паша: «поклёвка идёт, ты можешь через амулет - последний портал прыгать туда
+    // сюда». Отсчёт поклёва идёт и без нас, а лечение в Кулаке Хаоса быстрее - длинный отсчёт
+    // (~115 с) пережидаем дома и возвращаемся к удочке Амулет -> Последний портал.
+    if (secs >= BITE_AWAY_MIN_SEC && (await waitBiteInChaos(page, secs))) continue;
     console.log(`Рыбалка: жду поклёва ${secs} сек, потом "Ждать" (${i + 1}/4).`);
     await page.waitForTimeout(secs * 1000);
     const href = await page.evaluate(() => {
@@ -189,6 +193,47 @@ async function finishFishingBiteWait(page) {
     await page.goto(`http://lbast.ru/${href.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(800);
   }
+}
+
+const BITE_AWAY_MIN_SEC = 40;
+
+// Уйти в Кулак на время отсчёта и вернуться к удочке. true - стоим снова у озера на экране
+// удочки (цикл ожидания прочитает его заново); false - вернуться не вышло, ждём по-старому.
+async function waitBiteInChaos(page, secs) {
+  const t0 = Date.now();
+  console.log(`Рыбалка: до поклёва ${secs} сек - жду в Кулаке Хаоса, потом Амулет -> Последний портал.`);
+  try {
+    await goToChaosByAmulet(page);
+  } catch (e) {
+    console.log('Рыбалка: в Кулак не ушёл, жду у озера:', e.message);
+    return false;
+  }
+  const left = secs * 1000 - (Date.now() - t0);
+  if (left > 0) await page.waitForTimeout(left);
+  if (!(await returnToFishingSpotByPortal(page))) {
+    console.log('Рыбалка: Последний портал не привёл к озеру - иду маршрутом.');
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await goRouteToFishingSpot(page);
+  }
+  // У озера «Рыбачить» открывает экран заброшенной удочки (отсчёт или «подсекай»).
+  await clickByTexts(page, ['Рыбачить'], 'Рыбачить (вернулся к удочке)');
+  await page.waitForTimeout(1000);
+  const back = await getBodyText(page);
+  if (/Забросить удочку/i.test(back)) {
+    console.log('Рыбалка: удочка оказалась не заброшена после возврата - заброс заново.');
+    await clickByTexts(page, ['Забросить удочку'], 'Забросить удочку (после возврата)');
+    await page.waitForTimeout(1000);
+  }
+  return true;
+}
+
+async function returnToFishingSpotByPortal(page) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  if (!(await clickByTexts(page, ['Амулет', 'Aмулет'], 'Амулет (к удочке)'))) return false;
+  await pause(page, 800, 1500);
+  if (!(await clickByTexts(page, ['Последний портал'], 'Последний портал (к удочке)'))) return false;
+  await pause(page, 1500, 2500);
+  return isFishingSpotLocation(await getBodyText(page));
 }
 
 async function castFishingRodAndDetectCatch(page) {
