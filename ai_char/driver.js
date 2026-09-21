@@ -40,7 +40,6 @@ const {
   runFishRestaurantQuestIfAvailable,
   handleIncomingAttackIfAny,
   ensureHealingGearEquipped,
-  ensureBuffAlesActive,
   isAnyBuffAleActive,
   runHerbQuestsIfAvailable,
   runThursdayDailiesIfAvailable,
@@ -594,15 +593,11 @@ async function loginIfNeeded(page) {
         return false;
       });
 
-      // 16.09.2026, Паша: "есть усилители временные... праздничный эль и эль вырви глаз,
-      // можешь использовать их через инвентарь - усиляют на разное время, но будет проще
-      // бить ботов". Дешёвая проверка раз в цикл (сама пропускает уже активный бафф,
-      // см. tryDrinkBuffAle) - переиспользует ту же логику, что уже была для Штолен.
-      await ensureBuffAlesActive(page).catch((e) => {
-        console.log('ensureBuffAlesActive error:', e.message);
-        return false;
-      });
-      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      // 16.09.2026 эль пили в каждом цикле, как только он появлялся в инвентаре.
+      // 21.09.2026, Паша: «как только появляется эль, ты его пьёшь. Его пьют против сильных ботов,
+      // Штольни например». Эль редкий и действует ограниченное время - тратить его на бизонов и
+      // дейлики нельзя. Поэтому здесь его больше НЕ пьём: остались только Штольни (lib/shtolni.js,
+      // Праздничный эль перед маршрутом) и гаунтлет Шепота (lib/shepot.js, Эль «Вырви глаз»).
 
       // 16.09.2026, Паша: "у Цунами есть как использовать статую... раз в 12 часов" - логика
       // (runStatueOfGloryIfDue) уже была в module.js, но жила только внутри doScenario(),
