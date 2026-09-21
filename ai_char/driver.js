@@ -35,6 +35,7 @@ const {
   runHarpyFarmRound,
   runBisonFarmRound,
   runBoarFarmRound,
+  runSawmillGuardRound,
   runDemonLakeQuestIfAvailable,
   runShipwreckQuestIfAvailable,
   runFishRestaurantQuestIfAvailable,
@@ -252,12 +253,14 @@ async function runFarmSession(page) {
     // Кабан первым; бизон - только пока его кож не больше кабаньих (счёт неизвестен - бьём обоих).
     const k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
     if (k) fights += 1;
+    const g = await runSawmillGuardRound(page).catch((e) => { console.log('Фарм-сессия: сторож лесопилки:', e.message); return false; });
+    if (g) fights += 1;
     let b = false;
     if (!hides || hides.bison <= hides.boar) {
       b = await runBisonFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: бизон:', e.message); return false; });
       if (b) fights += 1;
     }
-    if (!b && !k) {
+    if (!b && !k && !g) {
       // обе цели на кулдауне или маршрут не прошёл - не долбим сервер, ждём минуту
       await new Promise((r) => setTimeout(r, 60_000));
     }
@@ -284,6 +287,7 @@ const SINGLE_FIGHT_STEPS = new Set([
   'demon lake quest step', 'shipwreck quest step', 'Fish Eye step',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)', 'Harpy hunt (вторник)',
   'Boar farm round',
+  'Sawmill guard round',
   // 21.09.2026, Паша: «почему не идёт ордо делать?» Ордо стоял в цепочках зря: по логу его бои
   // снимают 0-100 HP из 400 (главарь и бандит-мародёр по одному), это одиночные бои.
   'Ордо экзекуторс',
@@ -776,6 +780,15 @@ async function loginIfNeeded(page) {
         if (!farmAllowedFull) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
         return runBoarFarmRound(page, buffedForFarm);
+      });
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // 21.09.2026, Паша: «встроить сторожа в ферму» - доски на бунгало (3 шт., шанс 10% за бой).
+      r = await runCycleStep(page, 'Sawmill guard round', () => {
+        if (!farmAllowedFull) return Promise.resolve(false);
+        if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
+        return runSawmillGuardRound(page);
       });
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;

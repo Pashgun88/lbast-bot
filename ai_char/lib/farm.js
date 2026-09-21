@@ -6,7 +6,7 @@
 module.exports = {
   enterPodvaly, runPodvalyFarmRound, isHarpyLocation, goRouteToHarpy, openHarpyFight,
   runHarpyFarmRound, isBisonLocation, goRouteToBison, openBisonFight, runBisonFarmRound,
-  isBoarLocation, goRouteToBoar, openBoarFight, runBoarFarmRound,
+  isBoarLocation, goRouteToBoar, openBoarFight, runBoarFarmRound, runSawmillGuardRound,
 };
 
 const {
@@ -597,5 +597,65 @@ async function runBoarFarmRound(page, buffed = false) {
   const hpAfter = typeof statsAfter.hpCurrent === 'number' ? statsAfter.hpCurrent : null;
   const delta = hpAfter !== null ? hpBefore - hpAfter : null;
   console.log(`Boar farm: fight result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
+  return true;
+}
+
+// ===================================================================================
+// Сторож лесопилки (Леса Эльсены) - доски на бунгало. Паша, 21.09.2026: «встроить сторожа в
+// ферму». Для постройки бунгало на Дауэрти нужно 3 «Обрезные доски»; падают со сторожа с шансом
+// 10% (справка игры), поэтому бьём его как бизона и кабана, пока досок меньше трёх.
+// Маршрут пройден вживую 21.09.2026: Конь -> Леса Эльсены -> (В пути) -> Опушка -> «Идти на север
+// к лесопилке» -> «Лесопилка» -> «Воровать доски» -> «Напасть на сторожа» -> «В бой!».
+// Сторож [3], 410 HP, урон 205 за бой у AI__ 6 ур. (21.09: 458 -> 163, 500 -> 295), без сбора
+// лута - доска сама падает в инвентарь.
+// ===================================================================================
+const SAWMILL_BOARDS_NEEDED = 3;
+const SAWMILL_HP_FLOOR = 0.85; // бой снимает 200-300 из 500
+let sawmillBoardsCache = { at: 0, count: null };
+
+async function countSawmillBoards(page) {
+  if (Date.now() - sawmillBoardsCache.at < 20 * 60 * 1000 && sawmillBoardsCache.count !== null) return sawmillBoardsCache.count;
+  await page.goto('http://lbast.ru/inv.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const m = (await getBodyText(page)).match(/Обрезная доска[ \t]*(\d+)?/i);
+  const count = m ? (m[1] ? Number(m[1]) : 1) : 0;
+  sawmillBoardsCache = { at: Date.now(), count };
+  return count;
+}
+
+async function runSawmillGuardRound(page) {
+  const boards = await countSawmillBoards(page);
+  if (boards >= SAWMILL_BOARDS_NEEDED) return false;
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const stats0 = parseStats(await getBodyText(page));
+  if (typeof stats0.hpCurrent !== 'number' || typeof stats0.hpMax !== 'number'
+    || stats0.hpCurrent < stats0.hpMax * SAWMILL_HP_FLOOR) return false;
+
+  let text = await getBodyText(page);
+  if (!/Лесопилка/i.test(text)) {
+    if (!/Идти на север к лесопилке/i.test(text)) {
+      await performStep(page, { stepName: 'Конь', currentTexts: ['Конь'], nextTexts: ['Леса Эльсены'], retries: 3 });
+      await performStep(page, { stepName: 'Леса Эльсены', currentTexts: ['Леса Эльсены'], waitAfterClickMs: 7000, retries: 3 });
+      for (let i = 0; i < 15 && /В пути/i.test(await getBodyText(page)); i++) {
+        await clickByTexts(page, ['В пути еще', 'В пути ещё', 'В пути'], 'В пути').catch(() => {});
+        await pause(page, 1800, 2600);
+      }
+    }
+    await performStep(page, { stepName: 'Идти на север к лесопилке', currentTexts: ['Идти на север к лесопилке'], retries: 3 });
+  }
+  await performStep(page, { stepName: 'Лесопилка', currentTexts: ['Лесопилка'], nextTexts: ['Воровать доски'], retries: 3, skipIfNextVisible: false });
+  await performStep(page, { stepName: 'Воровать доски', currentTexts: ['Воровать доски'], nextTexts: ['Напасть на сторожа'], retries: 3 });
+  await performStep(page, { stepName: 'Напасть на сторожа', currentTexts: ['Напасть на сторожа'], retries: 3 });
+  if (await existsAnyText(page, ['В бой!', 'В бой'])) {
+    await performStep(page, { stepName: 'В бой!', currentTexts: ['В бой!', 'В бой'], retries: 3 });
+  }
+  const hpBefore = stats0.hpCurrent;
+  const won = await fightLoop(page).catch((e) => { console.log('Sawmill guard: fightLoop error:', e.message); return null; });
+  const hpAfter = parseStats(await getBodyText(page)).hpCurrent;
+  sawmillBoardsCache.at = 0; // перечитать инвентарь
+  const now = await countSawmillBoards(page);
+  console.log(`Sawmill guard: fight result=${won} HP ${hpBefore}->${hpAfter}; досок ${now}/${SAWMILL_BOARDS_NEEDED}${now > boards ? ' (выпала доска!)' : ''}`);
+  if (now >= SAWMILL_BOARDS_NEEDED) console.log('Доски для бунгало собраны: 3 шт. - можно строить бунгало на Дауэрти.');
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return true;
 }
