@@ -78,6 +78,9 @@ function hasPendingFightQuests() {
   const skip = (q) => blockedByMode(q) || (merchantOut && /торгов/i.test(q))
     || (!FISH_RESTAURANT_ENABLED && q === 'Рыбный ресторан')
     || (!RUMA_FORGE_ENABLED && q === 'Кузница Рума')
+    // Драбас висит в Q весь день; без питомца или на кулдауне (2 раза в сутки, раз в 3-4 ч) держать
+    // ради него ферму - значит не фармить весь день.
+    || (q === 'Камни Драбаса' && !canRunDrabasNow())
     || (q === 'Трактир «Рыбий глаз»' && !canRunFishEyeFightNow());
   return IMPLEMENTED_FIGHT_QUESTS
     .filter((q) => !skip(q))
