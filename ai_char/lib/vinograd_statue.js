@@ -215,16 +215,36 @@ async function runStatueOfGloryTask(page) {
 // в клан и её вообще не заметили. Обёртка ниже - тонкий адаптер для прямого вызова из
 // driver.js, без изменения самой логики маршрута/интервала.
 async function runStatueOfGloryIfDue(page) {
-  if (!isStatueOfGloryDue()) {
+  // 22.09.2026, Паша: «ты без статуи бегаешь». Таймер 12-14 ч жил своей жизнью: баф кончился в ~17:30,
+  // а два прошлых захода упали на первом шаге («Конь» не найден - страница осталась в инвентаре после
+  // проверки подсумка), и следующая попытка ставилась снова через 12 ч. Теперь источник истины -
+  // анкета: «Статуя славы: еще N мин». Нет строки (или < 3 мин) - идём к статуе.
+  if (S.nextStatueDueAt && Date.now() < S.nextStatueDueAt) return false;
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const pers = await getBodyText(page).catch(() => '');
+  const left = pers.match(/Статуя славы:\s*е[щш][её]\s*(\d+)\s*мин/i);
+  if (left && Number(left[1]) >= 3) {
+    const wait = Math.min(Number(left[1]) - 2, 6 * 60); // перепроверка не реже раза в 6 ч
+    S.nextStatueDueAt = Date.now() + wait * 60000;
+    persistDailyQuestState();
     return false;
   }
-  console.log('Статуя славы: подошёл интервал 12-14 часов, выполняю маршрут');
+  if (!/Мораль:/.test(pers)) {
+    S.nextStatueDueAt = Date.now() + 10 * 60000; // анкета не открылась - не гадаем
+    return false;
+  }
+  console.log('Статуя славы: бафа нет - иду к статуе.');
+  let ok = false;
   try {
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await runStatueOfGloryTask(page);
+    ok = true;
   } catch (e) {
-    console.log(`Статуя славы: не удалось (${e.message}) -> пропускаю, продолжаю цикл`);
+    console.log(`Статуя славы: не удалось (${e.message.slice(0, 200)}) - повтор через 10 мин.`);
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   }
-  scheduleNextStatueOfGlory();
+  S.lastStatueRunAt = Date.now();
+  S.nextStatueDueAt = Date.now() + (ok ? 30 : 10) * 60000; // после успеха перечитаем анкету через 30 мин
+  persistDailyQuestState();
   return true;
 }
