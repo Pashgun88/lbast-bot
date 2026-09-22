@@ -622,7 +622,11 @@ async function countSawmillBoards(page) {
   return count;
 }
 
+// 22.09.2026: бунгало построено (ушло 2 доски) - доски больше не нужны, сторож выключен.
+const SAWMILL_ENABLED = false;
+
 async function runSawmillGuardRound(page) {
+  if (!SAWMILL_ENABLED) return false;
   const boards = await countSawmillBoards(page);
   if (boards >= SAWMILL_BOARDS_NEEDED) return false;
 
