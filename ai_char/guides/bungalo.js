@@ -13,6 +13,8 @@ const GO_FILE = path.join(__dirname, 'bungalo_go.steps');
 const BUNGALO_ROUTES = [
   { re: /келпи/i, file: 'bungalo_kelpi.steps', label: 'келпи' },
   { re: /болотная бестия/i, file: 'bungalo_bestia.steps', label: 'болотная бестия' },
+  // Маршрут после двери не проверен вживую (задания ещё не было) - первый прогон может встать.
+  { re: /скреб[её]тся/i, file: 'bungalo_skreb.steps', label: 'кто-то скребётся' },
 ];
 const RETRY_MS = 60 * 60 * 1000;
 let suppressedUntil = 0;
