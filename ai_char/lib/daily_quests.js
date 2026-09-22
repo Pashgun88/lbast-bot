@@ -82,9 +82,11 @@ function hasPendingFightQuests() {
     // ради него ферму - значит не фармить весь день.
     || (q === 'Камни Драбаса' && !canRunDrabasNow())
     || (q === 'Трактир «Рыбий глаз»' && !canRunFishEyeFightNow());
-  return IMPLEMENTED_FIGHT_QUESTS
+  const held = IMPLEMENTED_FIGHT_QUESTS
     .filter((q) => !skip(q))
-    .some((q) => isQuestInMenu(S.lastListedQuestNames, q));
+    .filter((q) => isQuestInMenu(S.lastListedQuestNames, q));
+  S.farmHeldBy = held; // для строки «Ферма пропущена» в драйвере: видно, какой квест держит
+  return held.length > 0;
 }
 
 async function runDailyQuests(page, stats) {

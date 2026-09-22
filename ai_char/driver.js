@@ -273,7 +273,7 @@ async function runFarmSession(page) {
 // в общем всё что без боя»). Включается файлом-флагом ai_char/no_fight.flag или AI_NO_FIGHT=1 -
 // файл проверяется каждый цикл, поэтому режим снимается и включается без перезапуска драйвера.
 // Мирное продолжает работать: рыбалка, травы, довольствие, дерево жизни, статуя, кухня, письма, чат.
-const { getFightMode } = require('./lib/state');
+const { getFightMode, S } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
@@ -758,7 +758,7 @@ async function loginIfNeeded(page) {
       if (!hpOkForFarm) {
         console.log(`Ферма пропущена: HP ${stats.hpCurrent}/${stats.hpMax} < ${OPTIONAL_FIGHT_MIN_HP_FRACTION * 100}% - это HP нужно квестам.`);
       } else if (questsPending) {
-        console.log('Ферма пропущена: есть невыполненные квесты с боями - HP берегу под них.');
+        console.log(`Ферма пропущена: есть невыполненные квесты с боями - HP берегу под них: ${(S.farmHeldBy || ['Q-меню ещё не читали']).join(', ')}`);
       }
 
       // 21.09.2026, Паша: «встроить сторожа в ферму» - доски на бунгало (3 шт., шанс 10% за бой).
