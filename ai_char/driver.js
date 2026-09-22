@@ -276,7 +276,6 @@ async function runFarmSession(page) {
 const { getFightMode, S } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
-const { tanHidesIfDue } = require('./lib/tanning');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
@@ -641,9 +640,6 @@ async function loginIfNeeded(page) {
 
       // 21.09.2026, Паша: раз в 3 дня продавать всю жареную рыбу в Лавке боевых ресурсов Стоунгарда.
       r = await runCycleStep(page, 'Продажа рыбы', () => sellFriedFishIfDue(page));
-      didAnything = didAnything || r.didAnything;
-      if (r.ko) continue;
-      r = await runCycleStep(page, 'Дубление', () => tanHidesIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
