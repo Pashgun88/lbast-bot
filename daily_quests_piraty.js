@@ -12,6 +12,10 @@ const { runGuideQuestsIfDue, hasGuideQuestInProgress } = require('./guides/quest
 // За сколько до мисттаунского события не начинать длинную цепочку по маршруту.
 const GUIDE_QUEST_MISTTOWN_GUARD_MS = 90 * 60 * 1000;
 
+// За сколько до мисттаунского события цикл вообще ничего не делает, а копит резерв: бои и переходы
+// тратят резерв (~1 мин восстанавливается за минуту), а без него игра не пустит ни вниз, ни в бой.
+const MISTTOWN_PREP_GUARD_MS = 25 * 60 * 1000;
+
 const DEBUG_SNAPSHOTS_PATH = path.join(__dirname, 'logs', 'debug_snapshots.log');
 
 function setupWindowsConsoleUtf8() {
@@ -5517,15 +5521,39 @@ async function runLastHouseRecovery(page) {
   await enterLastHouse();
 
   let stationIndex = 0;
+  // Станция на кулдауне (20-25 мин) остаётся на странице обычной ссылкой: клик "проходит", бот
+  // считает шаг успешным, но HP не растёт. Раньше цикл этого не замечал и, пока резерв был
+  // неотрицательным, прокручивал все 200 итераций подряд без единой паузы -- 22.09.2026 это дало
+  // 733 клика по станциям и гигантский лог ни о чём. Поэтому смотрим не на клик, а на факт: выросло
+  // ли HP. Если подряд не помогла ни одна станция -- значит все на кулдауне, надо ждать.
+  let uselessInARow = 0;
+  let lastHp = null;
 
   for (let i = 0; i < LAST_HOUSE_MAX_ITERATIONS; i++) {
     await clickHealingRefreshLink(page);
     let stats = parseStats(await getBodyText(page));
+    const hpNow = typeof stats.hpCurrent === 'number' ? stats.hpCurrent : null;
 
-    if (typeof stats.hpCurrent === 'number' && stats.hpCurrent >= BLAKE_MIN_HP) {
-      console.log(`Последний дом: HP восстановлено до ${stats.hpCurrent} (>= ${BLAKE_MIN_HP}) -> выхожу`);
+    if (hpNow !== null && hpNow >= BLAKE_MIN_HP) {
+      console.log(`Последний дом: HP восстановлено до ${hpNow} (>= ${BLAKE_MIN_HP}) -> выхожу`);
       break;
     }
+
+    if (hpNow === null || (lastHp !== null && hpNow <= lastHp)) {
+      uselessInARow += 1;
+    } else {
+      uselessInARow = 0;
+    }
+    lastHp = hpNow;
+
+    if (uselessInARow >= STATIONS.length) {
+      const waitMinutes = 20 + Math.floor(Math.random() * 6);
+      await waitStationCooldown(waitMinutes, `HP не растёт (${hpNow ?? 'n/a'}), все станции на кулдауне`);
+      uselessInARow = 0;
+      continue;
+    }
+
+    console.log(`Последний дом: HP ${hpNow ?? 'n/a'}/${stats.hpMax ?? 'n/a'}, итерация ${i + 1}/${LAST_HOUSE_MAX_ITERATIONS}`);
 
     // Combine station use with fishing: whenever fishing is due (daily catches left, 2-minute
     // cooldown elapsed), take that detour instead of a station, then jump to Кулак хаоса
@@ -5534,6 +5562,9 @@ async function runLastHouseRecovery(page) {
       console.log('Последний дом: пробую совместить с рыбалкой');
       await runFishingViaLastPortalOrRoute(page);
       await enterLastHouse();
+      // Крюк за рыбалкой сам по себе HP не даёт -- иначе он бы считался "бесполезной станцией".
+      uselessInARow = 0;
+      lastHp = null;
       continue;
     }
 
@@ -5551,22 +5582,8 @@ async function runLastHouseRecovery(page) {
 
     await clickByTexts(page, ['Назад', 'назад'], 'Назад');
     await pause(page, 800, 1600);
-
-    await clickHealingRefreshLink(page);
-    const afterStats = parseStats(await getBodyText(page));
-    const cooldown = typeof afterStats.cooldown === 'number' ? afterStats.cooldown : afterStats.reserveMinutes;
-
-    if (typeof cooldown === 'number' && cooldown < 0) {
-      // The cooldown value itself isn't a reliable minutes-to-wait figure (it doesn't regen
-      // 1:1 per minute) — just wait a fixed 20-25 min, same as the "unparseable" fallback below.
-      const waitMinutes = 20 + Math.floor(Math.random() * 6);
-      await waitStationCooldown(waitMinutes, `кулдаун ушёл в минус (${cooldown})`);
-    } else if (typeof cooldown !== 'number') {
-      // Couldn't read the cooldown at all (e.g. header format didn't match) — rather than hammer
-      // the loop with instant retries, back off a fixed 20-25 min like a normal cooldown wait.
-      const waitMinutes = 20 + Math.floor(Math.random() * 6);
-      await waitStationCooldown(waitMinutes, 'не удалось прочитать кулдаун');
-    }
+    // Результат станции проверяет начало следующей итерации (выросло ли HP) -- отдельный опрос
+    // статов здесь только удваивал загрузки страницы и строки в логе.
   }
 
   const returned = await clickByTexts(page, [V_IGRU, V_IGRU.toLowerCase()], V_IGRU);
@@ -6693,6 +6710,22 @@ function misttownSecretDueWithinMs(windowMs) {
   return null;
 }
 
+// Сколько осталось до момента, когда пора вставать на уличную точку у ближайшего неотработанного
+// события (null -- ничего не запланировано). Нужно, чтобы длинные сны никогда не перепрыгивали
+// событие: окно на вход ~20-30 сек, промахнуться мимо него нельзя.
+function msUntilNextMisttownPrePosition() {
+  const now = Date.now();
+  let soonest = null;
+  for (const theme of MISTTOWN_SECRET_THEMES) {
+    const dueAt = misttownSecretDueAt[theme];
+    if (!Number.isFinite(dueAt)) continue;
+    if (misttownSecretAttemptedAt[theme] === dueAt) continue;
+    const wakeAt = dueAt - MISTTOWN_SECRET_PRE_POSITION_MS;
+    if (wakeAt > now && (soonest === null || wakeAt < soonest)) soonest = wakeAt;
+  }
+  return soonest === null ? null : soonest - now;
+}
+
 // Подводит следующее пробуждение цикла к моменту, когда пора вставать на уличную точку заранее --
 // вызывается в конце каждого цикла (см. doScenario), не только когда событие уже "due".
 function scheduleMisttownSecretWakeupIfSoon() {
@@ -6769,7 +6802,17 @@ async function runMisttownSecretEventIfDue(page) {
             console.log('Стрела выпущена -> отмечено "нужно зафармить" (Старый лучник), сделаем когда позволят HP/резерв');
           }
         } else {
-          console.log(`Мисттаунское событие (${dueTheme}): спустился вниз, но бой ещё не появился -- похоже, опоздал или разошёлся по времени с сервером`);
+          // Отличаем "опоздал" от "не пустили": при нулевом/отрицательном резерве игра на спуск
+          // отвечает "Вы слишком устали. Требуется отдых еще N мин." -- боя на экране нет по
+          // совершенно другой причине, и лечится это не таймингом, а сохранённым резервом
+          // (см. MISTTOWN_PREP_GUARD_MS).
+          const downText = await getBodyText(page);
+          const tired = downText.match(/слишком\s+устали[^.]*?(\d+)\s*мин/i);
+          if (tired) {
+            console.log(`Мисттаунское событие (${dueTheme}): в бой не пустили -- кончился резерв ("слишком устали", ещё ${tired[1]} мин). Резерв надо копить заранее.`);
+          } else {
+            console.log(`Мисттаунское событие (${dueTheme}): спустился вниз, но бой ещё не появился -- похоже, опоздал или разошёлся по времени с сервером`);
+          }
         }
       }
     } catch (e) {
@@ -8315,6 +8358,22 @@ async function doScenario(page) {
     lastCycleStats = stats;
   }
 
+  // Резерв -- это пропуск в событие: без него игра не пускает ни вниз, ни в бой. В ночь на
+  // 22.09.2026 цикл начался за 3 мин 9 сек до "земли", то есть окно пре-позиции (3 мин) ещё не
+  // наступило на 9 секунд -- и бот пошёл делать обычные дела: школа/казарма/храм (3 боя), лось,
+  // демон. За две минуты резерв ушёл с 30 до -3, и к спуску игра ответила "Вы слишком устали" --
+  // боя не было. Поэтому в преддверии события не начинаем НИЧЕГО: спим ровно до пре-позиции и
+  // копим резерв.
+  const misttownSoonTheme = misttownSecretDueWithinMs(MISTTOWN_PREP_GUARD_MS);
+  if (misttownSoonTheme) {
+    const dueAt = misttownSecretDueAt[misttownSoonTheme];
+    const wakeAt = dueAt - MISTTOWN_SECRET_PRE_POSITION_MS;
+    const waitMs = Math.max(30 * 1000, wakeAt - Date.now());
+    nextCycleDelayOverrideMs = waitMs;
+    console.log(`Мисттаунское событие (${misttownSoonTheme}) в ${new Date(dueAt).toLocaleString()}: до него ничего не начинаю, коплю резерв (сейчас ${stats.reserveMinutes ?? stats.cooldown}); просыпаюсь через ${Math.round(waitMs / 1000)} сек.`);
+    return;
+  }
+
   // Фарм стрелы (после выстрела в мисттаунском событии): не срочный, просто ждём, пока условия
   // позволят (>=10 резервных минут, >2000 HP).
   await maybeFarmArrow(page, stats);
@@ -8749,6 +8808,19 @@ function sleepPlain(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Пауза от менеджера (кнопка "Пауза" в Telegram). Процесс и браузер при этом живут, но сценарий
+// не делает НИЧЕГО и не трогает страницу: в том же окне в это время играет сам пользователь, и
+// любая наша навигация сбила бы ему экран.
+const PAUSE_FLAG_PATH = path.join(__dirname, 'pause.flag');
+
+function isPausedByManager() {
+  try {
+    return fs.existsSync(PAUSE_FLAG_PATH);
+  } catch (e) {
+    return false;
+  }
+}
+
 function isClosedTargetError(e) {
   return /has been closed|target closed/i.test(String(e?.message || ''));
 }
@@ -8814,6 +8886,11 @@ async function returnToLocationPage(page) {
 
     while (Date.now() < FARM_START_AFTER_MS) {
       try {
+        if (isPausedByManager()) {
+          await sleepPlain(20 * 1000);
+          continue;
+        }
+
         await page.bringToFront().catch(() => {});
 
         await runMisttownSecretEventIfDue(page);
@@ -8822,8 +8899,17 @@ async function returnToLocationPage(page) {
         const remainingMs = FARM_START_AFTER_MS - Date.now();
         if (remainingMs <= 0) break;
 
-        const waitMs = Math.min(nextCycleDelayOverrideMs ?? getRandomCycleDelayMs(), remainingMs);
+        let waitMs = Math.min(nextCycleDelayOverrideMs ?? getRandomCycleDelayMs(), remainingMs);
         nextCycleDelayOverrideMs = null;
+
+        // scheduleMisttownSecretWakeupIfSoon подводит пробуждение к событию только за 15 минут до
+        // него, а обычный сон длится 14-21 минуту -- то есть проснувшись за 16 минут до старта,
+        // можно было проспать само событие (окно входа ~20-30 сек). Поэтому сон всегда режем по
+        // ближайшей пре-позиции.
+        const untilPrePosition = msUntilNextMisttownPrePosition();
+        if (untilPrePosition !== null) {
+          waitMs = Math.min(waitMs, Math.max(30 * 1000, untilPrePosition));
+        }
         console.log(`Ночное ожидание: сплю ${Math.round(waitMs / 60000)} мин (до старта обычного сценария ${Math.round(remainingMs / 60000)} мин)`);
         await sleepPlain(waitMs);
 
@@ -8850,8 +8936,23 @@ async function returnToLocationPage(page) {
 
   console.log('Browser opened. Start loop.');
 
+  let pauseNoticed = false;
+
   while (true) {
     try {
+      if (isPausedByManager()) {
+        if (!pauseNoticed) {
+          console.log('Пауза (кнопка в Telegram): встал, страницу не трогаю -- браузер в вашем распоряжении. Жду "Продолжить".');
+          pauseNoticed = true;
+        }
+        await sleepPlain(20 * 1000);
+        continue;
+      }
+      if (pauseNoticed) {
+        console.log('Пауза снята -> продолжаю сценарий.');
+        pauseNoticed = false;
+      }
+
       console.log('==============================');
       console.log('New cycle:', new Date().toLocaleString());
 

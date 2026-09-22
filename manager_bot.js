@@ -258,6 +258,7 @@ const KEYBOARD = {
     ['Квесты + Блейки', 'Квесты + Гоблины'],
     ['Янтарная гора'],
     ['Запустить сейчас', 'Статус', 'Стоп'],
+    ['Пауза', 'Продолжить'],
     ['Старт 6ч'],
   ],
   resize_keyboard: true,
@@ -274,6 +275,17 @@ let isRunning = false;
 let currentProcess = null;
 let currentLogStream = null;
 let currentLogPath = null;
+
+// Пауза НЕ убивает процесс: менеджер выставляет флаг-файл, а сценарий, увидев его, просто ничего
+// не делает и не трогает страницу. Браузер остаётся открытым -- в этом же окне можно играть
+// самому, а потом вернуть управление боту. Отсчёт 17-18 часов до автоперерыва на паузе продолжает
+// идти, таймер не снимаем. Флаг переживает и перезапуск процесса (например, после автоперерыва):
+// поднявшийся сценарий увидит его и снова встанет.
+const PAUSE_FLAG_PATH = path.join(__dirname, 'pause.flag');
+let isPaused = false;
+// Переменные окружения текущего запуска (например FARM_START_AFTER у отложенного старта) -- чтобы
+// "Продолжить" возобновляло в том же режиме, а не срывалось сразу в фарм.
+let currentRunExtraEnv = {};
 
 let startTimerId = null;
 let plannedStartAt = null;
@@ -308,6 +320,31 @@ function formatHours(ms) {
   return (ms / (60 * 60 * 1000)).toFixed(1);
 }
 
+// Мисттаунское событие идёт по расписанию зазывалы и ждать не будет, а автоперерыв убивает
+// сценарий на 6+ часов -- всё, что выпало в это окно, раньше просто терялось. Расписание сценарий
+// хранит у себя в состоянии, оттуда его и читаем (файл может отсутствовать -- тогда перерыв
+// обычный).
+const MISTTOWN_EARLY_WAKE_MS = 5 * 60 * 1000;
+
+function findMisttownEventInWindow(fromMs, toMs) {
+  try {
+    const state = JSON.parse(fs.readFileSync(path.join(__dirname, 'daily_quests_piraty.state.json'), 'utf8'));
+    const due = state.misttownSecretDueAt || {};
+    const attempted = state.misttownSecretAttemptedAt || {};
+
+    let soonest = null;
+    for (const [theme, at] of Object.entries(due)) {
+      if (!Number.isFinite(at)) continue;
+      if (attempted[theme] === at) continue; // уже отработано
+      if (at < fromMs || at > toMs) continue;
+      if (soonest === null || at < soonest.at) soonest = { theme, at };
+    }
+    return soonest;
+  } catch (e) {
+    return null;
+  }
+}
+
 function scheduleAutoBreak() {
   clearAutoBreakTimer();
   const activeMs = randomHoursMs(AUTO_BREAK_AFTER_MIN_H, AUTO_BREAK_AFTER_MAX_H);
@@ -327,6 +364,32 @@ function scheduleAutoBreak() {
       `Автоперерыв: ${selectedScriptName} работал ${formatHours(activeMs)}ч.\n` +
       `Перерыв на ${formatHours(breakMs)}ч. Перезапуск в: ${formatDate(restartAt)}`
     );
+
+    // Если в окно перерыва попадает мисттаунское событие, поднимаем сценарий заранее, но НЕ
+    // фармить: FARM_START_AFTER держит его в режиме ожидания (только событие), а квесты и фарм
+    // включатся ровно в конце перерыва -- тем же процессом, без отдельного перезапуска.
+    const event = findMisttownEventInWindow(Date.now(), restartAt.getTime());
+    if (event) {
+      const wakeAt = event.at - MISTTOWN_EARLY_WAKE_MS;
+      const delayMs = Math.max(60 * 1000, wakeAt - Date.now());
+      autoBreakRestartAt = new Date(Date.now() + delayMs);
+
+      await sendToAllowedChat(
+        `В перерыв попадает мисттаунское событие (${event.theme}) в ${formatDate(new Date(event.at))}.\n` +
+        `Подниму браузер в ${formatDate(autoBreakRestartAt)} только ради него, без фарма.\n` +
+        `Квесты и фарм начнутся как и планировалось: ${formatDate(restartAt)}`
+      );
+
+      autoBreakTimerId = setTimeout(async () => {
+        autoBreakTimerId = null;
+        autoBreakRestartAt = null;
+
+        await runSelectedScript('мисттаунское событие во время перерыва', {
+          FARM_START_AFTER: String(restartAt.getTime()),
+        });
+      }, delayMs);
+      return;
+    }
 
     autoBreakTimerId = setTimeout(async () => {
       autoBreakTimerId = null;
@@ -363,7 +426,7 @@ function formatDate(value) {
 
 function getStatusText() {
   return [
-    `Статус: ${isRunning ? 'активен' : 'остановлен'}`,
+    `Статус: ${isRunning ? 'активен' : (isPaused ? 'на паузе' : 'остановлен')}`,
     `Сценарий: ${selectedScriptName || 'не выбран'}`,
     `Задержка старта: ${selectedStartDelayHours ? `${selectedStartDelayHours} ч` : 'не задана'}`,
     `Плановый старт квестов/фарма: ${formatDate(plannedStartAt)}`,
@@ -784,8 +847,13 @@ async function runSelectedScript(reason = 'вручную', extraEnv = {}) {
   }
 
   isRunning = true;
+  // Флаг паузы переживает перезапуск процесса: если он всё ещё стоит (сценарий подняли после
+  // автоперерыва, пока пауза не снята), запустившийся сценарий сразу встанет -- статус это
+  // показывает честно, а не "активен".
+  isPaused = isPauseFlagSet();
   pvpAlertSentForCurrentRun = false;
   isAutoBreakStop = false;
+  currentRunExtraEnv = { ...extraEnv };
   clearStartTimer();
   scheduleAutoBreak();
 
@@ -928,11 +996,75 @@ function scheduleDelayedStart() {
   return true;
 }
 
+function isPauseFlagSet() {
+  try { return fs.existsSync(PAUSE_FLAG_PATH); } catch (e) { return false; }
+}
+
+async function pauseScenario() {
+  if (isPauseFlagSet()) {
+    isPaused = true;
+    await sendToAllowedChat('Сценарий уже на паузе.');
+    return;
+  }
+
+  try {
+    fs.writeFileSync(PAUSE_FLAG_PATH, new Date().toISOString());
+  } catch (e) {
+    await sendToAllowedChat(`Не удалось поставить паузу: ${e.message}`);
+    return;
+  }
+
+  isPaused = true;
+  await sendToAllowedChat(
+    isRunning
+      ? 'Пауза. Сценарий доигрывает текущий шаг и встаёт, браузер остаётся открытым -- можно играть самому в том же окне.\n' +
+        'Отсчёт до автоперерыва продолжает идти. Вернуть управление боту -- "Продолжить".'
+      : 'Пауза поставлена. Сценарий сейчас не запущен, но если он поднимется (например, после автоперерыва), то сразу встанет на паузу.'
+  );
+}
+
+async function resumeScenario() {
+  const hadFlag = isPauseFlagSet();
+  if (hadFlag) {
+    try {
+      fs.unlinkSync(PAUSE_FLAG_PATH);
+    } catch (e) {
+      await sendToAllowedChat(`Не удалось снять паузу: ${e.message}`);
+      return;
+    }
+  }
+  isPaused = false;
+
+  // Процесс жив -- он сам увидит снятый флаг на ближайшей проверке, перезапускать ничего не нужно.
+  if (isRunning) {
+    await sendToAllowedChat('Продолжаю: сценарий снова работает, браузер тот же.');
+    return;
+  }
+
+  if (!selectedScriptPath || !selectedScriptName) {
+    await sendToAllowedChat('Сценарий не выбран. Выберите сценарий перед запуском.');
+    return;
+  }
+
+  // Процесса нет (его успел убить автоперерыв или "Стоп") -- поднимаем в том же режиме: если пауза
+  // застала ожидание отложенного старта и время фарма ещё не пришло, снова отдаём FARM_START_AFTER.
+  const extraEnv = { ...currentRunExtraEnv };
+  if (extraEnv.FARM_START_AFTER && Number(extraEnv.FARM_START_AFTER) <= Date.now()) {
+    delete extraEnv.FARM_START_AFTER;
+  }
+
+  await runSelectedScript(hadFlag ? 'продолжение после паузы' : 'вручную', extraEnv);
+}
+
 async function stopEverything() {
   clearStartTimer();
   clearAutoBreakTimer();
 
   selectedStartDelayHours = null;
+  // Полная остановка -- это не пауза: снимаем и флаг, чтобы следующий запуск не встал сразу же.
+  isPaused = false;
+  currentRunExtraEnv = {};
+  try { fs.unlinkSync(PAUSE_FLAG_PATH); } catch (e) { /* флага и не было */ }
 
   if (currentProcess && isRunning) {
     currentProcess.kill('SIGTERM');
@@ -967,6 +1099,16 @@ async function handleText(chatId, text) {
 
   if (trimmed === 'Запустить сейчас') {
     await runSelectedScript('вручную');
+    return;
+  }
+
+  if (trimmed === 'Пауза') {
+    await pauseScenario();
+    return;
+  }
+
+  if (trimmed === 'Продолжить') {
+    await resumeScenario();
     return;
   }
 

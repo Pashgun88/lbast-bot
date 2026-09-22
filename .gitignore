@@ -11,6 +11,7 @@ chrome-profile/
 logs/
 exit.log
 daily_quests_piraty.state.json
+pause.flag
 
 # Состояние прогонов квестов по маршрутам (guides/*.steps сами в git идут)
 guides/guides_state.json
