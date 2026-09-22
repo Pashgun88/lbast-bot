@@ -445,6 +445,7 @@ async function loginIfNeeded(page) {
     viewport: null,
   });
   let page = context.pages()[0] || (await context.newPage());
+  let tabRecreatedAt = 0; // когда в последний раз пересоздавали вкладку из-за зависания
   let gotoFails = 0; // подряд идущие зависания вкладки (см. обработку Cycle error ниже)
 
   // 18.09.2026, Паша: "у тебя автобан часто выходит, сделай задержку между кликами".
@@ -841,8 +842,16 @@ async function loginIfNeeded(page) {
       // - зависает сам рендерер Chrome. Три таких цикла подряд -> пересоздаём вкладку.
       if (/Timeout \d+ms exceeded|Target (page|closed)|crashed/i.test(e.message)) {
         gotoFails += 1;
-        if (gotoFails >= 3) {
+        // 22.09.2026: с 08:05 вкладка висела и после пересоздания - новая вкладка того же Chrome
+        // тоже не грузила location.php, драйвер простоял полчаса. Вторая серия зависаний после
+        // пересоздания -> закрываем браузер и перезапускаем драйвер целиком.
+        if (gotoFails >= 3 && tabRecreatedAt && Date.now() - tabRecreatedAt < 30 * 60 * 1000) {
+          console.log('Вкладка висит и после пересоздания - закрываю браузер и перезапускаю драйвер.');
+          await Promise.race([context.close().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]);
+          restartSelfBrowserGone('вкладка висит и после пересоздания');
+        } else if (gotoFails >= 3) {
           gotoFails = 0;
+          tabRecreatedAt = Date.now();
           console.log('Вкладка висит третий цикл подряд - пересоздаю вкладку браузера.');
           try {
             const fresh = await context.newPage();
