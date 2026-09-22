@@ -107,6 +107,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   const name = FILE.split(/[\\/]/).pop();
   let fights = 0;
   let autoLone = false;
+  let tiredWaits = 0;
   let result = { status: 'error', index: from };
   try {
     await backToScene(page);
@@ -250,6 +251,17 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         }
         await goto(page, hit.h);
         if (/fastway|konj/.test(hit.h)) await travelWait(page);
+        // 22.09.2026: резерв ниже нуля - «Вы устали и решили отдохнуть 3 мин. Далее» вместо перехода
+        // (дубление/кухня тратят резерв). Ждём и повторяем тот же шаг с экрана, где он был.
+        const tired = (await m.getBodyText(page)).match(/устали и решили отдохнуть\s+(\d+)\s*мин/i);
+        if (tired && (tiredWaits += 1) <= 5) {
+          const min = Number(tired[1]) + 0.3;
+          console.log(`устал: отдыхаю ${min} мин и повторяю шаг ${i}`);
+          await page.waitForTimeout(min * 60000);
+          await goto(page, 'http://lbast.ru/location.php');
+          i -= 1;
+          continue;
+        }
       }
       fs.writeFileSync(PROG, String(i + 1));
       if (i === steps.length - 1) { result = { status: 'done', index: steps.length }; await dump(page, 'END'); if (!opts.quietDone) await notify(page, `${name}: все шаги пройдены (${steps.length}), боёв ${fights}.`); }
