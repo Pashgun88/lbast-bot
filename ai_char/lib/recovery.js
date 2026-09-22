@@ -91,7 +91,6 @@ const HEALING_ELIXIR_ITEM_ID = '1005';
 // кто-то заметит пустой слот: если Пояс или Подсумок пустует, ищем в инвентаре (invMod=3,
 // с обходом всех cpage=) строку "Оберег воина"/"Эликсир лечения" с "Экипировать" и жмём.
 // Никогда не трогает слот, если там уже что-то есть - только заполняет пустые.
-const HEALING_SLOT_ITEM_NAMES = ['Оберег воина', 'Эликсир лечения'];
 
 function isOutfitSlotEmpty(outfitText, slotLabel) {
   const lines = outfitText.split('\n').map((l) => l.trim());
@@ -101,48 +100,74 @@ function isOutfitSlotEmpty(outfitText, slotLabel) {
   return rest.length === 0;
 }
 
-async function ensureHealingGearEquipped(page) {
-  await page.goto('http://lbast.ru/inv.php?mod=outfit', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  const outfitText = await getBodyText(page);
-  const beltEmpty = isOutfitSlotEmpty(outfitText, 'Пояс');
-  const pouchEmpty = isOutfitSlotEmpty(outfitText, 'Подсумок');
-  if (!beltEmpty && !pouchEmpty) return false;
+// 22.09.2026, Паша: «ты не надеваешь лечилки за пояс. Сейчас я опять их надел». Что выяснилось:
+// в Подсумок входит НЕСКОЛЬКО эликсиров (Паша надел три - в инвентаре три строки «Подсумок: ...»),
+// а код ждал ПУСТОЙ слот, да ещё и искал «Эликсир лечения» с заглавной (предмет - «Большой эликсир
+// лечения (HP+80)»). Теперь правило простое: есть в инвентаре эликсир лечения с «Экипировать» -
+// надеваем, пока игра берёт (или до 3 раз за заход). «Экипировать» относим к ближайшему ПРЕДЫДУЩЕМУ
+// названию предмета, а не к блоку страницы: блок может охватывать весь список и надеть чужое.
+const ELIXIR_NAME_RE = /эликсир лечения/i;
+const ELIXIR_PAGES = [
+  'http://lbast.ru/inv.php?mod=starred', 'http://lbast.ru/inv.php',
+  'http://lbast.ru/inv.php?cpage=2', 'http://lbast.ru/inv.php?cpage=3',
+];
+const ELIXIR_CHECK_EVERY_MS = 10 * 60 * 1000;
+let lastElixirCheckAt = 0;
 
-  let equippedSomething = false;
-  for (let cpage = 1; cpage <= 5; cpage++) {
-    const url = cpage === 1
-      ? 'http://lbast.ru/inv.php?invMod=3'
-      : `http://lbast.ru/inv.php?invMod=3&cpage=${cpage}`;
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const hrefs = await page.evaluate((names) => {
-      const rows = Array.from(document.querySelectorAll('a'));
-      const found = [];
-      for (const a of rows) {
-        if (a.textContent && a.textContent.trim() === 'Экипировать') {
-          const row = a.closest('tr') || a.parentElement;
-          const rowText = row ? row.textContent : '';
-          if (names.some((n) => rowText.includes(n))) {
-            found.push(a.getAttribute('href'));
-          }
+// Ссылка «Экипировать» для эликсира лечения в инвентаре: большой (HP+80) раньше обычного.
+async function findElixirEquipHref(page) {
+  let fallback = null;
+  for (const url of ELIXIR_PAGES) {
+    const ok = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).then(() => true).catch(() => false);
+    if (!ok) continue;
+    const found = await page.evaluate((src) => {
+      const re = new RegExp(src, 'i');
+      const out = [];
+      let lastName = '';
+      for (const a of Array.from(document.querySelectorAll('a'))) {
+        const t = (a.textContent || '').trim();
+        if (t === 'Экипировать') {
+          if (re.test(lastName)) out.push({ href: a.getAttribute('href'), big: /Большой/i.test(lastName) });
+          continue;
         }
+        // Названием считаем ссылку, не являющуюся числом (кол-во, страницы) и действием.
+        if (t && !/^\d+$/.test(t) && !/^(Использовать|Передать|Экипировать)$/.test(t)) lastName = t;
       }
-      return found;
-    }, HEALING_SLOT_ITEM_NAMES).catch(() => []);
-
-    if (hrefs.length === 0) continue;
-    for (const href of hrefs) {
-      const fullUrl = href.startsWith('http') ? href : `http://lbast.ru/${href.replace(/^\//, '')}`;
-      await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      console.log('ensureHealingGearEquipped: экипировал предмет ->', fullUrl);
-      equippedSomething = true;
-      await pause(page, 500, 900);
-    }
-    // Re-check whether both slots are now filled before scanning more pages.
-    await page.goto('http://lbast.ru/inv.php?mod=outfit', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const recheck = await getBodyText(page);
-    if (!isOutfitSlotEmpty(recheck, 'Пояс') && !isOutfitSlotEmpty(recheck, 'Подсумок')) break;
+      return out;
+    }, ELIXIR_NAME_RE.source).catch(() => []);
+    const big = found.find((x) => x.big);
+    if (big) return big.href;
+    if (!fallback && found.length) fallback = found[0].href;
   }
-  return equippedSomething;
+  return fallback;
+}
+
+async function equipElixirHref(page, href, label) {
+  const fullUrl = href.startsWith('http') ? href : `http://lbast.ru/${href.replace(/^\//, '')}`;
+  await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const t = (await getBodyText(page)).replace(/\s+/g, ' ');
+  console.log(`${label}: надеваю эликсир лечения в подсумок -> ${t.slice(0, 160)}`);
+}
+
+// Раз в 10 минут (и сразу после выпитого в бою) - дозаполнить подсумок эликсирами из инвентаря.
+async function ensureHealingGearEquipped(page, { force = false } = {}) {
+  if (!force && Date.now() - lastElixirCheckAt < ELIXIR_CHECK_EVERY_MS) return false;
+  lastElixirCheckAt = Date.now();
+  let equipped = false;
+  let prevHref = null;
+  for (let i = 0; i < 3; i++) {
+    const href = await findElixirEquipHref(page);
+    if (!href) break;
+    if (href === prevHref) {
+      console.log('Подсумок: игра не берёт больше эликсиров (подсумок полон?).');
+      break;
+    }
+    prevHref = href;
+    await equipElixirHref(page, href, 'Подсумок');
+    equipped = true;
+    await pause(page, 500, 900);
+  }
+  return equipped;
 }
 
 // 15.09.2026, живой баг: когда эликсиров в инвентаре больше нет, эта страница отвечает
@@ -191,21 +216,7 @@ async function tryUseHealingElixir(page) {
 async function equipNextHealingElixir(page) {
   const backUrl = page.url();
   try {
-    await page.goto('http://lbast.ru/inv.php?mod=starred', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const href = await page.evaluate(() => {
-      const a = Array.from(document.querySelectorAll('a')).find(
-        (x) => (x.getAttribute('href') || '').includes('mod=put_on')
-          && /Эликсир лечения/i.test(x.textContent || ''),
-      );
-      return a ? a.getAttribute('href') : null;
-    });
-    if (!href) {
-      console.log('Эликсир лечения: в Избранном надеть нечего (закончились?).');
-      return false;
-    }
-    await page.goto(`http://lbast.ru/${href.replace(/^\//, '')}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    console.log('Эликсир лечения: надел следующий из Избранного.');
-    return true;
+    return await ensureHealingGearEquipped(page, { force: true });
   } catch (e) {
     console.log('equipNextHealingElixir error:', e.message);
     return false;
