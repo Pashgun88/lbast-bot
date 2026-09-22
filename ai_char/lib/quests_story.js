@@ -6,7 +6,7 @@
 module.exports = {
   absUrl, findLinkHref, progressGalleryLazuliteQuest, runGalleryQuestIfAvailable,
   progressDemonLakeQuest, reportDemonLakeQuest, demonLakeAwaitsReport, walkToOrdoTower,
-  progressOrdoQuest, runOrdoQuestsIfAvailable, runDemonLakeQuestIfAvailable,
+  progressOrdoQuest, runOrdoQuestsIfAvailable, equipOrdoGear, runDemonLakeQuestIfAvailable,
   progressShipwreckQuest, progressHerbGatherQuest, runHerbQuestsIfAvailable,
   runShipwreckQuestIfAvailable,
 };
@@ -375,6 +375,7 @@ async function progressOrdoQuest(page, q) {
   console.log(`${q.label}: бой пройден, иду докладывать в башню.`);
   await walkToOrdoTower(page);
   await reportOrdoTaskHere(page, q.label);
+  await equipOrdoGear(page); // мораль после доклада выросла - вдруг вещь Ордо уже по требованиям
   return true;
 }
 
@@ -393,7 +394,67 @@ async function reportOrdoTaskHere(page, label) {
   console.log(`Ордо: доклад принят - ${m ? m[0] : 'задание выполнено'}`);
   await clickByTexts(page, ['Назад'], 'Ордо: назад в башню').catch(() => {});
   await pause(page, 600, 1200);
+  await exchangeOrdoMedalsHere(page);
   return true;
+}
+
+// Паша, 22.09.2026: «медали ордо меняй на шмотки». Башня -> «Предъявить медали» (go=4): 8 медалей =
+// случайная вещь Ордо 6 ур. (живьём: «Оружие получено!» -> Кольцо ордо экзекуторс). Медалей меньше -
+// игра просто не выдаст, поэтому жмём после каждого доклада и смотрим ответ.
+async function exchangeOrdoMedalsHere(page) {
+  if (!(await existsAnyText(page, ['Предъявить медали']))) return false;
+  await clickByTexts(page, ['Предъявить медали'], 'Ордо: предъявить медали');
+  await pause(page, 800, 1500);
+  const text = await getBodyText(page);
+  const got = /Оружие получено/i.test(text);
+  if (got) console.log('Ордо: 8 медалей обменяны на вещь Ордо.');
+  await clickByTexts(page, ['Назад'], 'Ордо: назад в башню').catch(() => {});
+  await pause(page, 600, 1200);
+  if (got) await equipOrdoGear(page);
+  return got;
+}
+
+// Вещи Ордо требуют мораль (кольцо - 30) - пока морали мало, игра отказывает. Пробуем надеть всё
+// «... ордо экзекуторс» из вкладки «Оружие» (invMod=2): после доклада, не чаще раза в 30 мин на вещь.
+const ordoEquipTriedAt = new Map();
+async function equipOrdoGear(page) {
+  const back = page.url();
+  let equipped = false;
+  try {
+    await page.goto('http://lbast.ru/inv.php?invMod=2', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const items = await page.evaluate(() => {
+      const out = [];
+      let lastName = '';
+      for (const a of Array.from(document.querySelectorAll('a'))) {
+        const t = (a.textContent || '').trim();
+        if (t === 'Экипировать') {
+          if (/ордо экзекуторс/i.test(lastName)) out.push({ name: lastName, href: a.getAttribute('href') });
+          continue;
+        }
+        if (t && !/^\d+$/.test(t) && !/^(Использовать|Передать)$/.test(t)) lastName = t;
+      }
+      return out;
+    }).catch(() => []);
+    for (const it of items) {
+      const key = it.href;
+      if (Date.now() - (ordoEquipTriedAt.get(key) || 0) < 30 * 60 * 1000) continue;
+      ordoEquipTriedAt.set(key, Date.now());
+      await page.goto(new URL(it.href, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 500, 900);
+      await page.goto('http://lbast.ru/inv.php?mod=outfit', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      const outfit = await getBodyText(page);
+      if (outfit.includes(it.name)) {
+        console.log(`Ордо: надел «${it.name}».`);
+        equipped = true;
+      } else {
+        console.log(`Ордо: «${it.name}» не надевается (требования: мораль/уровень?) - попробую позже.`);
+      }
+    }
+  } catch (e) {
+    console.log('Ордо: надевание вещей не удалось:', e.message);
+  }
+  await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return equipped;
 }
 
 async function runOrdoQuestsIfAvailable(page) {
