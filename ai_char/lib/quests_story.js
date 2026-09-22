@@ -325,10 +325,20 @@ async function progressOrdoQuest(page, q) {
   if (!(await preTripHpGate(page, q.label))) return false;
 
   await walkToOrdoTower(page);
+  // 22.09.2026: с 6 уровня победа слот НЕ освобождает - задание висит «ответственным» до доклада.
+  // Недоложенный главарь держал слот всё утро: ни второго Ордо, ни асассинов, ни демона, а ферма
+  // стояла, «сберегая HP» под Ордо. Поэтому сначала пробуем доложить то, что уже выполнено.
+  await reportOrdoTaskHere(page, q.label);
+  if (!(await existsAnyText(page, [q.take]))) await walkToOrdoTower(page);
   await clickByTexts(page, [q.take], q.take);
   await pause(page, 800, 1500);
   const takeText = await getBodyText(page);
-  if (!/Задание принято/i.test(takeText) && !hasAlreadyHasQuestText(takeText)) {
+  if (hasAlreadyHasQuestText(takeText) && !/Задание принято/i.test(takeText)) {
+    // Слот держит чужое задание (асассины, демон) - на миссию без задания не ехать.
+    console.log(`${q.label}: слот задания занят другим квестом - пропускаю.`);
+    return false;
+  }
+  if (!/Задание принято/i.test(takeText)) {
     // Начало страницы башни — одно описание Ордена; причина отказа ниже, в списке заданий
     // и строке "Текущее задание" (19.09.2026 лог обрезался ровно перед ней).
     const at = takeText.search(/Задания:|Выполняйте задания|Текущее задание/);
@@ -362,7 +372,27 @@ async function progressOrdoQuest(page, q) {
     console.log(`${q.label}: до боя не дошёл - решит меню Q в следующем цикле.`);
     return false;
   }
-  console.log(`${q.label}: бой пройден, предмет задания должен быть в инвентаре (доклад - с 6 уровня).`);
+  console.log(`${q.label}: бой пройден, иду докладывать в башню.`);
+  await walkToOrdoTower(page);
+  await reportOrdoTaskHere(page, q.label);
+  return true;
+}
+
+// Стоим в башне Ордо. «Доложить о выполнении задания» - мораль +3, медаль, 7 дин, слот свободен.
+async function reportOrdoTaskHere(page, label) {
+  if (!(await existsAnyText(page, ['Доложить о выполнении задания']))) return false;
+  await clickByTexts(page, ['Доложить о выполнении задания'], `${label}: доклад`);
+  await pause(page, 800, 1500);
+  const text = await getBodyText(page);
+  if (!/Задание выполнено/i.test(text)) {
+    console.log(`${label}: доклад не принят: ${snapshotText(text, 200)}`);
+    await clickByTexts(page, ['Назад'], 'Ордо: назад в башню').catch(() => {});
+    return false;
+  }
+  const m = text.match(/Задание выполнено[^\n]*/i);
+  console.log(`Ордо: доклад принят - ${m ? m[0] : 'задание выполнено'}`);
+  await clickByTexts(page, ['Назад'], 'Ордо: назад в башню').catch(() => {});
+  await pause(page, 600, 1200);
   return true;
 }
 
