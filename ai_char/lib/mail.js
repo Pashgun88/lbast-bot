@@ -405,8 +405,8 @@ async function handleUnreadMailIfAny(page) {
         let ok = false;
         if (reply) ok = await replyToLetter(page, sender, reply);
         console.log(`Письмо от ${sender} (распоряжение): ответ ${ok ? 'отправлен' : 'НЕ отправлен'} - ${reply || 'нет'}`);
-        await sendTelegram(`письмо от ${sender} принято${ok ? ' и отвечено в игре' : ' (ответ НЕ ушёл)'}: ${body}${reply ? `
-Ответ AI__: ${reply}` : ''}`);
+        // 22.09.2026: эхо своих же писем Паше в Telegram не нужно (только ошибки сценариев).
+        if (!ok) await sendTelegram(`письмо от ${sender}: ответ в игре НЕ ушёл: ${body}`);
         if (order) console.log(`Распоряжение Паши записано: ${order.text.slice(0, 120)}`);
         continue;
       }
