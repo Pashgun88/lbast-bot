@@ -32,6 +32,9 @@ const GUIDE_QUESTS = [
     // задание в дейлике», 21.09.2026). Режим одиночных боёв Штольни не блокирует - решает эль.
     needsAle: true,
     allowedInSingleMode: true,
+    // 22.09.2026: утром дважды упёрлись в «Вы еще не выполнили другое задание» (слот держали асассины,
+    // Ордо, демон) - маршрут вставал на шаге 6 с паузой 3 ч, эль в 05:21 выпит впустую.
+    needsSlot: true,
   },
   {
     // Паша, 21.09.2026: «делай эти квесты... сначала кузницу и галерею». Старое исполнение в
@@ -53,6 +56,16 @@ const GUIDE_QUESTS = [
     allowedInSingleMode: true,
   },
 ];
+
+// Слот «ответственного задания» один на всех (Штольни, асассины, Ордо, демон, бунгало). Занят -
+// в анкете строка «Текущее задание: ... - отказаться».
+const SLOT_BUSY_TEXT_RE = /Вы еще не выполнили другое задание|У вас уже есть задание/i;
+const SLOT_RETRY_MIN = 20;
+async function taskSlotFree(page) {
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const t = await m.getBodyText(page);
+  return !/Текущее задание:[^\n]*отказаться/i.test(t);
+}
 
 // Эль перед Штольнями. true - можно начинать.
 async function aleReadyForShtolni(page) {
@@ -100,6 +113,14 @@ async function runGuideQuestIfDue(page, q) {
     if (!(await m.resetToQuestMenu(page))) return false;
     const qText = await m.getBodyText(page);
     if (!qText.includes(q.name)) return false;
+    // Слот проверяем ДО эля: иначе эль выпивается, а задание не берётся.
+    if (q.needsSlot && !(await taskSlotFree(page))) {
+      qs.suppressedUntil = now + SLOT_RETRY_MIN * 60000;
+      st[q.name] = qs;
+      saveState(st);
+      console.log(`${q.name}: слот задания занят другим квестом -> проверю через ${SLOT_RETRY_MIN} мин.`);
+      return false;
+    }
     if (q.needsAle && !(await aleReadyForShtolni(page))) {
       qs.suppressedUntil = now + 30 * 60000;
       st[q.name] = qs;
@@ -127,6 +148,16 @@ async function runGuideQuestIfDue(page, q) {
       saveState(st);
       clearProgress(q);
       console.log(`${q.name}: бой проигран на шаге ${r.index} - на сегодня всё, завтра заново.`);
+      return true;
+    }
+    if (r.status === 'mismatch' && SLOT_BUSY_TEXT_RE.test(await m.getBodyText(page).catch(() => ''))) {
+      // Слот заняли между проверкой и стартом: начать заново позже, а не ждать человека 3 часа.
+      delete qs.part;
+      qs.suppressedUntil = Date.now() + SLOT_RETRY_MIN * 60000;
+      st[q.name] = qs;
+      saveState(st);
+      clearProgress(q);
+      console.log(`${q.name}: игра ответила «другое задание» - слот занят, повтор через ${SLOT_RETRY_MIN} мин.`);
       return true;
     }
     if (r.status !== 'done') {

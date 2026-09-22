@@ -8,6 +8,7 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const { runGuideQuestsIfDue } = require('./guides/quests');
+const { runBungaloIfDue } = require('./guides/bungalo');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
 // вовсе, и AI_LOGIN/AI_PASS появлялись только если их вручную экспортировали в шелле. До сих
@@ -668,6 +669,10 @@ async function loginIfNeeded(page) {
       // 21.09.2026: в режиме одиночных боёв гайды не выключаются целиком - Штольни (с элем) идут,
       // Смерть ростовщика (цепочка боёв) нет. Решает флаг allowedInSingleMode в guides/quests.js.
       r = await runCycleStep(page, 'Квесты по гайду', () => runGuideQuestsIfDue(page, { singleMode: getFightMode() === 'single' }));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+      // 22.09.2026, Паша: «делай» - задания в бунгало (о.Дауэрти), только типы с проверенным маршрутом.
+      r = await runCycleStep(page, 'Задание в бунгало', () => (getFightMode() === 'none' ? Promise.resolve(false) : runBungaloIfDue(page)));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
