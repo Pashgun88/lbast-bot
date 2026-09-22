@@ -197,9 +197,10 @@ async function progressDemonLakeQuest(page) {
     await clickByTexts(page, ['Получить задание'], 'Получить задание');
     await pause(page, 800, 1500);
     if (hasAlreadyHasQuestText(await getBodyText(page))) {
-      console.log('Demon lake quest: игра ответила "у вас уже есть задание" -> иду в анкету отказываться.');
-      await dropCurrentAssignment(page, 'Демон озера: мешает взять задание');
-      return false;
+      // 22.09.2026: раньше здесь был отказ от текущего задания в анкете - а слот мог держать сам
+      // демон (незаконченная сцена) или Штольни/бунгало. Отказ - только решением Паши. Идём к
+      // озеру: если слот держит демон, сцена продолжится; если чужой квест - камышей не будет.
+      console.log('Demon lake quest: "у вас уже есть задание" - без отказа, проверяю сцену у озера.');
     }
     await clickByTexts(page, ['В игру'], 'В игру');
     await pause(page, 800, 1500);
@@ -230,8 +231,14 @@ async function progressDemonLakeQuest(page) {
   await pause(page, 6500, 7500);
   await waitOutHorseTravel(page, page.url());
 
-  const reachedReeds = await clickByTexts(page, ['Поросль камышей'], 'Поросль камышей');
-  if (!reachedReeds) {
+  // 22.09.2026, живой разбор: сцена у озера держится между заходами («Продолжить квест» на локации),
+  // а камыши видны, только пока задание не пройдено. Утром драйвер после «Идти дальше» не дождался
+  // «В бой!», поехал докладывать («Не хватает предметов»), и задание висело весь день, держа слот.
+  // Порядок: камыши -> по левой -> «Идти дальше» -> «На вас кидается демон! В бой!» -> бой ->
+  // «Запрет на квесты 1 мин.» -> «Вы уже выполняли это задание сегодня» -> доклад в Цитадели.
+  if (await existsAnyText(page, ['Продолжить квест'])) {
+    await clickByTexts(page, ['Продолжить квест'], 'Демон: продолжить квест');
+  } else if (!(await clickByTexts(page, ['Поросль камышей'], 'Поросль камышей'))) {
     console.log('Demon lake quest: "Поросль камышей" not found - stopping, needs manual check.');
     await appendDebugSnapshot('Demon lake: state after "К озеру" + travel wait, reeds step not found', {
       label: 'demon_lake_no_reeds',
@@ -240,24 +247,33 @@ async function progressDemonLakeQuest(page) {
     });
     return false;
   }
-  await pause(page, 800, 1500);
-
-  await clickByTexts(page, ['Идти по левой', 'идти по левой'], 'Идти по левой');
-  await pause(page, 800, 1500);
-
-  await clickByTexts(page, ['Идти дальше'], 'Идти дальше');
-  await pause(page, 800, 1500);
-
-  if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
-    if (!(await questFightHpGate(page, 'Демон озера'))) return false;
-    await performStep(page, {
-      stepName: 'В бой!',
-      currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
-      retries: 4,
-    });
-    await fightLoop(page);
+  let fought = false;
+  for (let i = 0; i < 10; i++) {
+    await pause(page, 800, 1500);
+    const t = await getBodyText(page);
+    if (/выполняли это задание/i.test(t)) break;
+    if (/Запрет на квесты/i.test(t)) {
+      await page.waitForTimeout(70000);
+      await page.goto('http://lbast.ru/loc.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      continue;
+    }
+    if (/В бой!/i.test(t)) {
+      if (!(await questFightHpGate(page, 'Демон озера', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
+      await performStep(page, { stepName: 'В бой!', currentTexts: ['В бой!'], retries: 4 });
+      await fightLoop(page);
+      fought = true;
+      await page.goto('http://lbast.ru/loc.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      continue;
+    }
+    const next = ['Идти по левой', 'Идти дальше', 'Продолжить квест'].find((x) => t.includes(x));
+    if (!next) break;
+    await clickByTexts(page, [next], `Демон: ${next}`);
   }
-
+  const end = await getBodyText(page);
+  if (!fought && !/выполняли это задание/i.test(end)) {
+    console.log(`Demon lake quest: до демона не дошёл, доклад не делаю: ${snapshotText(end, 200)}`);
+    return false;
+  }
   return reportDemonLakeQuest(page);
 }
 
