@@ -358,13 +358,30 @@ const THURSDAY_TASK_ROUTES = [
 // НЕ проверены. Отличия от Цунами: HP-гейт 70% перед выездом и перед каждым боем (ниже - просто
 // ждём следующего цикла), и после проигрыша цель на сегодня бросается, чтобы не умирать по кругу.
 // ===================================================================================
-const WEEKDAY_HUNT_PLAN = {
-  // 23.09.2026: «дух гор» снял 2300 урона за один бой (HP 500 -> -1840, персонаж выбыл на 148 мин) -
-  // это цель уровня Цунами (25), а не AI__ (6). Убран из плана; вернуть можно, когда подрастём.
-  3: [['hyena', 2], ['varan', 2]], // среда
-  5: [['varan', 2]],                              // пятница
+// 23.09.2026, Паша: «тебе варанов не надо, для дейлика остался 1 кабан и дух гор». Жёсткий план по
+// дню недели врал: вараны у AI__ уже стояли 2/2, а код всё равно вёл его на варанов. Источник истины -
+// меню ежедневных заданий самой игры («ДЕНЬ ОХОТНИКА»: 0/1 Встреча с духом гор, 2/2 Охота на гиен,
+// 1/2 Охота на кабанов, 2/2 Охота на бизонов, 2/2 Охота на призрачных варанов). Поэтому план убран,
+// цели берутся из меню, а счётчик игры перекрывает наши локальные отметки.
+const DAILY_TASK_TARGETS = [
+  { re: /дух гор/i, target: 'spirit' },
+  { re: /гиен/i, target: 'hyena' },
+  { re: /варан/i, target: 'varan' },
+  { re: /кабан/i, target: 'boar' },   // закрывается фармом кабанов
+  { re: /бизон/i, target: 'bison' },  // закрывается фармом бизонов
+];
+// Свои маршруты есть только у первых трёх; кабан и бизон и так фармятся каждый цикл.
+const HUNT_ROUTED = new Set(['spirit', 'hyena', 'varan']);
+// «Дух гор» снял 2300 урона за один бой (HP 500 -> -1840, персонаж выбыл на 148 мин) - это цель
+// уровня Цунами (25), а не AI__ (7). Пока не трогаем; убрать из набора, когда подрастём.
+const HUNT_DISABLED = new Set(['spirit']);
+const DAILY_MENU_RECHECK_MS = 10 * 60 * 1000;
+let dailyMenuAt = 0;
+let dailyMenuTasks = [];
+let dailyMenuLoggedAt = 0;
+const WEEKDAY_HUNT_NAMES = {
+  spirit: 'дух гор', hyena: 'гиены', varan: 'варан', boar: 'кабаны', bison: 'бизоны',
 };
-const WEEKDAY_HUNT_NAMES = { spirit: 'дух гор', hyena: 'гиены', varan: 'варан' };
 const WEEKDAY_HUNT_HP_FLOOR = 0.7;
 
 function weekdayHuntState() {
@@ -489,14 +506,37 @@ async function runWeekdayHuntTarget(page, target, count) {
   return true;
 }
 
+// Меню дейликов - три перехода, поэтому читаем не чаще раза в 10 минут и держим в памяти.
+async function readDailyHuntTasks(page) {
+  if (dailyMenuTasks.length && Date.now() - dailyMenuAt < DAILY_MENU_RECHECK_MS) return dailyMenuTasks;
+  const tasks = await readDailyTasksProgress(page);
+  if (tasks.length) {
+    dailyMenuTasks = tasks;
+    dailyMenuAt = Date.now();
+  }
+  return tasks;
+}
+
 // По одной цели за вызов, как четверг: не занимать драйвер надолго.
 async function runWeekdayHuntsIfDue(page) {
-  const plan = WEEKDAY_HUNT_PLAN[getWeekday()];
-  if (!plan) return false;
-  for (const [target, count] of plan) {
+  const tasks = await readDailyHuntTasks(page);
+  if (!tasks.length) return false;
+  if (Date.now() - dailyMenuLoggedAt > 60 * 60 * 1000) {
+    dailyMenuLoggedAt = Date.now();
+    console.log(`Дейлики дня: ${tasks.map((t) => `${t.done}/${t.total} ${t.title}`).join(' | ')}`);
+  }
+  const pending = tasks.filter((t) => t.done < t.total);
+  if (!pending.length) return false;
+
+  for (const t of pending) {
+    const hit = DAILY_TASK_TARGETS.find((x) => x.re.test(t.title));
+    if (!hit || !HUNT_ROUTED.has(hit.target)) continue; // кабан и бизон закрывает фарм
+    if (HUNT_DISABLED.has(hit.target)) continue;
     const s = weekdayHuntState();
-    if ((s.done[target] || 0) >= count || s.lost[target]) continue;
-    return runWeekdayHuntTarget(page, target, count);
+    if (s.lost[hit.target]) continue;
+    // Счётчик игры - истина: сколько уже сделано, знает она, а не наш файл состояния.
+    s.done[hit.target] = t.done;
+    return runWeekdayHuntTarget(page, hit.target, t.total);
   }
   return false;
 }
