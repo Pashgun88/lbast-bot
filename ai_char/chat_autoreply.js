@@ -92,12 +92,18 @@ function adviceBlock(room) {
 // Текущие дела персонажа (21.09.2026: Паша дал объявление о продаже предметов асассинов от имени
 // AI__). Пишет Claude в chat_memory/affairs.txt по словам Паши; без этого AI__ в чате удивлялся бы
 // собственному объявлению. Файл наш, но текст всё равно режем и чистим как любой ввод.
+// 23.09.2026, Паша: «ты постоянно одно и то же повторяешь». Половина причины была здесь: файл дел
+// вырос до 3300 знаков, а обрезка в 800 брала его С НАЧАЛА - то есть модель видела одни и те же
+// старые дела (станок, шкуры) и ни строчки про свежие. Берём ПОСЛЕДНИЕ строки, новые первыми.
+const AFFAIRS_MAX_LINES = 8;
+const AFFAIRS_MAX_CHARS = 2000;
 function affairsBlock() {
   let raw = '';
   try { raw = fs.readFileSync(path.join(memory.DIR, 'affairs.txt'), 'utf8'); } catch (e) { return ''; }
   const lines = raw.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   if (!lines.length) return '';
-  return `<affairs>\n${cleanInput(lines.join('\n'), 800)}\n</affairs>\n`;
+  const fresh = lines.slice(-AFFAIRS_MAX_LINES).reverse();
+  return `<affairs>\nСвежее первым:\n${cleanInput(fresh.join('\n'), AFFAIRS_MAX_CHARS)}\n</affairs>\n`;
 }
 
 // Что AI__ делал сегодня - данные для промпта, чтобы разговор шёл про реальную жизнь персонажа.
