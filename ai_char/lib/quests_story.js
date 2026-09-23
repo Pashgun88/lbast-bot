@@ -369,6 +369,14 @@ async function progressOrdoQuest(page, q) {
   let fought = false;
   for (let i = 0; i < 14; i++) {
     const text = await getBodyText(page);
+    // 23.09.2026: задание выдаётся, даже если цель на сегодня уже убита - на месте пишут «Вы уже
+    // выполняли это задание сегодня», и взятое задание висит в слоте, блокируя Штольни/бунгало/демона.
+    // Своё же только что взятое задание снимаем сами (анкета, mod=dropquest) и ждём до завтра.
+    if (/выполняли это задание сегодня/i.test(text)) {
+      console.log(`${q.label}: цель на сегодня уже сделана - снимаю своё задание, чтобы не держать слот.`);
+      await dropCurrentAssignment(page, `${q.label}: цель сегодня уже выполнена`);
+      return false;
+    }
     if (/Ударить/i.test(text)) {
       await fightLoop(page);
       fought = true;
