@@ -46,4 +46,5 @@ ai_char/driver_err.log
 ai_char/guides/*_run.log
 ai_char/chat_memory/
 ai_char/no_fight.flag
+ai_char/no_fight.flag.off
 ai_char/shtolni_no_ale.flag
