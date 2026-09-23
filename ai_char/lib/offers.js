@@ -21,9 +21,9 @@ const CHECK_EVERY_MS = 10 * 60 * 1000;
 let lastCheckAt = 0;
 
 // Комплект Ордо экзекуторс, как он собирается из обмена медалей (8 медалей = случайная вещь).
-// Пока в комплекте не хватает хоть одной вещи - берём предметы задания без счёта.
-// Список по тем вещам, что уже выпадали и что видно в требованиях; если игра выдаст ещё одну
-// разновидность, её надо будет сюда дописать.
+// «Собран» считаем по НАДЕТОМУ, а не по сумке: 23.09.2026 все шесть вещей уже лежат в сумке, но
+// нож требует Инту 25, сапоги - 26, и комплект не работает (2s19: «комплект у тебя не полный, он
+// не работает»). Пока хоть одна вещь не надета - предметы задания берём без счёта.
 const ORDO_SET = [
   { part: 'посох', re: /посох .*ордо экзекуторс/i },
   { part: 'кираса', re: /кираса ордо экзекуторс/i },
@@ -36,19 +36,17 @@ const SET_RECHECK_MS = 30 * 60 * 1000;
 let setCheckedAt = 0;
 let setMissing = ORDO_SET.map((x) => x.part); // до первой проверки считаем комплект неполным
 
-// Каких вещей комплекта ещё нет - смотрим и надетое, и сумку (страницы инвентаря постраничные).
+// Какие вещи комплекта ещё не надеты.
 async function missingOrdoSetParts(page) {
   if (Date.now() - setCheckedAt < SET_RECHECK_MS) return setMissing;
   const back = page.url();
-  let have = '';
-  for (const url of ['http://lbast.ru/inv.php?mod=outfit', 'http://lbast.ru/inv.php?invMod=2',
-    'http://lbast.ru/inv.php?invMod=2&cpage=2', 'http://lbast.ru/inv.php?invMod=2&cpage=3']) {
-    try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      have += ' ' + (await getBodyText(page));
-    } catch (e) { /* страницы может не быть - считаем, что там ничего нет */ }
-  }
-  setMissing = ORDO_SET.filter((x) => !x.re.test(have)).map((x) => x.part);
+  let worn = '';
+  try {
+    await page.goto('http://lbast.ru/inv.php?mod=outfit', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    worn = await getBodyText(page);
+  } catch (e) { /* не открылась - оставим прошлый ответ */ }
+  if (!worn) { await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}); return setMissing; }
+  setMissing = ORDO_SET.filter((x) => !x.re.test(worn)).map((x) => x.part);
   setCheckedAt = Date.now();
   await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return setMissing;
@@ -93,13 +91,13 @@ async function acceptOrdoOffersIfAny(page) {
   const hasOrdo = offers.some((o) => ORDO_ITEM_RE.test(parseBlock(o.block).name));
   const missing = hasOrdo ? await missingOrdoSetParts(page) : setMissing;
   if (hasOrdo && missing.length === 0) {
-    console.log('Передачи: комплект Ордо собран - предметы задания больше не скупаю.');
+    console.log('Передачи: комплект Ордо надет целиком - предметы задания больше не скупаю.');
     return false;
   }
   if (hasOrdo) {
     await page.goto(OFFERS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     offers = await readOffers(page);
-    console.log(`Передачи: в комплекте Ордо не хватает ${missing.join(', ')} - беру предметы задания, пока хватает денег.`);
+    console.log(`Передачи: из комплекта Ордо не надето ${missing.join(', ')} - беру предметы задания, пока хватает денег.`);
   }
   let accepted = 0;
   let spent = 0;
