@@ -10,7 +10,7 @@ module.exports = {
 };
 
 const {
-  S, ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY, DRABAS_DAILY_LIMIT, DRABAS_INTERVAL_MS,
+  S, persistDailyQuestState, ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY, DRABAS_DAILY_LIMIT, DRABAS_INTERVAL_MS,
   FISH_EYE_DAILY_FIGHT_LIMIT, FISH_EYE_INTERVAL_MS, FISH_RESTAURANT_ENABLED,
   FISHING_ATTEMPT_COOLDOWN_MS, FISHING_DAILY_CATCH_LIMIT, getDayKeyNow, LIFE_TREE_DAILY_LIMIT,
   getFightMode, CHAIN_FIGHT_QUESTS,
@@ -134,7 +134,17 @@ async function runDailyQuests(page, stats) {
   // Рыбного ресторана нет в TARGET_Q_QUESTS, поэтому пока он в фокусе, ни один Q-квест из
   // списка не стартует - именно этого и не хватало: драйвер уходил с недоделанного маршрута.
   if (S.fishRestaurantFocusStartedAt && !S.fishRestaurantDoneToday && now >= S.fishRestaurantSuppressedUntil) {
-    exclusiveInProgress.push('Рыбный ресторан');
+    // 23.09.2026, Паша: «почему то сегодня квесты не делает совсем». Маршрут награды №1 падал каждый
+    // цикл на «Идти направо за Яшкой», а взятый ресторан как монопольный квест держал ВСЁ остальное
+    // (Дерево жизни с эликсирами, Харчевню, корованы) весь день. Больше 2 часов в фокусе без
+    // завершения - закрываем ресторан на сегодня и пускаем остальные квесты.
+    if (now - S.fishRestaurantFocusStartedAt > 2 * 60 * 60 * 1000) {
+      S.fishRestaurantDoneToday = true;
+      persistDailyQuestState();
+      console.log('Рыбный ресторан: висит в фокусе больше 2 часов - закрываю на сегодня, чтобы не блокировать остальные квесты.');
+    } else {
+      exclusiveInProgress.push('Рыбный ресторан');
+    }
   }
   const isQQuestAllowed = (questName) => {
     if (exclusiveInProgress.length === 0) return true;
