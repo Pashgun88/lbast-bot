@@ -6,6 +6,7 @@
 // -> «Сила крепости». Внутри: Владелец, Аукцион, Сила крепости, История боев, О крепости.
 // Бонус суточный: взятый показывает «Увеличение силы еще действует. Осталось N мин».
 // Берём только если владелец - наш клан «Боги войны»; чужая крепость бонуса не даст.
+// Владелец меняется, поэтому ходим проверять каждый день (Паша: «лучше ходи каждый день проверяй»).
 
 module.exports = { runFortressPowerIfDue };
 
@@ -15,7 +16,10 @@ const { clickByTexts } = require('./ui');
 
 const DEVTOWN_FASTWAY = 'http://lbast.ru/location.php?mod=fastway&lway=8';
 const OUR_CLAN = 'Боги войны';
-const RETRY_MS = 60 * 60 * 1000; // не вышло (чужая крепость, маршрут сбился) - через час
+const RETRY_MS = 60 * 60 * 1000; // маршрут сбился - через час
+// Крепость не всегда наша, но Паша (23.09.2026): «лучше ходи каждый день проверяй».
+// Поэтому чужую крепость не откладываем на полсутки, а заглядываем каждые 3 часа.
+const NOT_OURS_RETRY_MS = 3 * 60 * 60 * 1000;
 
 async function runFortressPowerIfDue(page) {
   if (S.fortressPowerUntil && Date.now() < S.fortressPowerUntil) return false;
@@ -36,7 +40,7 @@ async function runFortressPowerIfDue(page) {
   }
   const inside = await getBodyText(page);
   if (!inside.includes(OUR_CLAN)) {
-    S.fortressPowerUntil = Date.now() + 12 * 60 * 60 * 1000; // сменился владелец - проверим позже
+    S.fortressPowerUntil = Date.now() + NOT_OURS_RETRY_MS; // не наша - заглянем через 3 часа
     persistDailyQuestState();
     const owner = (inside.match(/Владелец:\s*([^\n]+)/) || [])[1] || 'неизвестен';
     console.log(`Сила крепости: крепость сейчас не наша (владелец: ${owner.trim()}) - бонуса нет.`);
