@@ -280,6 +280,7 @@ const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
+const { checkLevelUpIfDue } = require('./lib/levelup');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
@@ -657,6 +658,12 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
       // 23.09.2026, Паша: «Сила крепости» в Грандине - суточное усиление, пока крепость у нашего клана.
       r = await runCycleStep(page, 'Сила крепости', () => runFortressPowerIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // 23.09.2026, Паша: «до 8го уровня, потом нужно будет разобраться что оденем тебе» - взятый
+      // уровень надо заметить сразу, а не через сутки; шаг только смотрит анкету и пишет в лог.
+      r = await runCycleStep(page, 'Проверка уровня', () => checkLevelUpIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

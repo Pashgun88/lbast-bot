@@ -143,6 +143,11 @@ S.drabasRunsToday = 0;
 // стоит 2000 дин (решение Паши), до него квест держать бессмысленно: ставим сутки тишины.
 S.drabasNoPetUntil = 0;
 
+// Новый уровень: Паша 23.09.2026 «до 8го уровня, потом нужно будет разобраться что оденем тебе».
+// Про взятый уровень надо не просто написать в лог, а дать знать в Telegram один раз - шмотки,
+// статы и тату разбираются с Пашей (см. чек-лист уровня).
+S.levelUpReported = false;
+
 // Полив винограда: каждые 8 часов.
 const VINOGRAD_INTERVAL_MS = 8 * 60 * 60 * 1000;
 S.lastVinogradRunAt = 0;
@@ -322,6 +327,7 @@ function restoreDailyQuestState() {
   if (typeof s.drabasDayKey === 'string') S.drabasDayKey = s.drabasDayKey;
   if (Number.isFinite(s.drabasRunsToday)) S.drabasRunsToday = s.drabasRunsToday;
   if (Number.isFinite(s.drabasNoPetUntil)) S.drabasNoPetUntil = s.drabasNoPetUntil;
+  if (typeof s.levelUpReported === 'boolean') S.levelUpReported = s.levelUpReported;
 
   if (Number.isFinite(s.lastVinogradRunAt)) S.lastVinogradRunAt = s.lastVinogradRunAt;
   if (Number.isFinite(s.lastFishSaleAt)) S.lastFishSaleAt = s.lastFishSaleAt;
@@ -394,7 +400,7 @@ function persistDailyQuestState() {
     lastLifeTreeRunAt: S.lastLifeTreeRunAt, lifeTreeDayKey: S.lifeTreeDayKey, lifeTreeRunsToday: S.lifeTreeRunsToday,
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
-    drabasNoPetUntil: S.drabasNoPetUntil,
+    drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     lastStatueRunAt: S.lastStatueRunAt, nextStatueDueAt: S.nextStatueDueAt,
