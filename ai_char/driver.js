@@ -279,6 +279,7 @@ const { getFightMode, S } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
+const { runFortressPowerIfDue } = require('./lib/fortress');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
@@ -652,6 +653,10 @@ async function loginIfNeeded(page) {
       // 23.09.2026, Паша: «будут писать письма о продаже - не забывай принимать в инвентаре.
       // Тебе нужно много предметов ордо». Принимаем ордо по цене из объявления (60 за штуку).
       r = await runCycleStep(page, 'Приём передач', () => acceptOrdoOffersIfAny(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+      // 23.09.2026, Паша: «Сила крепости» в Грандине - суточное усиление, пока крепость у нашего клана.
+      r = await runCycleStep(page, 'Сила крепости', () => runFortressPowerIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
