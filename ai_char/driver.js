@@ -277,6 +277,7 @@ async function runFarmSession(page) {
 const { getFightMode, S } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
+const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
@@ -645,6 +646,11 @@ async function loginIfNeeded(page) {
 
       // 21.09.2026, Паша: раз в 3 дня продавать всю жареную рыбу в Лавке боевых ресурсов Стоунгарда.
       r = await runCycleStep(page, 'Продажа рыбы', () => sellFriedFishIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+      // 23.09.2026, Паша: «будут писать письма о продаже - не забывай принимать в инвентаре.
+      // Тебе нужно много предметов ордо». Принимаем ордо по цене из объявления (60 за штуку).
+      r = await runCycleStep(page, 'Приём передач', () => acceptOrdoOffersIfAny(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
