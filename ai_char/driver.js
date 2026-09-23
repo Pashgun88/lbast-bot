@@ -201,6 +201,19 @@ async function runFarmSession(page) {
   let lastMailAt = Date.now();
   console.log(`Фарм-сессия: ${FARM_SESSION_MIN} мин (до ${new Date(deadline).toLocaleTimeString('ru-RU')}).`);
   while (Date.now() < deadline && !isSleepTime()) {
+    // 23.09.2026, Паша: «рыбий глаз перестал делаться сегодня». Сессия фарма длится час, а Рыбий
+    // глаз повторяется каждые 25 минут, камни Драбаса - раз в 3 часа: внутри сессии их никто не
+    // звал, и за час они просто пропадали. Подошёл срок - выходим из фарма, общий круг их сделает
+    // и вернётся сюда же. Один бой за сессию делаем обязательно, чтобы не мотаться туда-обратно.
+    if (fights > 0) {
+      const due = [];
+      if (canRunFishEyeFightNow()) due.push('Рыбий глаз');
+      if (canRunDrabasNow()) due.push('камни Драбаса');
+      if (due.length) {
+        console.log(`Фарм-сессия: подошёл срок - ${due.join(', ')}. Прерываю фарм, вернусь после.`);
+        break;
+      }
+    }
     let st = await readLocationStats(page);
     if (typeof st.hpCurrent !== 'number') {
       // висящий бой или залипшая сцена - разбираем здесь же, не выходя из сессии
@@ -281,6 +294,7 @@ const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
 const { checkLevelUpIfDue } = require('./lib/levelup');
+const { canRunFishEyeFightNow, canRunDrabasNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
