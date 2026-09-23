@@ -52,6 +52,7 @@ const {
   runFishingIfDue,
   fryFishWhileHealing,
   runOrdoQuestsIfAvailable,
+  runOrdoMedalTurnIn,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -670,6 +671,11 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       // Ордо Экзекуторс: мораль в плюс, предметы копим до 6 уровня (Паша, 18.09.2026).
+      // 23.09.2026: сдача купленных предметов Ордо и обмен медалей - боёв не требует, поэтому идёт
+      // отдельным шагом и работает даже в режиме без боёв.
+      r = await runCycleStep(page, 'Сдача предметов Ордо', () => runOrdoMedalTurnIn(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
       r = await runCycleStep(page, 'Ордо экзекуторс', () => runOrdoQuestsIfAvailable(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;

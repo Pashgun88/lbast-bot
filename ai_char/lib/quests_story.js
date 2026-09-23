@@ -6,7 +6,7 @@
 module.exports = {
   absUrl, findLinkHref, progressGalleryLazuliteQuest, runGalleryQuestIfAvailable,
   progressDemonLakeQuest, reportDemonLakeQuest, demonLakeAwaitsReport, walkToOrdoTower,
-  progressOrdoQuest, runOrdoQuestsIfAvailable, equipOrdoGear, runDemonLakeQuestIfAvailable,
+  progressOrdoQuest, runOrdoQuestsIfAvailable, equipOrdoGear, runOrdoMedalTurnIn, runDemonLakeQuestIfAvailable,
   progressShipwreckQuest, progressHerbGatherQuest, runHerbQuestsIfAvailable,
   runShipwreckQuestIfAvailable,
 };
@@ -479,6 +479,53 @@ async function equipOrdoGear(page) {
   }
   await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return equipped;
+}
+
+// 23.09.2026, Паша: «тебе нужно много предметов ордо» - он купил 20 предметов заданий Ордо
+// (Медальон бандита, Костяная цепь бандита) у Sylque. Каждый предмет сдаётся в башне как доклад:
+// +3 морали, медаль и 7 дин, боёв не нужно. 8 медалей = вещь Ордо. Поэтому отдельный шаг: пока в
+// инвентаре есть предметы, ходим докладывать и обменивать медали. Живьём 23.09: 20 докладов подряд,
+// мораль 30 -> 90, две вещи (Боевой посох, Кираса).
+const ORDO_ITEM_RE = /(Медальон бандита|Костяная цепь бандита)/i;
+let ordoMedalRunAt = 0;
+async function runOrdoMedalTurnIn(page) {
+  if (Date.now() - ordoMedalRunAt < 20 * 60 * 1000) return false;
+  await page.goto('http://lbast.ru/inv.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  let inv = await getBodyText(page).catch(() => '');
+  for (let cpage = 2; cpage <= 3 && !ORDO_ITEM_RE.test(inv); cpage++) {
+    await page.goto(`http://lbast.ru/inv.php?cpage=${cpage}`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    inv += await getBodyText(page).catch(() => '');
+  }
+  const medals = Number((inv.match(/Медаль Ордо экзекуторс\s+(\d+)/) || [])[1] || (/Медаль Ордо экзекуторс/.test(inv) ? 1 : 0));
+  if (!ORDO_ITEM_RE.test(inv) && medals < 8) return false;
+  ordoMedalRunAt = Date.now();
+
+  await walkToOrdoTower(page);
+  let reports = 0;
+  for (let i = 0; i < 30; i++) {
+    if (!(await existsAnyText(page, ['Доложить о выполнении задания']))) break;
+    await clickByTexts(page, ['Доложить о выполнении задания'], 'Ордо: доклад предмета');
+    await pause(page, 600, 1100);
+    const t = await getBodyText(page);
+    if (!/Задание выполнено/i.test(t)) break; // «Не хватает предметов» / «Вы еще не выполнили задание»
+    reports += 1;
+    await clickByTexts(page, ['Назад'], 'Ордо: назад в башню').catch(() => {});
+    await pause(page, 400, 800);
+  }
+  let items = 0;
+  for (let i = 0; i < 6; i++) {
+    if (!(await existsAnyText(page, ['Предъявить медали']))) break;
+    await clickByTexts(page, ['Предъявить медали'], 'Ордо: предъявить медали');
+    await pause(page, 600, 1100);
+    if (!/Оружие получено/i.test(await getBodyText(page))) break;
+    items += 1;
+    await clickByTexts(page, ['Назад'], 'Ордо: назад в башню').catch(() => {});
+    await pause(page, 400, 800);
+  }
+  if (reports || items) console.log(`Ордо: сдал предметов ${reports}, получил вещей ${items}.`);
+  if (items) await equipOrdoGear(page);
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return reports > 0 || items > 0;
 }
 
 async function runOrdoQuestsIfAvailable(page) {
