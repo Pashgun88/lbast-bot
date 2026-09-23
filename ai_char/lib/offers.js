@@ -13,9 +13,46 @@ const OFFERS_URL = 'http://lbast.ru/inv.php?mod=offers';
 // Предметы заданий Ордо экзекуторс («ордо» в разговоре): с главаря и с банды.
 const ORDO_ITEM_RE = /(Медальон бандита|Костяная цепь бандита)/i;
 const MAX_PRICE_PER_ITEM = 60; // цена из объявления
-const MONEY_FLOOR = 200; // столько дин оставляем на расходы
+// Паша 23.09.2026: «если кто-то передаст ордо - покупай сколько денег хватит пока не соберёшь
+// комплект». Значит верхнего предела по количеству нет, а от денег оставляем только на эль и
+// эликсиры (дневной расход), всё остальное уходит на предметы задания.
+const MONEY_FLOOR = 150;
 const CHECK_EVERY_MS = 10 * 60 * 1000;
 let lastCheckAt = 0;
+
+// Комплект Ордо экзекуторс, как он собирается из обмена медалей (8 медалей = случайная вещь).
+// Пока в комплекте не хватает хоть одной вещи - берём предметы задания без счёта.
+// Список по тем вещам, что уже выпадали и что видно в требованиях; если игра выдаст ещё одну
+// разновидность, её надо будет сюда дописать.
+const ORDO_SET = [
+  { part: 'посох', re: /посох .*ордо экзекуторс/i },
+  { part: 'кираса', re: /кираса ордо экзекуторс/i },
+  { part: 'шлем', re: /шлем ордо экзекуторс/i },
+  { part: 'кольцо', re: /кольцо ордо экзекуторс/i },
+  { part: 'нож', re: /нож .*ордо экзекуторс/i },
+  { part: 'сапоги', re: /сапоги .*ордо экзекуторс/i },
+];
+const SET_RECHECK_MS = 30 * 60 * 1000;
+let setCheckedAt = 0;
+let setMissing = ORDO_SET.map((x) => x.part); // до первой проверки считаем комплект неполным
+
+// Каких вещей комплекта ещё нет - смотрим и надетое, и сумку (страницы инвентаря постраничные).
+async function missingOrdoSetParts(page) {
+  if (Date.now() - setCheckedAt < SET_RECHECK_MS) return setMissing;
+  const back = page.url();
+  let have = '';
+  for (const url of ['http://lbast.ru/inv.php?mod=outfit', 'http://lbast.ru/inv.php?invMod=2',
+    'http://lbast.ru/inv.php?invMod=2&cpage=2', 'http://lbast.ru/inv.php?invMod=2&cpage=3']) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      have += ' ' + (await getBodyText(page));
+    } catch (e) { /* страницы может не быть - считаем, что там ничего нет */ }
+  }
+  setMissing = ORDO_SET.filter((x) => !x.re.test(have)).map((x) => x.part);
+  setCheckedAt = Date.now();
+  await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return setMissing;
+}
 
 // Разбирает страницу передач: для каждой ссылки «принять» берёт текст её блока.
 async function readOffers(page) {
@@ -53,6 +90,17 @@ async function acceptOrdoOffersIfAny(page) {
 
   let offers = await readOffers(page);
   if (offers.length === 0) return false;
+  const hasOrdo = offers.some((o) => ORDO_ITEM_RE.test(parseBlock(o.block).name));
+  const missing = hasOrdo ? await missingOrdoSetParts(page) : setMissing;
+  if (hasOrdo && missing.length === 0) {
+    console.log('Передачи: комплект Ордо собран - предметы задания больше не скупаю.');
+    return false;
+  }
+  if (hasOrdo) {
+    await page.goto(OFFERS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    offers = await readOffers(page);
+    console.log(`Передачи: в комплекте Ордо не хватает ${missing.join(', ')} - беру предметы задания, пока хватает денег.`);
+  }
   let accepted = 0;
   let spent = 0;
   for (const offer of offers) {
@@ -67,7 +115,7 @@ async function acceptOrdoOffersIfAny(page) {
       continue;
     }
     if (money - spent - price < MONEY_FLOOR) {
-      console.log(`Передачи: «${name}» за ${price} дин - денег мало (${money - spent}), оставляю на потом.`);
+      console.log(`Передачи: «${name}» за ${price} дин не осилил - на руках ${money - spent} дин, ниже ${MONEY_FLOOR} не опускаюсь (эль и эликсиры).`);
       continue;
     }
     await page.goto(new URL(offer.href, OFFERS_URL).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
