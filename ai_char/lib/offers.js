@@ -12,6 +12,10 @@ const { getBodyText, pause } = require('./core');
 const OFFERS_URL = 'http://lbast.ru/inv.php?mod=offers';
 // Предметы заданий Ордо экзекуторс («ордо» в разговоре): с главаря и с банды.
 const ORDO_ITEM_RE = /(Медальон бандита|Костяная цепь бандита)/i;
+// Паша 23.09.2026, после того как выяснилось, что все шесть вещей комплекта уже в сумке и дело
+// упиралось в статы: «тогда не покупай больше». Предложения по-прежнему читаем и пишем в лог,
+// но ничего не принимаем. Вернуть покупку = снова true.
+const ORDO_BUYING_ENABLED = false;
 const MAX_PRICE_PER_ITEM = 60; // цена из объявления
 // Паша 23.09.2026: «если кто-то передаст ордо - покупай сколько денег хватит пока не соберёшь
 // комплект». Значит верхнего предела по количеству нет, а от денег оставляем только на эль и
@@ -88,6 +92,13 @@ async function acceptOrdoOffersIfAny(page) {
 
   let offers = await readOffers(page);
   if (offers.length === 0) return false;
+  if (!ORDO_BUYING_ENABLED) {
+    for (const o of offers) {
+      const { name, seller, qty, price } = parseBlock(o.block);
+      console.log(`Передачи: лежит «${name}» x${qty} от ${seller} за ${price} дин - по приказу Паши ничего не принимаю.`);
+    }
+    return false;
+  }
   const hasOrdo = offers.some((o) => ORDO_ITEM_RE.test(parseBlock(o.block).name));
   const missing = hasOrdo ? await missingOrdoSetParts(page) : setMissing;
   if (hasOrdo && missing.length === 0) {
