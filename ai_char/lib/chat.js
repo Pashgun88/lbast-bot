@@ -347,9 +347,32 @@ async function flushChatOutbox(chatPage) {
       sent += 1;
     } catch (e) {
       console.log(`CHAT_SEND_FAILED room=${room}: ${e.message}`);
+      // Если сорвался сам переход на страницу чата, сообщение точно не ушло - можно вернуть
+      // его в файл и попробовать на следующем опросе. Дубликата не будет: форму мы не нажимали.
+      // Сбой уже после перехода (сабмит, ответ страницы) не возвращаем - реплика могла уйти.
+      const navFail = /page\.goto|navigating to|net::ERR/i.test(e.message || '');
+      const tries = Number((it && it.tries) || 0);
+      if (navFail && tries < 3) requeueChatOutboxItem({ room, text, tries: tries + 1 });
     }
   }
   return sent;
+}
+
+// Дописывает реплику обратно в конец очереди, не затирая то, что Claude успел положить туда,
+// пока мы отправляли (файл читается заново прямо перед записью).
+function requeueChatOutboxItem(item) {
+  let rest = [];
+  try {
+    const cur = JSON.parse(fs.readFileSync(CHAT_OUTBOX_FILE, 'utf8'));
+    if (Array.isArray(cur)) rest = cur;
+  } catch (e) { /* файла нет - начнём с пустой очереди */ }
+  rest.push(item);
+  try {
+    fs.writeFileSync(CHAT_OUTBOX_FILE, JSON.stringify(rest));
+    console.log(`Чат: реплика для room=${item.room} возвращена в очередь (попытка ${item.tries}).`);
+  } catch (e) {
+    console.log(`Чат: не смог вернуть реплику в очередь: ${e.message}`);
+  }
 }
 
 async function runChatMonitorCycle(chatPage, state) {
