@@ -9,7 +9,7 @@ module.exports = {
   getReserveMinutesSafe, waitForReserveAtLeast, waitForHpAbove, tryPerformStepOptional,
 };
 
-const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, getFightMode, PEACEFUL_QUESTS, CHAIN_FIGHT_QUESTS } = require('./state');
+const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, getFightMode, PEACEFUL_QUESTS, WEAK_FIGHT_QUESTS, CHAIN_FIGHT_QUESTS } = require('./state');
 const { fixedPause, getBodyText, parseStats, pause } = require('./core');
 const { handleIncomingAttackIfAny } = require('./pvp');
 const { recoverToCity } = require('./recovery');
@@ -176,7 +176,8 @@ async function runQuestStepSafe(page, label, fn) {
   // квестов с цепочкой боёв (между ними не полечиться, там он и ложился).
   const fightMode = getFightMode();
   const peaceful = PEACEFUL_QUESTS.has(label) || /^Травы/i.test(label);
-  if (fightMode === 'none' && !peaceful) {
+  // Слабые бои (Харчевня) Паша разрешил и в режиме без боёв - 23.09.2026.
+  if (fightMode === 'none' && !peaceful && !WEAK_FIGHT_QUESTS.has(label)) {
     console.log(`Quest step skip (режим без боёв): ${label}`);
     return false;
   }

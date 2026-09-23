@@ -545,6 +545,9 @@ const FISH_RESTAURANT_ENABLED = true;
 //   файл есть без "single"   -> 'none'   : боёв нет вовсе, кроме бизона (первый приказ 20.09).
 // Файл перечитывается раз в 30 секунд - режим меняется без перезапуска драйвера.
 const PEACEFUL_QUESTS = new Set(['Дерево жизни', 'Довольствие', 'Еда для рыбака']);
+// 23.09.2026, Паша: «тебе пока сложно ботов бить, но харчевня - одни из самых слабых, их попробуй
+// потом кабана». То есть в режиме без боёв разрешены не только мирные квесты, но и эти - слабые.
+const WEAK_FIGHT_QUESTS = new Set(['Харчевня']);
 // Квесты, где бои идут ЦЕПОЧКОЙ (между ними не полечиться) - их держим выключенными и в 'single'.
 // 21.09.2026: Штольни убраны из этого списка - Паша включил их обратно с условием «должен быть эль»,
 // и решает теперь не режим боёв, а наличие эля (проверка в lib/shtolni.js).
@@ -584,5 +587,6 @@ module.exports = {
   EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, EXCLUSIVE_QUEST_TIMEOUT_BACKOFF_MS,
   EXCLUSIVE_QUEST_CONFLICT_BACKOFF_MS, AI_SELF_NICK, AI_SELF_NICK_RE, QUEST_FIGHT_HP_FLOOR,
   LAST_HOUSE_HP_THRESHOLD, DEVTOWN_FASTWAY_URL, HEALING_ELIXIR_HP_FRACTION, HP_FLOOR_WITH_BUFF,
+  WEAK_FIGHT_QUESTS,
   DEMON_LAKE_FASTWAY_URL, FISH_RESTAURANT_ENABLED,
 };

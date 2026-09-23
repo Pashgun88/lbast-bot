@@ -303,17 +303,19 @@ const SINGLE_FIGHT_STEPS = new Set([
   'gallery quest step',
   // Бизон разрешён даже в 'none' - Паша: «бизона можешь попробовать побить, он слабый».
 ]);
+const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round']);
 let noFightLogged = false;
 
 async function runCycleStep(page, label, fn) {
   const fightMode = getFightMode();
-  const blocked = fightMode === 'none' ? (CHAIN_FIGHT_STEPS.has(label) || SINGLE_FIGHT_STEPS.has(label))
+  // 23.09.2026, Паша: в режиме без боёв, кроме бизона, разрешён кабан («харчевня... потом кабана»).
+  const blocked = fightMode === 'none' ? ((CHAIN_FIGHT_STEPS.has(label) || SINGLE_FIGHT_STEPS.has(label)) && !NONE_MODE_ALLOWED_STEPS.has(label))
     : fightMode === 'single' ? CHAIN_FIGHT_STEPS.has(label) : false;
   if (blocked) {
     if (!noFightLogged) {
       noFightLogged = true;
       console.log(fightMode === 'none'
-        ? 'Режим без боёв (приказ Паши): из боёв только бизон, остальное мирное.'
+        ? 'Режим без боёв (приказ Паши): из боёв только бизон, кабан и Харчевня, остальное мирное.'
         : 'Режим только одиночных боёв (Паша, после руны): цепочки боёв пропускаю.');
     }
     return { didAnything: false, ko: false };
@@ -795,7 +797,8 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'Boar farm round', () => {
-        if (!farmAllowedFull) return Promise.resolve(false);
+        // Кабан разрешён и в режиме без боёв (Паша, 23.09.2026), поэтому farmAllowed, не Full.
+        if (!farmAllowed) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
         return runBoarFarmRound(page, buffedForFarm);
       });
