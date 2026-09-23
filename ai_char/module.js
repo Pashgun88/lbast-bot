@@ -76,7 +76,7 @@ const { doScenario } = require('./lib/scenario');
 const { runAssassinGuildQuestsIfAvailable } = require('./lib/assassins');
 const {
   runDemonLakeQuestIfAvailable, runGalleryQuestIfAvailable, runHerbQuestsIfAvailable,
-  runOrdoQuestsIfAvailable, runShipwreckQuestIfAvailable,
+  runOrdoQuestsIfAvailable, runOrdoMedalTurnIn, runShipwreckQuestIfAvailable,
 } = require('./lib/quests_story');
 const { runFishRestaurantQuestIfAvailable } = require('./lib/fish_restaurant_quest');
 const {
@@ -136,6 +136,7 @@ module.exports = {
   runFishingIfDue,
   fryFishWhileHealing,
   runOrdoQuestsIfAvailable,
+  runOrdoMedalTurnIn,
   escapeStuckSceneIfAny,
   readDailyTasksProgress,
   getPlayerRaceAndFaction,
