@@ -933,9 +933,12 @@ async function loginIfNeeded(page) {
           console.log(`Лечение в Кулаке Хаоса: HP ${idleStats.hpCurrent}/${idleStats.hpMax} в ${new Date().toLocaleTimeString('ru-RU')}`);
           await fryFishWhileHealing(page, idleStats).catch(() => {});
           idleMinutes = Math.min(idleMinutes, 3);
-        } else {
-          idleMinutes = Math.min(idleMinutes, 2);
         }
+        // Раньше здесь стояло idleMinutes = min(idleMinutes, 2) на случай «HP уже в норме».
+        // Но при полном HP и пустом списке дел это превращало лестницу 2-4-8-16 в вечные две
+        // минуты: полный круг (три десятка переходов) каждые две минуты без всякого прогресса.
+        // Паша 23.09.2026: «что-то спамит в браузере». HP тут уже выше порога, спешить некуда -
+        // лестница работает как задумано, максимум 20 минут.
       }
 
       console.log(`Ничего нового делать (${idleStreak} цикл подряд без прогресса) -> следующая проверка через ${idleMinutes} мин.`);
