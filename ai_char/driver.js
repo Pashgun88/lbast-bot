@@ -420,7 +420,16 @@ async function waitForHeal(page) {
         await new Promise((r) => setTimeout(r, 8000));
       }
       first = false;
-      await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, cur).catch(() => {}));
+      // Паша, 24.09.2026 (после смерти от yasnovidec): «можешь пока пользоватся домом» «и рыбачить».
+      // Лежать после смерти долго - минус глубокий, восстановление 16 hp/мин, - и всё это время
+      // цикл пропускался целиком. Рыбалка боёв не требует и от отрицательного HP не зависит, а
+      // караси нужны кухне. Она сама уходит в Кулак на отсчёт поклёва и возвращается домой после
+      // улова, так что лечение не теряем. Лимит (6 в день) и кулдаун - внутри runFishingIfDue.
+      await withHangGuard(page, 'рыбалка (восстановление)', 12 * 60_000,
+        () => runFishingIfDue(page).catch((e) => console.log('Восстановление: рыбалка:', e.message)));
+      // Резерв мог измениться за рыбалку - перечитываем перед кухней.
+      const beforeKitchen = await readLocationStats(page).catch(() => cur);
+      await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, beforeKitchen).catch(() => {}));
       await new Promise((r) => setTimeout(r, Math.min(5 * 60_000, Math.max(0, until - Date.now()))));
     }
   }
