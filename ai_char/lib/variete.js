@@ -38,7 +38,9 @@ const VARIETE_OPTIONS = [
   'Таверна', 'Пройти в зал варьете',
   'занять место', 'к скамьям в конец зала',
   'когда начнется представление', 'интересно посмотреть, что это такое', 'Рад знакомству',
-  'люблю посмотр', 'больше посмотреть',
+  // В игре реплика написана с опечаткой - «Да, люблю посмотерть.», поэтому подстрока обрывается
+  // раньше: «посмотр» не подошло бы (живьём 24.09.2026 проход встал именно на этом экране).
+  'люблю посмот', 'больше посмот',
   'не хочется', 'займу столик', 'сесть за столик к ашаи',
   'просто потерять', 'именно украли', 'зацепки откуда начать поиски',
   'давно вы работаете', 'да уж',
@@ -123,6 +125,10 @@ async function progressVarieteQuest(page, { questCount } = {}) {
   const used = new Set();
   let fights = 0;
   let idle = 0;
+  // Защита от хождения по кругу: если один и тот же набор ссылок повторяется, значит нужной
+  // реплики в списке нет - лучше выйти и написать, что на экране, чем крутить 80 экранов.
+  let lastSignature = '';
+  let sameScreenTimes = 0;
   for (let i = 0; i < MAX_SCREENS; i++) {
     const text = await getBodyText(page);
     if (i > 0 && i % 10 === 0) {
@@ -136,6 +142,14 @@ async function progressVarieteQuest(page, { questCount } = {}) {
       return true;
     }
     const links = await screenLinks(page);
+    const signature = links.map((l) => l.t).join('|');
+    sameScreenTimes = signature === lastSignature ? sameScreenTimes + 1 : 0;
+    lastSignature = signature;
+    if (sameScreenTimes >= 3) {
+      console.log(`Варьете: один и тот же экран ${sameScreenTimes + 1} раз - нужной реплики в списке нет.`);
+      console.log(`Варьете: ссылки экрана: ${signature.slice(0, 400)}`);
+      return false;
+    }
 
     const option = findOption(links, VARIETE_OPTIONS, used);
     if (option) {
