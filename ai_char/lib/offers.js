@@ -17,7 +17,7 @@ const ORDO_ITEM_RE = /(Медальон бандита|Костяная цепь
 // «тебе нужно собрать 5 колец ордо, с него крафтится кольцо крутое. Так что нужно будет ещё
 // покупать ордо». Предметы задания -> медали -> случайная вещь Ордо, и кольца надо набрать пять.
 // 24.09.2026, колец 4/5: «останови покупку, дальше сами выбьем» - остаток добиваем заданиями Ордо.
-const ORDO_BUYING_ENABLED = false;
+const ORDO_BUYING_ENABLED = true; // 24.09.2026, 17:0x: «передачи прими» - TIROX уже выставил, беру.
 const MAX_PRICE_PER_ITEM = 60; // цена из объявления
 // Паша 23.09.2026: «если кто-то передаст ордо - покупай сколько денег хватит пока не соберёшь
 // комплект». Значит верхнего предела по количеству нет, а от денег оставляем только на эль и
@@ -35,26 +35,42 @@ const RINGS_RECHECK_MS = 30 * 60 * 1000;
 let ringsCheckedAt = 0;
 let ringsOwned = 0;
 
-// Сколько колец на руках. Одинаковые вещи в сумке идут отдельными строками, но на всякий случай
-// учитываем и число после названия (так игра показывает количество у стопок вроде медалей).
+// Сколько колец на руках. Паша 24.09.2026: «где 5 колец, у тебя одно в инвентаре и одно на тебе», а
+// счётчик рапортовал 4 из 5. Причина: `invMod=2&cpage=2` и `cpage=3` при отсутствии второй страницы
+// отдают ТУ ЖЕ первую, и одно кольцо из сумки посчиталось трижды (плюс надетое - ровно «4»).
+// Теперь страницу с уже виденным набором вещей отбрасываем, а в лог пишем, где какое кольцо нашлось,
+// чтобы число можно было проверить глазами.
 async function countOrdoRings(page) {
   if (Date.now() - ringsCheckedAt < RINGS_RECHECK_MS) return ringsOwned;
   const back = page.url();
   let total = 0;
+  const seenPages = new Set();
+  const found = [];
   for (const url of ['http://lbast.ru/inv.php?mod=outfit', 'http://lbast.ru/inv.php?invMod=2',
     'http://lbast.ru/inv.php?invMod=2&cpage=2', 'http://lbast.ru/inv.php?invMod=2&cpage=3']) {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
       const text = await getBodyText(page);
+      // Подпись страницы - только строки вещей, без часов и счётчиков шапки: они меняются каждую
+      // секунду, и одинаковые страницы выглядели бы разными.
+      const signature = text.split('\n').filter((l) => /\[\d+\]|Экипировать|Снять/.test(l)).join('|');
+      if (signature && seenPages.has(signature)) {
+        console.log(`Кольца Ордо: ${url} повторяет предыдущую страницу - дальше не считаю.`);
+        break;
+      }
+      if (signature) seenPages.add(signature);
       for (const line of text.split('\n')) {
         if (!RING_RE.test(line)) continue;
         const n = Number((line.match(/(\d+)\s*$/) || [])[1] || 1);
-        total += Number.isFinite(n) && n > 0 && n < 50 ? n : 1;
+        const add = Number.isFinite(n) && n > 0 && n < 50 ? n : 1;
+        total += add;
+        found.push(`${url.includes('outfit') ? 'на себе' : 'в сумке'} ${line.trim().slice(0, 50)} (+${add})`);
       }
     } catch (e) { /* страницы может не быть */ }
   }
   ringsOwned = total;
   ringsCheckedAt = Date.now();
+  console.log(`Кольца Ордо: насчитал ${total}${found.length ? ' - ' + found.join('; ') : ''}`);
   await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return ringsOwned;
 }
