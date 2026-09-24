@@ -216,47 +216,73 @@ async function skipTravelVignettes(page, targetTexts, maxAttempts = 8) {
   }
 }
 
+// Засада по ходу квеста. На экранах маршрута игра иногда сразу ставит бой: «ХОЛМЫ. В этот раз он
+// послушался и выскочил на берег. Следом за ним вылетел пятнистый аллигатор. В бой!». Это часть
+// квеста, а не случайный бот, но skipTravelVignettes такие экраны не трогает (и правильно - он не
+// имеет права начинать бой), шаг «Идти направо за Яшкой» не находится, маршрут падает, а
+// recoverToCity уводит персонажа с локации. Паша 24.09.2026: «ты начинаешь выполнять рыбный
+// ресторан и уходишь с локации после 1го боя. Так ты никогда не выполнишь».
+// Поэтому засаду принимаем ЗДЕСЬ, с гейтом по HP, и продолжаем маршрут.
+async function fightQuestAmbushIfAny(page, label) {
+  const text = await getBodyText(page);
+  if (!/В\s*бой/i.test(text)) return false;
+  if (!(await questFightHpGate(page, `${label} (засада)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
+  console.log(`${label}: на экране засада - принимаю бой.`);
+  if (!(await clickByTexts(page, ['В бой!', 'В бой'], `${label}: В бой`))) return false;
+  await fightLoop(page);
+  await pause(page, 800, 1500);
+  // После боя сцена либо идёт дальше сама, либо ждёт «Продолжить квест» / «Далее».
+  await clickByTexts(page, ['Продолжить квест', 'Далее'], `${label}: продолжить после засады`).catch(() => {});
+  await pause(page, 600, 1200);
+  return true;
+}
+
+// Шаг маршрута. Порядок важен: сперва виньетки, потом проверяем, есть ли на экране сам шаг, и
+// только если его нет - смотрим, не засада ли это. Так бой начинается лишь там, где идти больше
+// некуда, и мы не примем бой на экране, где он был лишь одним из вариантов.
+async function routeStep(page, label, stepName, currentTexts) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await skipTravelVignettes(page, currentTexts);
+    if (await existsAnyText(page, currentTexts)) break;
+    if (!(await fightQuestAmbushIfAny(page, label))) break;
+  }
+  await performStep(page, { stepName, currentTexts, retries: 3 });
+  return true;
+}
+
 // Награда №1: "Без награды" (только дины) - ветка "Болота", 3 нарастающих боя с призраком.
 async function progressFishRestaurantReward1(page) {
+  const FR = 'Рыбный ресторан reward #1';
   await goToFishRestaurantBranch(page, 'Болота', ['Веди-ка ты меня на болота']);
 
-  await skipTravelVignettes(page, ['Идти направо за Яшкой']);
-  await performStep(page, { stepName: 'Идти направо за Яшкой', currentTexts: ['Идти направо за Яшкой'], retries: 3 });
+  await routeStep(page, FR, 'Идти направо за Яшкой', ['Идти направо за Яшкой']);
 
-  await skipTravelVignettes(page, ['Забрать налево']);
-  await performStep(page, { stepName: 'Забрать налево', currentTexts: ['Забрать налево'], retries: 3 });
+  await routeStep(page, FR, 'Забрать налево', ['Забрать налево']);
 
-  await skipTravelVignettes(page, ['Шагнуть вперёд', 'Шагнуть вперед']);
-  await performStep(page, { stepName: 'Шагнуть вперёд', currentTexts: ['Шагнуть вперёд', 'Шагнуть вперед'], retries: 3 });
+  await routeStep(page, FR, 'Шагнуть вперёд', ['Шагнуть вперёд', 'Шагнуть вперед']);
 
-  await skipTravelVignettes(page, ['Мы выберем то, что нам пригодится']);
-  await performStep(page, { stepName: 'Мы выберем то, что нам пригодится', currentTexts: ['Мы выберем то, что нам пригодится'], retries: 3 });
+  await routeStep(page, FR, 'Мы выберем то, что нам пригодится', ['Мы выберем то, что нам пригодится']);
 
-  await skipTravelVignettes(page, ['Идти к лианам']);
-  await performStep(page, { stepName: 'Идти к лианам', currentTexts: ['Идти к лианам'], retries: 3 });
+  await routeStep(page, FR, 'Идти к лианам', ['Идти к лианам']);
 
-  await skipTravelVignettes(page, ['Попробовать встать']);
-  await performStep(page, { stepName: 'Попробовать встать', currentTexts: ['Попробовать встать'], retries: 3 });
+  await routeStep(page, FR, 'Попробовать встать', ['Попробовать встать']);
 
   // Три боя подряд, раньше шли вообще без проверки HP (в утреннем аудите гейтов этот маршрут
   // пропущен). waitForRecovery: маршрут эскортный и бросать его на середине нельзя - Паша,
   // 17.09.2026: "рыбный ресторан ты начинал делать и убежал на другой квест". Поэтому при
   // низком HP ждём подлечивания между боями, а не выходим из квеста.
-  const FR = 'Рыбный ресторан reward #1';
   if (!(await questFightHpGate(page, `${FR} (бой 1/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
   console.log('Fish Restaurant reward #1: бой 1/3 (Призрак в топях)');
   await fightLoop(page);
   await pause(page, 800, 1500);
 
-  await skipTravelVignettes(page, ['Напасть']);
-  await performStep(page, { stepName: 'Напасть (1)', currentTexts: ['Напасть'], retries: 3 });
+  await routeStep(page, FR, 'Напасть (1)', ['Напасть']);
   if (!(await questFightHpGate(page, `${FR} (бой 2/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
   console.log('Fish Restaurant reward #1: бой 2/3 (сложный Призрак в топях)');
   await fightLoop(page);
   await pause(page, 800, 1500);
 
-  await skipTravelVignettes(page, ['Напасть']);
-  await performStep(page, { stepName: 'Напасть (2)', currentTexts: ['Напасть'], retries: 3 });
+  await routeStep(page, FR, 'Напасть (2)', ['Напасть']);
   if (!(await questFightHpGate(page, `${FR} (бой 3/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
   console.log('Fish Restaurant reward #1: бой 3/3 (сложный Призрак в топях)');
   await fightLoop(page);
