@@ -142,7 +142,9 @@ async function progressVarieteQuest(page, { questCount } = {}) {
       return true;
     }
     const links = await screenLinks(page);
-    const signature = links.map((l) => l.t).join('|');
+    // В подпись экрана входит и текст: подряд идущие «Далее» ведут по разным виньеткам с одним
+    // и тем же набором ссылок, и по одним ссылкам они выглядят как один и тот же экран.
+    const signature = `${links.map((l) => l.t).join('|')}##${text.replace(/\s+/g, ' ').slice(0, 200)}`;
     sameScreenTimes = signature === lastSignature ? sameScreenTimes + 1 : 0;
     lastSignature = signature;
     if (sameScreenTimes >= 3) {
