@@ -224,7 +224,19 @@ async function runStatueOfGloryIfDue(page) {
   await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   const pers = await getBodyText(page).catch(() => '');
   const left = pers.match(/Статуя славы:\s*е[щш][её]\s*(\d+)\s*мин/i);
-  if (left && Number(left[1]) >= 3) {
+  // 24.09.2026: анкета писала «ещё N мин», а бафа уже не было - HP max стоял 470 вместо 510, и
+  // Паша это заметил раньше кода («что-то ты на статую славы не идёшь»). Поэтому строка в анкете
+  // больше не единственный судья: статуя поднимает максимум HP, и если максимум упал ниже лучшего
+  // виденного, значит баф кончился и надо идти, что бы анкета ни писала.
+  const hpm = pers.match(/\((\d+)\/(\d+)\)/);
+  const hpMax = hpm ? Number(hpm[2]) : 0;
+  if (hpMax > (S.bestHpMaxSeen || 0)) {
+    S.bestHpMaxSeen = hpMax;
+    persistDailyQuestState();
+  }
+  const buffLooksGone = hpMax > 0 && hpMax < (S.bestHpMaxSeen || 0);
+  if (buffLooksGone) console.log(`Статуя славы: HP max ${hpMax} ниже виденного ${S.bestHpMaxSeen} - считаю, что бафа нет.`);
+  if (left && Number(left[1]) >= 3 && !buffLooksGone) {
     const wait = Math.min(Number(left[1]) - 2, 6 * 60); // перепроверка не реже раза в 6 ч
     S.nextStatueDueAt = Date.now() + wait * 60000;
     persistDailyQuestState();
@@ -251,6 +263,17 @@ async function runStatueOfGloryIfDue(page) {
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   }
   S.lastStatueRunAt = Date.now();
+  if (ok) {
+    // Максимум мог не вырасти: значит база изменилась (сняли вещь, сменили комплект), и «лучшее
+    // виденное» устарело - иначе будем ездить к статуе каждые полчаса впустую.
+    const afterText = await getBodyText(page).catch(() => '');
+    const after = afterText.match(/\((\d+)\/(\d+)\)/);
+    const afterMax = after ? Number(after[2]) : 0;
+    if (afterMax > 0 && afterMax < (S.bestHpMaxSeen || 0)) {
+      console.log(`Статуя славы: после захода HP max ${afterMax}, а помнили ${S.bestHpMaxSeen} - обновляю ориентир.`);
+      S.bestHpMaxSeen = afterMax;
+    }
+  }
   S.nextStatueDueAt = Date.now() + (ok ? 30 : 10) * 60000; // после успеха перечитаем анкету через 30 мин
   persistDailyQuestState();
   return true;

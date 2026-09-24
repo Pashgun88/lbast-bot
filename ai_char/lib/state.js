@@ -161,6 +161,10 @@ const STATUE_MIN_INTERVAL_MINUTES = 12 * 60;
 const STATUE_MAX_INTERVAL_MINUTES = 14 * 60;
 S.lastStatueRunAt = 0;
 S.nextStatueDueAt = 0;
+// Самый большой HP max, что мы видели. Статуя славы поднимает максимум (470 -> 510), поэтому
+// падение максимума ниже этого числа - признак, что баф кончился, даже если анкета пишет «ещё N мин»
+// (Паша 24.09.2026: «что-то ты на статую славы не идёшь» - строка в анкете держала нас зря).
+S.bestHpMaxSeen = 0;
 
 // "Шепот" - квест берётся у "Кулак Хаоса", Паша подтвердил 16.09.2026: "запомни как делается
 // он периодический" - раз в месяц, не раз в день. Длинный многоэтапный квест (см.
@@ -335,6 +339,7 @@ function restoreDailyQuestState() {
 
   if (Number.isFinite(s.lastStatueRunAt)) S.lastStatueRunAt = s.lastStatueRunAt;
   if (Number.isFinite(s.nextStatueDueAt)) S.nextStatueDueAt = s.nextStatueDueAt;
+  if (Number.isFinite(s.bestHpMaxSeen)) S.bestHpMaxSeen = s.bestHpMaxSeen;
 
   if (typeof s.shepotMonthKey === 'string') S.shepotMonthKey = s.shepotMonthKey;
   if (typeof s.shepotDoneThisMonth === 'boolean') S.shepotDoneThisMonth = s.shepotDoneThisMonth;
@@ -404,6 +409,7 @@ function persistDailyQuestState() {
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     lastStatueRunAt: S.lastStatueRunAt, nextStatueDueAt: S.nextStatueDueAt,
+    bestHpMaxSeen: S.bestHpMaxSeen,
     shepotMonthKey: S.shepotMonthKey, shepotDoneThisMonth: S.shepotDoneThisMonth, shepotStage: S.shepotStage, shepotGauntletFightsDone: S.shepotGauntletFightsDone,
     tavernDayKey: S.tavernDayKey, tavernDoneToday: S.tavernDoneToday,
     shtolniDayKey: S.shtolniDayKey, shtolniDoneToday: S.shtolniDoneToday,
