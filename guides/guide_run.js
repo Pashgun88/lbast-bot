@@ -121,7 +121,11 @@ async function restIfBlocked(page) {
 }
 
 async function runGuide(page, FILE, fromArg, opts = {}) {
-  const { fightLoop, resetToQuestMenu, clickInfoForQuest } = opts;
+  // throwIfPaused -- необязательный хук от вызывающего сценария: он знает про кнопку "Пауза" в
+  // Telegram, а раннер про неё нет. Проверяем между шагами, чтобы длинная цепочка не доигрывалась
+  // ещё десяток экранов после того, как пользователь забрал браузер себе. Прогресс (.progress)
+  // к этому моменту уже записан, так что после "Продолжить" маршрут пойдёт с того же места.
+  const { fightLoop, resetToQuestMenu, clickInfoForQuest, throwIfPaused } = opts;
   const HP_GATE = Number(opts.hpGate || DEFAULT_HP_GATE);
   const PROG = FILE + '.progress';
   const steps = fs.readFileSync(FILE, 'utf8')
@@ -143,6 +147,8 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
     let restRetries = 0;
 
     for (let i = from; i < steps.length; i++) {
+      if (throwIfPaused) throwIfPaused(`${name} [${i}/${steps.length}]`);
+
       let step = steps[i];
       console.log(`\n--- ${name} [${i}/${steps.length}] ${step}`);
 
@@ -344,6 +350,9 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       }
     }
   } catch (e) {
+    // Пауза -- не провал маршрута: прокидываем её наверх, чтобы quests.js не записал квесту
+    // "ошибку" и не отложил его, а сценарий просто встал. Прогресс уже на диске.
+    if (e && e.scenarioPaused) throw e;
     console.log('guide FAILED', e.message);
   }
 

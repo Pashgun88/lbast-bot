@@ -214,6 +214,12 @@ let demonHuntDayKey = '';
 let demonHuntDoneToday = false;
 let schoolTempleDayKey = '';
 let schoolTempleDoneToday = false;
+// Ордо Экзекуторс: у каждого из двух заданий свой запрет после победы (час на главаря, 10 мин на
+// банду), плюс бэкоффы на случай "не выдали задание"/"кончился резерв". Ключ -> timestamp, раньше
+// которого к башне не ходим. ordoItemsToHandIn -- сколько квестовых предметов лежит в инвентаре
+// несданными (сдача даёт +3 морали и медаль ордо), переживает перезапуск процесса.
+let ordoNextTryAt = {};
+let ordoItemsToHandIn = 0;
 // Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
 // уличного зазывалы и закэшированные, чтобы не ходить к нему каждый цикл (см. комментарий у
 // goToMisttownSecretArea/runMisttownSecretEventIfDue). misttownSecretAttemptedAt хранит,
@@ -299,6 +305,9 @@ function restoreDailyQuestState() {
   if (typeof s.schoolTempleDayKey === 'string') schoolTempleDayKey = s.schoolTempleDayKey;
   if (typeof s.schoolTempleDoneToday === 'boolean') schoolTempleDoneToday = s.schoolTempleDoneToday;
 
+  if (s.ordoNextTryAt && typeof s.ordoNextTryAt === 'object') ordoNextTryAt = s.ordoNextTryAt;
+  if (Number.isFinite(s.ordoItemsToHandIn)) ordoItemsToHandIn = s.ordoItemsToHandIn;
+
   if (s.misttownSecretDueAt && typeof s.misttownSecretDueAt === 'object') misttownSecretDueAt = s.misttownSecretDueAt;
   if (s.misttownSecretAttemptedAt && typeof s.misttownSecretAttemptedAt === 'object') misttownSecretAttemptedAt = s.misttownSecretAttemptedAt;
   if (Number.isFinite(s.lastMisttownSecretCheckAt)) lastMisttownSecretCheckAt = s.lastMisttownSecretCheckAt;
@@ -345,6 +354,7 @@ function persistDailyQuestState() {
     elkHuntDayKey, elkHuntDoneToday,
     demonHuntDayKey, demonHuntDoneToday,
     schoolTempleDayKey, schoolTempleDoneToday,
+    ordoNextTryAt, ordoItemsToHandIn,
     misttownSecretDueAt, misttownSecretAttemptedAt, lastMisttownSecretCheckAt, needsArrowFarm,
     extraDailyDayKey, extraDailyDoneToday,
     thursdayDayKey, thursdayGravediggerDoneToday, thursdayButcherFightsToday, thursdayWitchFightsToday,
@@ -1467,6 +1477,8 @@ async function runQuestStepSafe(page, label, fn) {
     }
     return ok;
   } catch (e) {
+    // Пауза -- не ошибка квеста: ни логов о провале, ни recoverToCity (он бы увёл страницу).
+    if (isScenarioPausedError(e)) throw e;
     console.log(`Quest step error (${label}): ${e.message}`);
     await recoverToCity(page, `${label}: ${e.message}`);
 
@@ -1619,6 +1631,7 @@ async function runDailyQuests(page, stats) {
     'Грабим корованы',
     'Варьете',
     'Смерть ростовщика',
+    ...ORDO_QUESTS.map((q) => q.menu),
   ];
 
   // Начатая цепочка по маршруту (guides/*.steps) из меню Q пропадает -- квест уже взят, а сцена
@@ -1750,6 +1763,27 @@ async function runDailyQuests(page, stats) {
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
   }
 
+  // Ордо Экзекуторс: задания берутся не из меню Q, а в самой башне -- меню только объявляет, что
+  // они доступны. Занимают слот "Текущее задание", поэтому только когда эксклюзивного квеста нет.
+  // Маршрут длинный (башня -> миссия -> башня), так что перед мисттаунским событием не начинаем.
+  if (exclusiveInProgress.length === 0) {
+    const ordoMisttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
+    if (ordoMisttownSoon && ORDO_QUESTS.some((q) => isQuestInMenu(listedQuests, q.menu))) {
+      console.log(`Ордо: пропускаю, скоро мисттаунское событие (${ordoMisttownSoon}).`);
+    } else if (!ordoMisttownSoon) {
+      const didOrdo = await runOrdoQuestsIfAvailable(page, {
+        listedQuests,
+        reserveMinutes,
+        hpCurrent: typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null,
+      });
+      if (didOrdo) {
+        didAnything = true;
+        await resetToQuestMenu(page, questCount);
+        listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
+      }
+    }
+  }
+
   // Квесты по записанным маршрутам (guides/*.steps): длинные цепочки из ЖГ-гайдов, которые
   // расписаны пошагово и выполняются общим раннером. Он сам лечится на месте перед боями, ждёт
   // отдых при кончившемся резерве и останавливается, если игра разошлась с маршрутом (тогда
@@ -1769,9 +1803,11 @@ async function runDailyQuests(page, stats) {
           clickInfoForQuest,
           reserveMinutes,
           isInMenu: (name) => isQuestInMenu(listedQuests, name),
+          throwIfPaused: throwIfPausedByManager,
         });
         if (didGuide) didAnything = true;
       } catch (e) {
+        if (isScenarioPausedError(e)) throw e;
         console.log(`Квесты по маршрутам: ошибка (${e.message})`);
       }
       await resetToQuestMenu(page, questCount);
@@ -2655,6 +2691,7 @@ async function runNonQQuestSafe(page, label, fn) {
   try {
     return await fn();
   } catch (e) {
+    if (isScenarioPausedError(e)) throw e;
     console.log(`${label} error: ${e.message}`);
     await recoverToCity(page, `${label}: ${e.message}`);
     return null; // indicates recovery happened
@@ -4760,6 +4797,12 @@ async function clickByNormalizedIncludes(page, keywords, stepName) {
 }
 
 async function performStep(page, config) {
+  // Главная точка реакции на паузу: через performStep идёт КАЖДЫЙ шаг любого маршрута, а бои
+  // (fightLoop, clickByTexts напрямую) -- нет, и потому начатый бой всегда доигрывается до конца,
+  // а не бросается на середине. Маршруты и так прерываемы: незаконченные квесты сценарий
+  // доделывает в следующем цикле.
+  throwIfPausedByManager(config?.stepName || 'шаг маршрута');
+
   const {
     stepName,
     currentTexts,
@@ -5496,6 +5539,7 @@ async function runLastHouseRecovery(page) {
       const step = Math.min(chunkMs, totalMs - waited);
       await fixedPause(page, step);
       waited += step;
+      throwIfPausedByManager('Последний дом: ожидание кулдауна станций');
       if (canRunFishingNow()) {
         console.log('Последний дом: рыбалка снова доступна -> прерываю ожидание кулдауна станции');
         return;
@@ -5530,6 +5574,10 @@ async function runLastHouseRecovery(page) {
   let lastHp = null;
 
   for (let i = 0; i < LAST_HOUSE_MAX_ITERATIONS; i++) {
+    // Восстановление длится часами -- без этой проверки пауза, нажатая посреди него, замечалась
+    // только когда HP наконец дорастал до порога (Паша, 24.09.2026: "нажал на паузу, но скрипт
+    // пожарил рыбу").
+    throwIfPausedByManager('Последний дом: цикл станций');
     await clickHealingRefreshLink(page);
     let stats = parseStats(await getBodyText(page));
     const hpNow = typeof stats.hpCurrent === 'number' ? stats.hpCurrent : null;
@@ -5603,6 +5651,10 @@ async function getStatsFromPage(page, label, providedText = null) {
 }
 
 async function goToLocationAndReadStats(page, label) {
+  // Между фазами цикла статы перечитываются почти всегда -- удобная граница, чтобы заметить паузу
+  // до перехода к следующему блоку (и до навигации, которая сбила бы пользователю экран).
+  throwIfPausedByManager(`чтение статов (${label})`);
+
   await page.goto('http://lbast.ru/location.php', {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
@@ -6246,6 +6298,8 @@ async function runSchoolTempleQuest(page) {
 
     await click('Выйти из храма', 'Выйти из храма');
   } catch (e) {
+    // На паузе в анкету не идём: задание останется висеть до следующего цикла, это штатно.
+    if (isScenarioPausedError(e)) throw e;
     routeError = e;
     console.log(`Квест (школа/казарма/храм): маршрут нарушен (${e.message}) -- всё равно иду отказываться от задания в анкете`);
   }
@@ -6283,6 +6337,279 @@ async function runSchoolTempleQuest(page) {
 
   console.log('Квест (школа/казарма/храм): маршрут пройден успешно, задание отклонено в анкете');
   return true;
+}
+
+// ===================================================================================
+// Гильдия Ордо Экзекуторс -- два повторяемых задания, дающих мораль В ПЛЮС и медали ордо.
+// Маршруты перенесены из проекта AI-персонажа (ветка claude/lbast-character-registration-gc7bey,
+// файл ai_char/lib/quests_story.js), где обе ветки пройдены вживую 18.09.2026 и принесли
+// Медальон бандита и Костяную цепь бандита. Официальный гайд игры: library/help/index.php?mod=102.
+//
+// Вход: Стоунгард -> Южные ворота -> Идти на юг -> Идти на восток -> Башня Ордо Экзекуторс.
+// Гайд предупреждает: с МИНУСОВОЙ моралью внутрь не пустят ("вам здесь не рады") -- ловим это по
+// тексту и уходим в суточный бэкофф, чтобы не таскаться к башне каждый цикл впустую.
+//
+// Задание Ордо занимает тот же слот "Текущее задание", что Харчевня/Штольни/школа преторианцев,
+// поэтому берём его только когда эксклюзивного квеста нет (гейт стоит в runDailyQuests).
+//
+// Главарь банды (zad=1, Рыбацкая деревня, конь lway=q2001_1):
+//   Идти за скальную гряду -> Идти по тропе -> Идти дальше -> Залезть в люк -> Прокрасться ->
+//   Идти дальше -> Напасть -> бой. Вживую подтверждено, что охрана с паролем сидит на ветке
+//   "Идти по дороге", поэтому её в списке шагов НЕТ намеренно (в гайде безопасный путь назван
+//   "по скалам" -- на экране игры это "Идти по тропе"). У костра могут заметить: тогда будет
+//   лишний бой по дороге, это штатно. После победы -- Медальон бандита и час запрета.
+// Банда (zad=2, Пещера бандитов в горах Дарии, конь lway=q2001_2):
+//   Добить бандитов -> В бой! -> Костяная цепь бандита, запрет 10 мин.
+//
+// Сдача в башне даёт +3 морали и медаль ордо (каждые 8 медалей -> случайная вещь комплекта на
+// 6 уровень). У AI-персонажа сдача была закрыта уровнем (он 5-й), у Цунами 30-й -- сдаём.
+// ВНИМАНИЕ: точный текст ссылки сдачи вживую НЕ проверен ни разу. Поэтому перебираем несколько
+// формулировок, а если ни одна не нашлась, но предмет на руках есть -- печатаем экран башни и её
+// ссылки, чтобы достать настоящую надпись из лога и дописать её в ORDO_HANDIN_TEXTS одной строкой.
+// ===================================================================================
+const ORDO_TOWER = 'Башня Ордо Экзекуторс';
+const ORDO_MIN_HP = 2000;
+const ORDO_MIN_RESERVE_MINUTES = 15;
+const ORDO_TOWER_ROUTE = ['Южные ворота', 'Идти на юг', 'Идти на восток', ORDO_TOWER];
+
+const ORDO_QUESTS = [
+  {
+    key: 'leader',
+    zad: 1,
+    label: 'Ордо: главарь банды',
+    menu: 'Ордо экзекуторс: Уничтожить главаря банды',
+    take: 'Уничтожить главаря банды',
+    banMinutes: 60,
+  },
+  {
+    key: 'band',
+    zad: 2,
+    label: 'Ордо: банда',
+    menu: 'Ордо экзекуторс: Уничтожить банду',
+    take: 'Уничтожить банду',
+    banMinutes: 10,
+  },
+];
+
+// Порядок = приоритет: на одном экране видно несколько вариантов, берём первый из списка.
+// "Сдаться", "Спрыгнуть на него", "Идти по дороге" и "Слезть к пещере" сюда не входят намеренно.
+const ORDO_MISSION_STEPS = [
+  'Идти за скальную гряду',
+  'Идти по тропе',
+  'Залезть в люк',
+  'Прокрасться',
+  'Идти дальше',
+  'Добить бандитов',
+  'Напасть',
+  'В бой!',
+];
+
+const ORDO_HANDIN_TEXTS = [
+  'Доложить о выполнении',
+  'Доложить о задании',
+  'Сдать задание',
+  'Доложить',
+];
+
+function ordoRestMinutesFromText(text) {
+  const m = String(text || '').match(/отдохнуть\s+еще\s+(\d+)\s*мин/i);
+  if (!m) return null;
+  return Number(m[1]) || 1;
+}
+
+function isOrdoQuestReady(key) {
+  const until = ordoNextTryAt[key];
+  return !Number.isFinite(until) || Date.now() >= until;
+}
+
+function delayOrdoQuest(key, minutes, reason) {
+  ordoNextTryAt[key] = Date.now() + minutes * 60 * 1000;
+  persistDailyQuestState();
+  console.log(`Ордо (${key}): следующая попытка не раньше чем через ${minutes} мин (${reason})`);
+}
+
+// Прямой goto на конь-шорткат иногда приземляется на промежуточный экран поездки ("В пути еще
+// N сек") вместо конечной локации -- ждём и перезагружаем location.php, пока не доедем.
+async function waitOutOrdoHorseTravel(page, maxAttempts = 8) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const text = await getBodyText(page);
+    if (!/В\s*пути/i.test(text)) return;
+    await pause(page, 2000, 3000);
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  }
+}
+
+async function walkToOrdoTower(page) {
+  if (!(await goToStoneguardViaFastway(page, 'Стоунгард (Ордо)'))) {
+    throw new Error('ordo_no_stoneguard');
+  }
+
+  for (const step of ORDO_TOWER_ROUTE) {
+    await performStep(page, {
+      stepName: step,
+      currentTexts: [step, step.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  const text = await getBodyText(page);
+  if (/не\s+рады/i.test(text)) {
+    console.log(`Ордо: в гильдию не пустили -- мораль ниже нуля (${snapshotText(text, 300)})`);
+    throw new Error('ordo_not_welcome');
+  }
+  return text;
+}
+
+// Сдать всё, что накопилось. Вызывается, когда мы И ТАК стоим в башне (перед взятием задания и
+// сразу после победы), отдельных поездок ради сдачи не делаем.
+async function handInOrdoItemsAtTower(page, towerText = null) {
+  if (ordoItemsToHandIn <= 0) return false;
+
+  let handed = 0;
+  for (let i = 0; i < Math.min(ordoItemsToHandIn, 4); i++) {
+    const text = i === 0 && towerText ? towerText : await getBodyText(page);
+    const linkText = ORDO_HANDIN_TEXTS.find((t) => text.includes(t));
+
+    if (!linkText) {
+      if (handed === 0) {
+        // Предмет на руках есть, а ссылки не видно -- значит настоящая надпись другая. Печатаем
+        // экран и ссылки башни ОДИН раз за визит, чтобы вытащить её из лога и дописать в список.
+        console.log(`Ордо: предметов к сдаче ${ordoItemsToHandIn}, но ссылки сдачи на экране нет. Экран: ${snapshotText(text, 400)}`);
+        const linkTexts = await page
+          .$$eval('a', (as) => as.map((a) => (a.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))
+          .catch(() => []);
+        console.log(`Ордо: ссылки башни: ${linkTexts.join(' | ')}`);
+      }
+      break;
+    }
+
+    const ok = await clickByTexts(page, [linkText, linkText.toLowerCase()], `Ордо: ${linkText}`);
+    if (!ok) break;
+    await pause(page, 800, 1500);
+    handed += 1;
+    console.log(`Ордо: сдал предмет задания (${snapshotText(await getBodyText(page), 200)})`);
+  }
+
+  if (handed > 0) {
+    ordoItemsToHandIn = Math.max(0, ordoItemsToHandIn - handed);
+    persistDailyQuestState();
+    console.log(`Ордо: сдано предметов ${handed}, осталось несданных ${ordoItemsToHandIn}`);
+  }
+  return handed > 0;
+}
+
+async function progressOrdoQuest(page, q) {
+  console.log(`${q.label}: маршрут Стоунгард -> ${ORDO_TOWER_ROUTE.join(' -> ')} -> "${q.take}" -> конь q2001_${q.zad} -> бой`);
+
+  const towerText = await walkToOrdoTower(page);
+  await handInOrdoItemsAtTower(page, towerText);
+
+  const taken = await clickByTexts(page, [q.take, q.take.toLowerCase()], `Ордо: взять "${q.take}"`);
+  if (!taken) {
+    console.log(`${q.label}: в башне нет ссылки "${q.take}"`);
+    delayOrdoQuest(q.key, 60, 'нет ссылки на задание в башне');
+    return false;
+  }
+  await pause(page, 800, 1500);
+
+  const takeText = await getBodyText(page);
+  const restAtTower = ordoRestMinutesFromText(takeText);
+  if (restAtTower !== null) {
+    console.log(`${q.label}: кончился резерв прямо в башне (отдохнуть ещё ${restAtTower} мин)`);
+    delayOrdoQuest(q.key, restAtTower + 2, 'кончился резерв');
+    return false;
+  }
+
+  if (!/Задание принято/i.test(takeText) && !/у\s*вас\s*уже\s*есть\s*задание/i.test(takeText)) {
+    // Начало страницы башни -- описание Ордена; причина отказа ниже, в списке заданий и строке
+    // "Текущее задание", поэтому печатаем именно этот кусок, а не первые 600 символов описания.
+    const at = takeText.search(/Задания:|Выполняйте задания|Текущее задание/);
+    console.log(`${q.label}: задание не выдали: ${snapshotText(at >= 0 ? takeText.slice(at) : takeText, 600)}`);
+    delayOrdoQuest(q.key, 60, 'задание не выдали');
+    return false;
+  }
+
+  const horseUrl = `http://lbast.ru/location.php?mod=konj&lway=q2001_${q.zad}`;
+  await page.goto(horseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 900, 1500);
+  await waitOutOrdoHorseTravel(page);
+
+  let fought = false;
+  let outOfReserve = false;
+
+  for (let i = 0; i < 14; i++) {
+    throwIfPausedByManager(`${q.label}: шаг миссии`);
+    const text = await getBodyText(page);
+
+    const restNow = ordoRestMinutesFromText(text);
+    if (restNow !== null) {
+      console.log(`${q.label}: кончился резерв по дороге (отдохнуть ещё ${restNow} мин) -> прерываю маршрут`);
+      outOfReserve = true;
+      delayOrdoQuest(q.key, restNow + 2, 'кончился резерв по дороге');
+      break;
+    }
+
+    if (/Ударить/i.test(text)) {
+      await fightLoop(page);
+      fought = true;
+      await pause(page, 800, 1500);
+      // После победы нас выбрасывает на локацию, где снова виден ВХОД в миссию -- по второму кругу
+      // её начинать не надо. Бой посреди пути (заметили у костра) входа не показывает.
+      const after = await getBodyText(page);
+      if (after.includes('Идти за скальную гряду') || after.includes('Добить бандитов')) break;
+      continue;
+    }
+
+    const next = ORDO_MISSION_STEPS.find((s) => text.includes(s));
+    if (!next) break; // миссия кончилась -- под ногами обычная локация
+    await clickByTexts(page, [next], `${q.label}: ${next}`);
+    await pause(page, 800, 1500);
+  }
+
+  if (!fought) {
+    console.log(`${q.label}: до боя не дошёл -- вернусь, когда квест снова появится в меню Q`);
+    return false;
+  }
+
+  ordoItemsToHandIn += 1;
+  delayOrdoQuest(q.key, q.banMinutes, 'запрет после победы');
+  console.log(`${q.label}: бой пройден, предмет задания в инвентаре (несданных: ${ordoItemsToHandIn})`);
+
+  if (outOfReserve) {
+    console.log(`${q.label}: на сдачу резерва уже нет -- предмет полежит в инвентаре до следующего визита в башню`);
+    return true;
+  }
+
+  // Сдаём сразу: обратная дорога -- те же 4 шага, а мораль +3 и медаль ждать смысла нет.
+  try {
+    await walkToOrdoTower(page);
+    await handInOrdoItemsAtTower(page);
+  } catch (e) {
+    if (isScenarioPausedError(e)) throw e;
+    console.log(`${q.label}: до башни за сдачей не дошёл (${e.message}) -- предмет остаётся в инвентаре, сдам при следующем визите`);
+  }
+  return true;
+}
+
+async function runOrdoQuestsIfAvailable(page, opts = {}) {
+  const { listedQuests = [], reserveMinutes = null, hpCurrent = null } = opts;
+
+  const due = ORDO_QUESTS.filter((q) => isQuestInMenu(listedQuests, q.menu) && isOrdoQuestReady(q.key));
+  if (!due.length) return false;
+
+  if (typeof reserveMinutes !== 'number' || reserveMinutes < ORDO_MIN_RESERVE_MINUTES
+    || typeof hpCurrent !== 'number' || hpCurrent < ORDO_MIN_HP) {
+    console.log(`Ордо: пропускаю цикл (нужно >=${ORDO_MIN_RESERVE_MINUTES} резервных минут и >=${ORDO_MIN_HP} HP, есть резерв=${reserveMinutes ?? 'n/a'}, HP=${hpCurrent ?? 'n/a'})`);
+    return false;
+  }
+
+  for (const q of due) {
+    const ok = await runNonQQuestSafe(page, q.label, () => progressOrdoQuest(page, q));
+    // Маршрут к башне и обратно + миссия съедают почти весь резерв, поэтому за цикл делаем не
+    // больше одного задания Ордо; второе подхватится следующим циклом, оно никуда не денется.
+    if (ok) return true;
+  }
+  return false;
 }
 
 // "Старый лучник": не отдельный квест из Q-меню, а способ зафармить стрелу для лука -- вызывается
@@ -6547,6 +6874,17 @@ async function fightLoopMisttownEvent(page) {
   if (await existsAnyText(page, [BOW, BOW.toLowerCase()])) {
     bowUsed = await clickByTexts(page, [BOW, BOW.toLowerCase()], BOW);
     await pause(page, 150, 300);
+
+    // Флаг ставим СРАЗУ после выстрела, а не по возвращении из боя. 22.09.2026 ("жизнь") стрела
+    // была выпущена, но следом бой упал с ui_stuck:Ударить -- исключение унесло управление в
+    // catch вызывающего кода, а вместе с ним и отметку "надо зафармить стрелу": бот её просто
+    // не поставил. Стрела к тому моменту уже потрачена, поэтому факт выстрела и надо фиксировать
+    // по самому выстрелу.
+    if (bowUsed && !needsArrowFarm) {
+      needsArrowFarm = true;
+      persistDailyQuestState();
+      console.log('Стрела выпущена -> отмечено "нужно зафармить" (Старый лучник), сделаем когда позволят HP/резерв');
+    }
   }
 
   let stuck = 0;
@@ -6560,8 +6898,15 @@ async function fightLoopMisttownEvent(page) {
     const ok = await clickByTexts(page, [UDAR, UDAR.toLowerCase()], UDAR);
     if (!ok) {
       stuck += 1;
-      if (stuck >= MAX_STUCK) throw new Error('misttown_event_fight_stuck');
-      await pause(page, 150, 300);
+      // Между разменами в массовом бою кнопки может не быть секунду-другую, поэтому ждём дольше,
+      // чем раньше (15 попыток по ~0.2 сек = всего 2.4 сек -- слишком нетерпеливо). Если всё же
+      // сдаёмся, пишем в лог сам экран: иначе по "ui_stuck" непонятно, чем бой закончился.
+      if (stuck >= MAX_STUCK) {
+        const text = (await getBodyText(page)).replace(/\s+/g, ' ').slice(0, 300);
+        console.log(`Мисттаунское событие: кнопки "Ударить" нет ${MAX_STUCK} раз подряд, экран: ${text}`);
+        throw new Error('misttown_event_fight_stuck');
+      }
+      await pause(page, 600, 900);
       continue;
     }
 
@@ -6790,17 +7135,11 @@ async function runMisttownSecretEventIfDue(page) {
         await pause(page, 300, 600);
 
         if (await existsAnyClickable(page, FIGHT_TEXTS)) {
+          // Отметку "стрела потрачена" ставит сам fightLoopMisttownEvent сразу после выстрела --
+          // чтобы она не потерялась, если бой дальше упадёт. Фарм стрелы не срочный: им займётся
+          // обычный диспетчер (maybeFarmArrow в doScenario), когда позволят HP и резерв.
           const { bowUsed } = await fightLoopMisttownEvent(page);
           console.log(`Мисттаунское событие (${dueTheme}): бой пройден${bowUsed ? ' (стрела выпущена)' : ''}`);
-
-          // Фарм стрелы не срочный (в отличие от самого события) -- не лезем в ещё один бой сразу
-          // после мисттаунского (могло не хватить HP/резерва), просто ставим флаг, а обычный
-          // диспетчер (maybeFarmArrow в doScenario) сходит зафармить, когда условия позволят.
-          if (bowUsed) {
-            needsArrowFarm = true;
-            persistDailyQuestState();
-            console.log('Стрела выпущена -> отмечено "нужно зафармить" (Старый лучник), сделаем когда позволят HP/резерв');
-          }
         } else {
           // Отличаем "опоздал" от "не пустили": при нулевом/отрицательном резерве игра на спуск
           // отвечает "Вы слишком устали. Требуется отдых еще N мин." -- боя на экране нет по
@@ -8389,6 +8728,7 @@ async function doScenario(page) {
         persistDailyQuestState();
       }
     } catch (e) {
+      if (isScenarioPausedError(e)) throw e;
       console.log(`Утренний скриншот: не удалось (${e.message}) -> попробую в следующем цикле`);
       try {
         await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -8464,6 +8804,7 @@ async function doScenario(page) {
     try {
       await runStatueOfGloryTask(page);
     } catch (e) {
+      if (isScenarioPausedError(e)) throw e;
       console.log(`Статуя славы: не удалось (${e.message}) -> пропускаю, продолжаю цикл`);
       try {
         await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -8728,6 +9069,8 @@ async function doScenario(page) {
 
   let didAnyFarmFight = false;
   while (shouldFightFarmByStats(stats)) {
+    // Пауза между боями, а не посреди боя: начатый бой доигрывается, новый не начинается.
+    throwIfPausedByManager('фарм: перед следующим боем');
     console.log('can fight -> start fight');
 
     try {
@@ -8735,6 +9078,7 @@ async function doScenario(page) {
       await fightLoop(page);
       didAnyFarmFight = true;
     } catch (e) {
+      if (isScenarioPausedError(e)) throw e;
       console.log(`Farm fight flow error: ${e.message}`);
       await recoverToCity(page, `${FARM_TARGET}: ${e.message}`);
       // Usually a one-off page-load glitch (empty page, route link not found yet) rather than a
@@ -8819,6 +9163,23 @@ function isPausedByManager() {
   } catch (e) {
     return false;
   }
+}
+
+// Пауза может прийти в ЛЮБОЙ момент, а один цикл живёт минутами -- восстановление в Последнем
+// доме и вовсе часами. Проверки только в начале цикла не хватило: 24.09.2026 Паша нажал паузу, а
+// сценарий продолжал жарить рыбу на кухне. Поэтому в длинных местах цикла стоят кооперативные
+// проверки: бросаем помеченную ошибку, она проходит НАСКВОЗЬ через безопасные обёртки
+// (runQuestStepSafe/runNonQQuestSafe её не глотают и не запускают recoverToCity) и гасится в
+// главном цикле без единого клика -- страница остаётся ровно там, где её застала пауза.
+function throwIfPausedByManager(where) {
+  if (!isPausedByManager()) return;
+  const e = new Error(`paused:${where}`);
+  e.scenarioPaused = true;
+  throw e;
+}
+
+function isScenarioPausedError(e) {
+  return Boolean(e && e.scenarioPaused);
 }
 
 function isClosedTargetError(e) {
@@ -8926,6 +9287,10 @@ async function returnToLocationPage(page) {
           ({ context, page } = await launchBrowserAndPage());
           continue;
         }
+        if (isScenarioPausedError(e)) {
+          console.log('Ночное ожидание: пауза -- страницу не трогаю, жду "Продолжить".');
+          continue;
+        }
         console.log('Ночное ожидание: ошибка цикла:', e.message);
         await sleepPlain(60 * 1000);
       }
@@ -8985,6 +9350,14 @@ async function returnToLocationPage(page) {
           await context.close();
         } catch (e2) { /* ignore */ }
         ({ context, page } = await launchBrowserAndPage());
+        continue;
+      }
+
+      // Пауза посреди цикла: НИЧЕГО не делаем -- ни снимка, ни recoverToCity, ни возврата на
+      // location.php. Любая из этих операций увела бы страницу из-под пользователя, ради которого
+      // паузу и нажали. Просто уходим на начало цикла, где стоит ожидание "Продолжить".
+      if (isScenarioPausedError(e)) {
+        console.log(`Пауза: прервал цикл (${e.message}), страницу не трогаю.`);
         continue;
       }
 

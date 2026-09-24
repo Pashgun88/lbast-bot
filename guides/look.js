@@ -36,6 +36,21 @@ const TEXT_LIMIT = Number(process.env.LOOK_TEXT_LIMIT || 2500);
         if (!hit) { console.log(`НЕТ ССЫЛКИ: ${a}`); continue; }
         console.log(`клик: ${hit.t}`);
         await goto(page, new URL(hit.h, page.url()).href);
+
+        // Кончился резерв -- игра отклоняет действие ("Вам нужно отдохнуть еще N мин"). Ждём и
+        // повторяем тот же клик, иначе разведка упирается в эту заглушку вместо нужного экрана.
+        for (let r = 0; r < 3; r++) {
+          const rest = (await getBodyText(page)).match(/отдохнуть\s+еще\s+(\d+)\s*мин/i);
+          if (!rest) break;
+          const minutes = Number(rest[1]) || 1;
+          console.log(`резерв кончился -> жду ${minutes} мин и повторяю "${hit.t}"`);
+          await sleep((minutes * 60 + 20) * 1000);
+          await goto(page, 'location.php');
+          const l2 = await links(page);
+          const again = l2.find((x) => norm(x.t).startsWith(norm(a)));
+          if (!again) break;
+          await goto(page, new URL(again.h, page.url()).href);
+        }
       }
       await sleep(800);
     }
