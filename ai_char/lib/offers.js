@@ -164,7 +164,28 @@ async function acceptOrdoOffersIfAny(page) {
     }
     await page.goto(new URL(links[i].href, OFFERS_URL).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await pause(page, 700, 1300);
-    const after = (await getBodyText(page)).replace(/\s+/g, ' ');
+    let after = (await getBodyText(page)).replace(/\s+/g, ' ');
+    // 24.09.2026: игра спрашивает «Вы уверены что хотите...» - подтверждения в коде не было, и
+    // сделка так и висела на вопросе (в логе это выглядело как удачный приём). Жмём подтверждение
+    // и только потом считаем передачу принятой.
+    if (/Вы уверены/i.test(after)) {
+      const confirms = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+        .map((a) => ({ href: a.getAttribute('href') || '', label: (a.textContent || '').trim() }))
+        .filter((x) => /mod=offers/.test(x.href))).catch(() => []);
+      const pick = confirms.find((c) => /^(Да|Подтвердить|Принять|Согласен|Согласиться)/i.test(c.label));
+      if (!pick) {
+        console.log(`Передачи: «${name}» спросило подтверждение, а кнопки не нашлось. Ссылки: ${confirms.map((c) => c.label).join(' | ').slice(0, 200)}`);
+        continue;
+      }
+      console.log(`Передачи: подтверждаю «${name}» кнопкой «${pick.label}».`);
+      await page.goto(new URL(pick.href, OFFERS_URL).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 700, 1300);
+      after = (await getBodyText(page)).replace(/\s+/g, ' ');
+      if (/Вы уверены/i.test(after)) {
+        console.log(`Передачи: «${name}» так и осталось на подтверждении -> ${after.slice(0, 160)}`);
+        continue;
+      }
+    }
     console.log(`Передачи: принял «${name}» x${qty} от ${seller} за ${price} дин -> ${after.slice(0, 160)}`);
     accepted += 1;
     spent += price;
