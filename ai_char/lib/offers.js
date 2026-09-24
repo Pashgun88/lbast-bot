@@ -12,10 +12,10 @@ const { getBodyText, pause } = require('./core');
 const OFFERS_URL = 'http://lbast.ru/inv.php?mod=offers';
 // Предметы заданий Ордо экзекуторс («ордо» в разговоре): с главаря и с банды.
 const ORDO_ITEM_RE = /(Медальон бандита|Костяная цепь бандита)/i;
-// Паша 23.09.2026, после того как выяснилось, что все шесть вещей комплекта уже в сумке и дело
-// упиралось в статы: «тогда не покупай больше». Предложения по-прежнему читаем и пишем в лог,
-// но ничего не принимаем. Вернуть покупку = снова true.
-const ORDO_BUYING_ENABLED = false;
+// 23.09 Паша сказал не покупать («комплект уже собран»), а 24.09.2026 - снова покупать:
+// «тебе нужно собрать 5 колец ордо, с него крафтится кольцо крутое. Так что нужно будет ещё
+// покупать ордо». Предметы задания -> медали -> случайная вещь Ордо, и кольца надо набрать пять.
+const ORDO_BUYING_ENABLED = true;
 const MAX_PRICE_PER_ITEM = 60; // цена из объявления
 // Паша 23.09.2026: «если кто-то передаст ордо - покупай сколько денег хватит пока не соберёшь
 // комплект». Значит верхнего предела по количеству нет, а от денег оставляем только на эль и
@@ -24,36 +24,37 @@ const MONEY_FLOOR = 150;
 const CHECK_EVERY_MS = 10 * 60 * 1000;
 let lastCheckAt = 0;
 
-// Комплект Ордо экзекуторс, как он собирается из обмена медалей (8 медалей = случайная вещь).
-// «Собран» считаем по НАДЕТОМУ, а не по сумке: 23.09.2026 все шесть вещей уже лежат в сумке, но
-// нож требует Инту 25, сапоги - 26, и комплект не работает (2s19: «комплект у тебя не полный, он
-// не работает»). Пока хоть одна вещь не надета - предметы задания берём без счёта.
-const ORDO_SET = [
-  { part: 'посох', re: /посох .*ордо экзекуторс/i },
-  { part: 'кираса', re: /кираса ордо экзекуторс/i },
-  { part: 'шлем', re: /шлем ордо экзекуторс/i },
-  { part: 'кольцо', re: /кольцо ордо экзекуторс/i },
-  { part: 'нож', re: /нож .*ордо экзекуторс/i },
-  { part: 'сапоги', re: /сапоги .*ордо экзекуторс/i },
-];
-const SET_RECHECK_MS = 30 * 60 * 1000;
-let setCheckedAt = 0;
-let setMissing = ORDO_SET.map((x) => x.part); // до первой проверки считаем комплект неполным
+// Цель 24.09.2026 (Паша): собрать ПЯТЬ «Кольцо ордо экзекуторс» - из них крафтится сильное кольцо.
+// Вещи Ордо приходят только из обмена медалей (8 медалей = СЛУЧАЙНАЯ вещь комплекта), поэтому
+// предметы задания нужны без счёта, пока колец меньше пяти. Считаем и надетое, и то, что в сумке.
+const RING_RE = /кольцо ордо экзекуторс/i;
+const RING_GOAL = 5;
+const RINGS_RECHECK_MS = 30 * 60 * 1000;
+let ringsCheckedAt = 0;
+let ringsOwned = 0;
 
-// Какие вещи комплекта ещё не надеты.
-async function missingOrdoSetParts(page) {
-  if (Date.now() - setCheckedAt < SET_RECHECK_MS) return setMissing;
+// Сколько колец на руках. Одинаковые вещи в сумке идут отдельными строками, но на всякий случай
+// учитываем и число после названия (так игра показывает количество у стопок вроде медалей).
+async function countOrdoRings(page) {
+  if (Date.now() - ringsCheckedAt < RINGS_RECHECK_MS) return ringsOwned;
   const back = page.url();
-  let worn = '';
-  try {
-    await page.goto('http://lbast.ru/inv.php?mod=outfit', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    worn = await getBodyText(page);
-  } catch (e) { /* не открылась - оставим прошлый ответ */ }
-  if (!worn) { await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}); return setMissing; }
-  setMissing = ORDO_SET.filter((x) => !x.re.test(worn)).map((x) => x.part);
-  setCheckedAt = Date.now();
+  let total = 0;
+  for (const url of ['http://lbast.ru/inv.php?mod=outfit', 'http://lbast.ru/inv.php?invMod=2',
+    'http://lbast.ru/inv.php?invMod=2&cpage=2', 'http://lbast.ru/inv.php?invMod=2&cpage=3']) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      const text = await getBodyText(page);
+      for (const line of text.split('\n')) {
+        if (!RING_RE.test(line)) continue;
+        const n = Number((line.match(/(\d+)\s*$/) || [])[1] || 1);
+        total += Number.isFinite(n) && n > 0 && n < 50 ? n : 1;
+      }
+    } catch (e) { /* страницы может не быть */ }
+  }
+  ringsOwned = total;
+  ringsCheckedAt = Date.now();
   await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  return setMissing;
+  return ringsOwned;
 }
 
 // Разбирает страницу передач: для каждой ссылки «принять» берёт текст её блока.
@@ -100,15 +101,15 @@ async function acceptOrdoOffersIfAny(page) {
     return false;
   }
   const hasOrdo = offers.some((o) => ORDO_ITEM_RE.test(parseBlock(o.block).name));
-  const missing = hasOrdo ? await missingOrdoSetParts(page) : setMissing;
-  if (hasOrdo && missing.length === 0) {
-    console.log('Передачи: комплект Ордо надет целиком - предметы задания больше не скупаю.');
-    return false;
-  }
   if (hasOrdo) {
+    const rings = await countOrdoRings(page);
+    if (rings >= RING_GOAL) {
+      console.log(`Передачи: колец Ордо уже ${rings} из ${RING_GOAL} - на крафт хватает, больше не скупаю.`);
+      return false;
+    }
     await page.goto(OFFERS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     offers = await readOffers(page);
-    console.log(`Передачи: из комплекта Ордо не надето ${missing.join(', ')} - беру предметы задания, пока хватает денег.`);
+    console.log(`Передачи: колец Ордо ${rings}/${RING_GOAL} - беру предметы задания, пока хватает денег.`);
   }
   let accepted = 0;
   let spent = 0;
