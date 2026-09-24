@@ -28,7 +28,7 @@ const {
 const { recoverToCity } = require('./recovery');
 const { progressShtolniQuest } = require('./shtolni');
 const { progressTavernQuest } = require('./tavern');
-const { progressVarieteQuest } = require('./variete');
+const { progressVarieteQuest, varieteNeedsResume } = require('./variete');
 
 // Паша, 21.09.2026: «руму отключи». «Кузница Рума» каждую попытку платит 15 дин за лодку на
 // остров Глинбаг и упирается в fight_not_reached (20.09 это кончилось КО на -22/400). Пока
@@ -238,7 +238,7 @@ async function runDailyQuests(page, stats) {
   // Варьете (порт из кода Цунами, 24.09.2026). Длинная цепочка диалогов с одним боем, появляется
   // от случая к случаю. Просим запас побольше - 15 минут резерва, как у Цунами: начинать такой
   // маршрут перед самым кулдауном бессмысленно.
-  if (isQQuestAllowed('Варьете') && isQuestInMenu(listedQuests, 'Варьете')) {
+  if (isQQuestAllowed('Варьете') && (isQuestInMenu(listedQuests, 'Варьете') || varieteNeedsResume())) {
     if (typeof reserveMinutes !== 'number' || reserveMinutes < 15) {
       console.log(`Quest step skip: Варьете (need >=15 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
     } else {

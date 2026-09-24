@@ -1,161 +1,155 @@
-// Квест «Варьете» - порт из кода Цунами (origin/main:daily_quests_piraty.js, функция
-// progressVarieteQuest). Паша 24.09.2026: «Варьетте есть у цунами, посмотри на гитхабе».
+// Квест «Варьете». Маршрут взят из кода Цунами (origin/main:daily_quests_piraty.js,
+// progressVarieteQuest) - Паша 24.09.2026: «Варьетте есть у цунами, посмотри на гитхабе».
 // Появляется в Q-меню от случая к случаю, не привязан ко дню недели: длинная линейная цепочка
-// диалогов с одним обычным боем в середине. Реплики выбора матчатся по короткой уникальной
-// подстроке без тире и знаков препинания - тире в описании квеста лишь маркер списка.
-// Отличие от версии Цунами: бой идёт через questFightHpGate (правило AI__ - гейт ДО клика в бой).
+// диалогов с одним обычным боем в середине.
+//
+// Отличия от версии Цунами, каждое - по живому сбою 24.09.2026:
+//  - tryPerformStepOptional у AI__ лежит в lib/hp.js, а не в lib/ui.js;
+//  - после «Выполнение» персонаж садится на коня («В пути еще N сек.») - ждём waitOutHorseTravel;
+//  - бой идёт через questFightHpGate (правило AI__: гейт ДО клика в бой);
+//  - и главное: вместо жёсткой цепочки кликов идём ПО ЭКРАНУ. Жёсткая цепочка после любого
+//    сбоя начинала квест заново и на возобновлённой сцене падала на первом же шаге, потому что
+//    диалог уже ушёл вперёд. Список реплик тот же, что у Цунами, но нажимается та из них,
+//    которая сейчас на экране. Реплики матчатся по короткой уникальной подстроке без тире:
+//    тире в описании квеста - маркер списка, а не часть текста кнопки.
 
-module.exports = { progressVarieteQuest };
+// Экспорт только функциями: const-константы объявлены ниже, и ссылка на них здесь падала бы
+// ReferenceError при загрузке модуля (уже наступали на это в offers.js и tanning.js).
+module.exports = { progressVarieteQuest, varieteNeedsResume };
 
 const { QUEST_FIGHT_HP_FLOOR } = require('./state');
-const { pause } = require('./core');
+const { getBodyText, pause } = require('./core');
 const { waitOutHorseTravel } = require('./assassins');
 const { fightLoop } = require('./fight');
-// tryPerformStepOptional у AI__ живёт в ./hp, а не в ./ui (у Цунами всё в одном файле) - на этом
-// порт и падал: «Квест: tryPerformStepOptional is not a function» на каждом заходе.
 const { questFightHpGate, tryPerformStepOptional } = require('./hp');
 const { clickInfoForQuest } = require('./quest_menu');
-const { clickByTexts, existsAnyText, performStep } = require('./ui');
+const { clickByTexts, existsAnyText } = require('./ui');
+
+const QUEST = 'Варьете';
+// Порядок здесь не важен (нажимается то, что на экране), но он сохранён как у Цунами - так
+// понятнее читать сценарий целиком.
+const VARIETE_OPTIONS = [
+  'Амулет', 'Три поросенка', 'Пройти в зал варьете',
+  'занять место', 'к скамьям в конец зала',
+  'когда начнется представление', 'интересно посмотреть, что это такое', 'Рад знакомству',
+  'люблю посмотр', 'больше посмотреть',
+  'не хочется', 'займу столик', 'сесть за столик к ашаи',
+  'просто потерять', 'именно украли', 'зацепки откуда начать поиски',
+  'давно вы работаете', 'да уж',
+  'найти дим пупса', 'поговорить об одной из танцовщиц', 'Мара',
+  'какие у тебя с ней отношения', 'догадки кто мог украсть', 'спасибо, помог',
+  'поговорить с двумя наемниками', 'хотите их обсудить', 'однако он беспокоится',
+  'незаметно подставить официанту подножку',
+  'поговорить с брумом', 'спасибо за информацию',
+  'клэр хитцу', 'присесть рядом',
+  'номер был шикарен', 'не трудно выступать после танцовщиц', 'танцовщицам вы нрав',
+  'хочу помочь Маре', 'очень помогли',
+  'пройти в комнату к маре', 'задание завершено',
+];
+const FIGHT_TEXTS = ['в бой'];
+const CONTINUE_TEXTS = ['продолжить квест', 'далее'];
+const DONE_RE = /(Задание завершено|Задание выполнено|Квест выполнен)/i;
+const MAX_SCREENS = 80;
+
+// Взятый квест исчезает из Q-меню, поэтому одного «есть в меню» для запуска мало: начатую и
+// недоведённую сцену надо продолжать. Флаг живёт в памяти процесса - этого хватает: после
+// перезапуска драйвера сцена всё равно ждёт на «Продолжить квест», а квест вернётся в меню.
+let varieteStarted = false;
+function varieteNeedsResume() { return varieteStarted; }
+
+// Ссылки экрана без служебной обвязки сайта.
+const CHROME = new Set(['обновить', 'чат', 'в игру', 'форум', 'жг', 'галерея', 'кланы', 'карта',
+  'бои', 'кто здесь?', 'выход', 'размер текста', 'амулет | конь', 'конь', 'инвентарь', 'письма']);
+
+async function screenLinks(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('a'))
+    .map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') || '' }))
+    .filter((x) => x.t && x.h)).catch(() => []);
+}
+
+const norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+
+function findOption(links, needles) {
+  for (const needle of needles) {
+    const n = norm(needle);
+    const hit = links.find((l) => !CHROME.has(norm(l.t)) && norm(l.t).includes(n));
+    if (hit) return { hit, needle };
+  }
+  return null;
+}
 
 async function progressVarieteQuest(page, { questCount } = {}) {
-  const QUEST = 'Варьете'; // "Варьете"
-
-  if (!await existsAnyText(page, [QUEST])) {
-    return false;
-  }
-
-  const infoClicked = await clickInfoForQuest(page, QUEST);
-  if (!infoClicked) {
-    console.log('Варьете: не удалось открыть инфо квеста.');
-    return false;
-  }
-
-  // "Выполнение" -- кнопка/ссылка перехода к месту исполнения квеста, как и в других Q-квестах
-  // (там она называется иначе, напр. "К месту выполнения") -- пробуем оба варианта.
-  await tryPerformStepOptional(page, {
-    stepName: 'Выполнение',
-    currentTexts: [
-      'Выполнение', 'выполнение',
-      'К месту выполнения', 'к месту выполнения',
-    ],
-    waitAfterClickMs: 3000,
-  });
-  // «Выполнение» сажает на коня: экран «В пути еще N сек.». У Цунами этого ожидания нет, и порт
-  // падал на следующем же шаге - «Не найден шаг Амулет ... В пути еще 1 сек.» (живьём 24.09.2026).
-  await waitOutHorseTravel(page, page.url());
-  await pause(page, 700, 1300);
-
-  async function click(text, label) {
-    await performStep(page, {
-      stepName: label || text,
-      currentTexts: [text, text.toLowerCase()],
-      retries: 3,
-    });
-  }
-
-  async function stepMany(text, count) {
-    for (let i = 0; i < count; i++) {
-      const ok = await tryPerformStepOptional(page, {
-        stepName: `${text} (${i + 1}/${count})`,
-        currentTexts: [text, text.toLowerCase()],
-      });
-      if (!ok) break;
+  // Свежий заход: [инфо] -> «Выполнение». Если квест уже взят и сцена на середине, в меню его
+  // нет - тогда заходим через «Продолжить квест» с локации.
+  if (await existsAnyText(page, [QUEST])) {
+    if (!(await clickInfoForQuest(page, QUEST))) {
+      console.log('Варьете: не удалось открыть инфо квеста.');
+      return false;
     }
+    await tryPerformStepOptional(page, {
+      stepName: 'Выполнение',
+      currentTexts: ['Выполнение', 'выполнение', 'К месту выполнения', 'к месту выполнения'],
+      waitAfterClickMs: 3000,
+    });
+    await waitOutHorseTravel(page, page.url());
+    await pause(page, 700, 1300);
+    varieteStarted = true;
   }
 
-  const DALEE = 'Далее'; // "Далее"
+  let fights = 0;
+  let idle = 0;
+  for (let i = 0; i < MAX_SCREENS; i++) {
+    const text = await getBodyText(page);
+    if (DONE_RE.test(text)) {
+      console.log(`Варьете: квест завершён (боёв ${fights}).`);
+      varieteStarted = false;
+      await clickByTexts(page, ['В игру', 'в игру'], 'В игру (after Варьете)').catch(() => {});
+      return true;
+    }
+    const links = await screenLinks(page);
 
-  await click('Амулет', 'Амулет'); // Амулет
-  await click('Три поросенка', 'Три поросенка'); // Три поросенка
-  await performStep(page, {
-    stepName: 'Таверна «Три поросенка»',
-    currentTexts: ['Таверна «Три поросенка»', 'таверна «три поросенка»', 'Таверна'],
-    retries: 3,
-  }); // Таверна «Три поросенка»
-  await click('Пройти в зал варьете', 'Пройти в зал варьете'); // Пройти в Зал варьете
+    const option = findOption(links, VARIETE_OPTIONS);
+    if (option) {
+      idle = 0;
+      console.log(`Варьете: ${option.hit.t.slice(0, 60)}`);
+      await page.goto(new URL(option.hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await waitOutHorseTravel(page, page.url());
+      await pause(page, 700, 1300);
+      continue;
+    }
 
-  await stepMany(DALEE, 2);
-  await click('занять место', 'Занять место за столиком рядом со сценой'); // Занять место за столиком рядом со сценой
-  await stepMany(DALEE, 4);
-  await click('к скамьям в конец зала', 'Молча подняться и пройти к скамьям в конец зала'); // Молча подняться и пройти к скамьям в конец зала
+    const fight = findOption(links, FIGHT_TEXTS);
+    if (fight) {
+      if (!(await questFightHpGate(page, `Варьете (бой ${fights + 1})`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+        console.log('Варьете: мало HP перед боем - остаюсь в сцене, продолжу в следующем круге.');
+        return false;
+      }
+      console.log(`Варьете: бой ${fights + 1}`);
+      await page.goto(new URL(fight.hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await fightLoop(page);
+      fights += 1;
+      await pause(page, 800, 1500);
+      continue;
+    }
 
-  await click('когда начнется представление', '"когда начнется представление"'); // — Хм, уважаемый, когда начнется представление?
-  await click('интересно посмотреть, что это такое', '"интересно посмотреть, что это такое"'); // — Да, интересно посмотреть, что это такое вообще.
-  await click('Рад знакомству', 'Рад знакомству'); // — Рад знакомству
-  await click('люблю посмотр', '"да, люблю посмотреть"'); // — Да, люблю посмотреть.
-  await click('больше посмотреть', '"нет, я больше посмотреть"'); // — Нет, я больше посмотреть.
+    const cont = findOption(links, CONTINUE_TEXTS);
+    if (cont) {
+      idle = 0;
+      await page.goto(new URL(cont.hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 700, 1300);
+      continue;
+    }
 
-  await stepMany(DALEE, 9);
-
-  await click('не хочется', '"нет, не хочется"'); // — Нет, не хочется.
-  await click('займу столик', '"займу столик"'); // — Да, я пожалуй займу столик, спасибо.
-  await stepMany(DALEE, 1);
-
-  await click('сесть за столик к ашаи', 'Сесть за столик к Ашаи'); // Сесть за столик к Ашаи
-  await stepMany(DALEE, 1);
-
-  await click('просто потерять', '"могла его просто потерять"'); // — Она могла его просто потерять?
-  await click('именно украли', '"почему именно украли"'); // — Почему именно украли?
-  await click('зацепки откуда начать поиски', '"какие-то зацепки откуда начать поиски"'); // — Хорошо, я посмотрю что можно сделать. Есть какие-то зацепки откуда начать поиски?
-  await stepMany(DALEE, 1);
-
-  await click('давно вы работаете', '"как давно вы работаете здесь"'); // — Это все? Как давно вы работаете здесь?
-  await click('да уж', 'Да уж'); // Да уж
-  await stepMany(DALEE, 1);
-
-  await click('найти дим пупса', 'Найти Дим Пупса'); // Найти Дим Пупса
-  await click('поговорить об одной из танцовщиц', '"поговорить об одной из танцовщиц"'); // — Я хочу поговорить об одной из танцовщиц.
-  await click('Мара', 'Мара'); // Мара
-  await click('какие у тебя с ней отношения', '"какие у тебя с ней отношения"'); // — А какие у тебя с ней отношения?
-  await click('догадки кто мог украсть', '"есть догадки кто мог украсть"'); // — Да говорят ожерелье у нее пропало... может есть догадки кто мог украсть?
-  await click('спасибо, помог', '"спасибо, помог"'); // — Спасибо, помог.
-
-  await click('поговорить с двумя наемниками', 'Поговорить с двумя наемниками'); // Поговорить с двумя наемниками
-  await stepMany(DALEE, 1);
-
-  await click('хотите их обсудить', '"хотите их обсудить"'); // — Проблем много в этом мире. Хотите их обсудить?
-  await click('однако он беспокоится', '"однако он беспокоится"'); // — Однако он беспокоится.
-
-  await click('незаметно подставить официанту подножку', 'Незаметно подставить официанту подножку'); // Незаметно подставить официанту подножку
-  await stepMany(DALEE, 2);
-
-  // У Цунами здесь просто fightLoop. У AI__ перед любым боем обязателен гейт по HP; квест
-  // длинный и бросать его на середине жалко, поэтому ждём подлечивания, а не выходим.
-  if (!(await questFightHpGate(page, 'Варьете (бой)', QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
-    console.log('Варьете: мало HP перед боем - остаюсь в сцене, продолжу в следующем круге.');
+    if (idle === 0) {
+      idle = 1; // сцена могла ещё не проявиться - перечитаем локацию один раз
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 900, 1500);
+      continue;
+    }
+    console.log(`Варьете: на экране нет ни реплики, ни боя, ни продолжения (боёв ${fights}).`);
+    console.log(`Варьете: ссылки экрана: ${links.map((l) => l.t).join(' | ').slice(0, 400)}`);
     return false;
   }
-  await click('в бой', 'В бой'); // В бой (обычный бой)
-  await fightLoop(page);
-  await click('продолжить квест', 'Продолжить квест'); // Продолжить квест
-  await stepMany(DALEE, 1);
-
-  await click('поговорить с брумом', 'Поговорить с Брумом'); // Поговорить с Брумом
-  await stepMany(DALEE, 2);
-
-  await click('спасибо за информацию', '"спасибо за информацию"'); // — Спасибо за информацию.
-  await click('клэр хитцу', 'Найти эльфийку-фокусницу Клэр хитцу'); // Найти эльфийку-фокусницу Клэр Хитцу
-  await click('присесть рядом', 'Присесть рядом'); // Присесть рядом
-
-  await click('номер был шикарен', '"ваш номер был шикарен"'); // — Ваш номер был шикарен!
-  await click('не трудно выступать после танцовщиц', '"не трудно выступать после танцовщиц"'); // — Не трудно выступать после танцовщиц?
-  await click('танцовщицам вы нрав', '"а девушкам-танцовщицам вы нравитесь"'); // — М-м-м, да... А девушкам-танцовщицам вы нравитесь?
-
-  await click('хочу помочь Маре', '"хочу помочь Маре"'); // — Нет, я просто хочу помочь Маре, у нее пропало ожерелье...
-  await click('очень помогли', '"спасибо, очень помогли"'); // — Спасибо, очень помогли.
-
-  await click('пройти в комнату к маре', 'Пройти в комнату к Маре в комнату'); // Пройти в комнату к Маре в комнату
-
-  // "Свидетели говорят..." -- финальная реплика-описание, не кнопка (в отличие от "Задание
-  // завершено", которое пользователь явно пометил как кнопку).
-  await click('задание завершено', 'задание завершено'); // Задание завершено
-
-  console.log('Варьете: квест завершён.');
-
-  if (await existsAnyText(page, ['В игру', 'в игру'])) {
-    await clickByTexts(page, ['В игру', 'в игру'], 'В игру (after Варьете)');
-    await pause(page, 800, 1600);
-  }
-
-  return true;
+  console.log(`Варьете: ${MAX_SCREENS} экранов подряд без завершения - выхожу, продолжу в следующем круге.`);
+  return false;
 }
