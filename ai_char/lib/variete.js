@@ -73,8 +73,12 @@ async function screenLinks(page) {
 
 const norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
 
-function findOption(links, needles) {
+// used: реплики, которые уже нажимали. Диалог линейный, каждая реплика нужна один раз, а ссылки
+// локаций («Таверна «Три поросенка»») висят на экране и дальше - без этого проход зациклился:
+// Таверна -> Зал варьете -> снова Таверна, восемьдесят экранов подряд (живьём 24.09.2026).
+function findOption(links, needles, used) {
   for (const needle of needles) {
+    if (used && used.has(needle)) continue;
     const n = norm(needle);
     const hit = links.find((l) => !CHROME.has(norm(l.t)) && norm(l.t).includes(n));
     if (hit) return { hit, needle };
@@ -103,6 +107,7 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     varieteStarted = true;
   }
 
+  const used = new Set();
   let fights = 0;
   let idle = 0;
   for (let i = 0; i < MAX_SCREENS; i++) {
@@ -115,9 +120,10 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     }
     const links = await screenLinks(page);
 
-    const option = findOption(links, VARIETE_OPTIONS);
+    const option = findOption(links, VARIETE_OPTIONS, used);
     if (option) {
       idle = 0;
+      used.add(option.needle);
       console.log(`Варьете: ${option.hit.t.slice(0, 60)}`);
       await page.goto(new URL(option.hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await waitOutHorseTravel(page, page.url());
@@ -125,7 +131,7 @@ async function progressVarieteQuest(page, { questCount } = {}) {
       continue;
     }
 
-    const fight = findOption(links, FIGHT_TEXTS);
+    const fight = findOption(links, FIGHT_TEXTS);  // бой может повториться - не помечаем
     if (fight) {
       if (!(await questFightHpGate(page, `Варьете (бой ${fights + 1})`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
         console.log('Варьете: мало HP перед боем - остаюсь в сцене, продолжу в следующем круге.');
@@ -139,7 +145,7 @@ async function progressVarieteQuest(page, { questCount } = {}) {
       continue;
     }
 
-    const cont = findOption(links, CONTINUE_TEXTS);
+    const cont = findOption(links, CONTINUE_TEXTS); // «Далее» повторяется много раз подряд
     if (cont) {
       idle = 0;
       await page.goto(new URL(cont.hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
