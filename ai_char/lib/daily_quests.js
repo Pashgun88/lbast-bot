@@ -28,6 +28,7 @@ const {
 const { recoverToCity } = require('./recovery');
 const { progressShtolniQuest } = require('./shtolni');
 const { progressTavernQuest } = require('./tavern');
+const { progressVarieteQuest } = require('./variete');
 
 // Паша, 21.09.2026: «руму отключи». «Кузница Рума» каждую попытку платит 15 дин за лодку на
 // остров Глинбаг и упирается в fight_not_reached (20.09 это кончилось КО на -22/400). Пока
@@ -43,6 +44,7 @@ const IMPLEMENTED_FIGHT_QUESTS = [
   'Грабим корованы',
   'Кузница Рума',
   'Еда для рыбака',
+  'Варьете',
   'Рыбный ресторан',
   'Трактир «Рыбий глаз»',
   // Асассины ферму не держат: они идут в цикле раньше фермы сами (снова включены 21.09.2026).
@@ -163,6 +165,7 @@ async function runDailyQuests(page, stats) {
     ...(RUMA_FORGE_ENABLED ? ['Кузница Рума'] : []),
     'Еда для рыбака',
     'Грабим корованы',
+    'Варьете',
   ];
 
   const hasAnyTargetQuest = TARGET_Q_QUESTS.some((q) => isQuestInMenu(listedQuests, q));
@@ -225,6 +228,21 @@ async function runDailyQuests(page, stats) {
       console.log(`Quest step skip: Еда для рыбака (need >=10 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
     } else {
       if (await runQuestStepSafe(page, 'Еда для рыбака', () => progressFisherFoodQuest(page, { questCount }))) {
+        didAnything = true;
+      }
+    }
+    await resetToQuestMenu(page, questCount);
+    listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
+  }
+
+  // Варьете (порт из кода Цунами, 24.09.2026). Длинная цепочка диалогов с одним боем, появляется
+  // от случая к случаю. Просим запас побольше - 15 минут резерва, как у Цунами: начинать такой
+  // маршрут перед самым кулдауном бессмысленно.
+  if (isQQuestAllowed('Варьете') && isQuestInMenu(listedQuests, 'Варьете')) {
+    if (typeof reserveMinutes !== 'number' || reserveMinutes < 15) {
+      console.log(`Quest step skip: Варьете (need >=15 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
+    } else {
+      if (await runQuestStepSafe(page, 'Варьете', () => progressVarieteQuest(page, { questCount }))) {
         didAnything = true;
       }
     }
