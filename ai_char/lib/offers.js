@@ -5,9 +5,10 @@
 // (inv.php?mod=offers&go=...&offer_id=...). Свои исходящие (Продавец: AI__) не трогаем.
 // Принимаем только предметы заданий Ордо и только по цене не выше 60 за штуку - как в объявлении.
 
-module.exports = { acceptOrdoOffersIfAny };
+module.exports = { acceptOrdoOffersIfAny, parseOffers };
 
 const { getBodyText, pause } = require('./core');
+const { SELF_NICK } = require('./state');
 
 const OFFERS_URL = 'http://lbast.ru/inv.php?mod=offers';
 // Предметы заданий Ордо экзекуторс («ордо» в разговоре): с главаря и с банды.
@@ -57,30 +58,35 @@ async function countOrdoRings(page) {
   return ringsOwned;
 }
 
-// Разбирает страницу передач: для каждой ссылки «принять» берёт текст её блока.
-async function readOffers(page) {
-  return page.evaluate(() => {
-    const out = [];
-    for (const a of Array.from(document.querySelectorAll('a'))) {
-      const href = a.getAttribute('href') || '';
-      const text = (a.textContent || '').trim();
-      if (!/mod=offers&go=/.test(href)) continue;
-      if (!/^(Принять|Купить|Согласиться|Подтвердить)/i.test(text)) continue;
-      // Блок предложения: поднимаемся, пока в нём не появится «Цена сделки».
-      let el = a.parentElement;
-      for (let i = 0; i < 6 && el && !/Цена сделки/.test(el.textContent || ''); i++) el = el.parentElement;
-      out.push({ href, label: text, block: (el ? el.textContent : '').replace(/\s+/g, ' ').trim() });
-    }
-    return out;
-  }).catch(() => []);
+// Разбор страницы передач. Первая версия поднималась от ссылки «Принять» по родителям, пока в
+// тексте не встретится «Цена сделки» - и на живой странице 23.09.2026 доползла до контейнера со
+// ВСЕЙ страницей: в лог ушло «название» из скриптов шапки на полторы тысячи знаков. Пока покупка
+// была выключена, это было просто некрасиво; с включённой покупкой так недолго заплатить за не то.
+// Поэтому разбираем текст страницы по описанию предложения, а ссылки сопоставляем по порядку,
+// и всё, что распарсилось подозрительно, не принимаем.
+// Регулярка ЛИТЕРАЛОМ, а не строкой: в строке '\s' превращается в 's', и первый вариант молча
+// искал буквы s, S, d вместо классов - ни одно предложение не распозналось бы.
+const OFFER_RE = /([^\n]{2,60}?)\s*Дата:[\s\S]{0,200}?Продавец:\s*(\S+)[\s\S]{0,300}?Кол-во товара:\s*(\d+)[\s\S]{0,200}?Цена сделки:\s*(\d+)/g;
+const MAX_QTY = 20;
+
+// Ссылки «Принять» в порядке документа - в том же порядке, что и описания предложений.
+async function readAcceptLinks(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('a'))
+    .filter((a) => /mod=offers&go=/.test(a.getAttribute('href') || ''))
+    .filter((a) => /^(Принять|Купить|Согласиться|Подтвердить)/i.test((a.textContent || '').trim()))
+    .map((a) => ({ href: a.getAttribute('href'), label: (a.textContent || '').trim() }))).catch(() => []);
 }
 
-function parseBlock(block) {
-  const name = (block.match(/^(.*?)\s*Дата:/) || [])[1] || '';
-  const seller = (block.match(/Продавец:\s*(\S+)/) || [])[1] || '';
-  const qty = Number((block.match(/Кол-во товара:\s*(\d+)/) || [])[1] || 1);
-  const price = Number((block.match(/Цена сделки:\s*(\d+)/) || [])[1] || 0);
-  return { name, seller, qty, price };
+function parseOffers(pageText) {
+  const out = [];
+  OFFER_RE.lastIndex = 0;
+  let m;
+  while ((m = OFFER_RE.exec(pageText)) !== null) {
+    out.push({
+      name: m[1].trim(), seller: m[2].trim(), qty: Number(m[3]), price: Number(m[4]),
+    });
+  }
+  return out;
 }
 
 async function acceptOrdoOffersIfAny(page) {
@@ -91,35 +97,46 @@ async function acceptOrdoOffersIfAny(page) {
   if (!/Цена сделки/.test(pageText)) return false;
   const money = Number((pageText.match(/У вас\s+(\d+)\s+дин/) || [])[1] || 0);
 
-  let offers = await readOffers(page);
-  if (offers.length === 0) return false;
+  const links = await readAcceptLinks(page);
+  const offers = parseOffers(pageText);
+  if (!links.length || !offers.length) return false;
+  if (links.length !== offers.length) {
+    console.log(`Передачи: ${offers.length} описаний и ${links.length} кнопок «Принять» - не берусь сопоставлять, ничего не принимаю.`);
+    return false;
+  }
   if (!ORDO_BUYING_ENABLED) {
+    for (const o of offers) console.log(`Передачи: лежит «${o.name}» x${o.qty} от ${o.seller} за ${o.price} дин - по приказу Паши ничего не принимаю.`);
+    return false;
+  }
+  const hasOrdo = offers.some((o) => ORDO_ITEM_RE.test(o.name) && o.seller !== SELF_NICK);
+  if (!hasOrdo) {
     for (const o of offers) {
-      const { name, seller, qty, price } = parseBlock(o.block);
-      console.log(`Передачи: лежит «${name}» x${qty} от ${seller} за ${price} дин - по приказу Паши ничего не принимаю.`);
+      if (o.seller === SELF_NICK) continue; // своё исходящее предложение
+      console.log(`Передачи: «${o.name}» от ${o.seller} за ${o.price} дин - это не ордо, не принимаю (жду тебя).`);
     }
     return false;
   }
-  const hasOrdo = offers.some((o) => ORDO_ITEM_RE.test(parseBlock(o.block).name));
-  if (hasOrdo) {
-    const rings = await countOrdoRings(page);
-    if (rings >= RING_GOAL) {
-      console.log(`Передачи: колец Ордо уже ${rings} из ${RING_GOAL} - на крафт хватает, больше не скупаю.`);
-      return false;
-    }
-    await page.goto(OFFERS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    offers = await readOffers(page);
-    console.log(`Передачи: колец Ордо ${rings}/${RING_GOAL} - беру предметы задания, пока хватает денег.`);
+  const rings = await countOrdoRings(page);
+  if (rings >= RING_GOAL) {
+    console.log(`Передачи: колец Ордо уже ${rings} из ${RING_GOAL} - на крафт хватает, больше не скупаю.`);
+    return false;
   }
+  console.log(`Передачи: колец Ордо ${rings}/${RING_GOAL} - беру предметы задания, пока хватает денег.`);
+
   let accepted = 0;
   let spent = 0;
-  for (const offer of offers) {
-    const { name, seller, qty, price } = parseBlock(offer.block);
+  for (let i = 0; i < offers.length; i++) {
+    const { name, seller, qty, price } = offers[i];
+    if (seller === SELF_NICK) continue; // своё исходящее - не трогаем
     if (!ORDO_ITEM_RE.test(name)) {
       console.log(`Передачи: «${name}» от ${seller} за ${price} дин - это не ордо, не принимаю (жду тебя).`);
       continue;
     }
-    const per = qty > 0 ? price / qty : price;
+    if (!(qty > 0 && qty <= MAX_QTY) || !(price >= 0)) {
+      console.log(`Передачи: «${name}» разобралось странно (кол-во ${qty}, цена ${price}) - не принимаю.`);
+      continue;
+    }
+    const per = price / qty;
     if (per > MAX_PRICE_PER_ITEM) {
       console.log(`Передачи: «${name}» от ${seller} по ${Math.round(per)} дин за штуку - дороже объявленных ${MAX_PRICE_PER_ITEM}, не принимаю.`);
       continue;
@@ -128,14 +145,16 @@ async function acceptOrdoOffersIfAny(page) {
       console.log(`Передачи: «${name}» за ${price} дин не осилил - на руках ${money - spent} дин, ниже ${MONEY_FLOOR} не опускаюсь (эль и эликсиры).`);
       continue;
     }
-    await page.goto(new URL(offer.href, OFFERS_URL).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(new URL(links[i].href, OFFERS_URL).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await pause(page, 700, 1300);
     const after = (await getBodyText(page)).replace(/\s+/g, ' ');
     console.log(`Передачи: принял «${name}» x${qty} от ${seller} за ${price} дин -> ${after.slice(0, 160)}`);
     accepted += 1;
     spent += price;
-    await page.goto(OFFERS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    offers = await readOffers(page); // список сдвинулся - перечитываем, но идём по своей копии дальше
+    ringsCheckedAt = 0; // следующая проверка колец - заново
+    // Список после принятия сдвигается, поэтому дальше в этом заходе не идём: остальное возьмём
+    // в следующей проверке через 10 минут, уже по свежей странице.
+    break;
   }
   if (accepted) console.log(`Передачи: принято ${accepted} предложение(й) на ${spent} дин.`);
   return accepted > 0;
