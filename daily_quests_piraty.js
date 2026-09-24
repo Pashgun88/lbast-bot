@@ -216,10 +216,11 @@ let schoolTempleDayKey = '';
 let schoolTempleDoneToday = false;
 // Ордо Экзекуторс: у каждого из двух заданий свой запрет после победы (час на главаря, 10 мин на
 // банду), плюс бэкоффы на случай "не выдали задание"/"кончился резерв". Ключ -> timestamp, раньше
-// которого к башне не ходим. ordoItemsToHandIn -- сколько квестовых предметов лежит в инвентаре
-// несданными (сдача даёт +3 морали и медаль ордо), переживает перезапуск процесса.
+// которого к башне не ходим. ordoItemsCollected -- счётчик квестовых предметов, добытых ботом
+// (Медальон бандита / Костяная цепь бандита); мы их НЕ сдаём, а копим, поэтому это просто
+// накопительный счётчик для лога, переживающий перезапуск процесса.
 let ordoNextTryAt = {};
-let ordoItemsToHandIn = 0;
+let ordoItemsCollected = 0;
 // Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
 // уличного зазывалы и закэшированные, чтобы не ходить к нему каждый цикл (см. комментарий у
 // goToMisttownSecretArea/runMisttownSecretEventIfDue). misttownSecretAttemptedAt хранит,
@@ -306,7 +307,7 @@ function restoreDailyQuestState() {
   if (typeof s.schoolTempleDoneToday === 'boolean') schoolTempleDoneToday = s.schoolTempleDoneToday;
 
   if (s.ordoNextTryAt && typeof s.ordoNextTryAt === 'object') ordoNextTryAt = s.ordoNextTryAt;
-  if (Number.isFinite(s.ordoItemsToHandIn)) ordoItemsToHandIn = s.ordoItemsToHandIn;
+  if (Number.isFinite(s.ordoItemsCollected)) ordoItemsCollected = s.ordoItemsCollected;
 
   if (s.misttownSecretDueAt && typeof s.misttownSecretDueAt === 'object') misttownSecretDueAt = s.misttownSecretDueAt;
   if (s.misttownSecretAttemptedAt && typeof s.misttownSecretAttemptedAt === 'object') misttownSecretAttemptedAt = s.misttownSecretAttemptedAt;
@@ -354,7 +355,7 @@ function persistDailyQuestState() {
     elkHuntDayKey, elkHuntDoneToday,
     demonHuntDayKey, demonHuntDoneToday,
     schoolTempleDayKey, schoolTempleDoneToday,
-    ordoNextTryAt, ordoItemsToHandIn,
+    ordoNextTryAt, ordoItemsCollected,
     misttownSecretDueAt, misttownSecretAttemptedAt, lastMisttownSecretCheckAt, needsArrowFarm,
     extraDailyDayKey, extraDailyDoneToday,
     thursdayDayKey, thursdayGravediggerDoneToday, thursdayButcherFightsToday, thursdayWitchFightsToday,
@@ -6361,11 +6362,11 @@ async function runSchoolTempleQuest(page) {
 // Банда (zad=2, Пещера бандитов в горах Дарии, конь lway=q2001_2):
 //   Добить бандитов -> В бой! -> Костяная цепь бандита, запрет 10 мин.
 //
-// Сдача в башне даёт +3 морали и медаль ордо (каждые 8 медалей -> случайная вещь комплекта на
-// 6 уровень). У AI-персонажа сдача была закрыта уровнем (он 5-й), у Цунами 30-й -- сдаём.
-// ВНИМАНИЕ: точный текст ссылки сдачи вживую НЕ проверен ни разу. Поэтому перебираем несколько
-// формулировок, а если ни одна не нашлась, но предмет на руках есть -- печатаем экран башни и её
-// ссылки, чтобы достать настоящую надпись из лога и дописать её в ORDO_HANDIN_TEXTS одной строкой.
+// ПРЕДМЕТЫ ЗАДАНИЯ НЕ СДАЁМ. Сдача в башне дала бы +3 морали и медаль ордо, но Паша 24.09.2026:
+// "Цунами сдал квестовый предмет, а нужно их собирать" -- Медальон бандита и Костяная цепь
+// бандита передаются и продаются, поэтому копим их в инвентаре. Слот "Текущее задание"
+// освобождается сразу после победы, предмет в сумке ничему не мешает, и второй заход в башню
+// после боя не нужен (это экономит ещё и резерв на обратную дорогу).
 // ===================================================================================
 const ORDO_TOWER = 'Башня Ордо Экзекуторс';
 const ORDO_MIN_HP = 2000;
@@ -6402,13 +6403,6 @@ const ORDO_MISSION_STEPS = [
   'Добить бандитов',
   'Напасть',
   'В бой!',
-];
-
-const ORDO_HANDIN_TEXTS = [
-  'Доложить о выполнении',
-  'Доложить о задании',
-  'Сдать задание',
-  'Доложить',
 ];
 
 function ordoRestMinutesFromText(text) {
@@ -6460,49 +6454,10 @@ async function walkToOrdoTower(page) {
   return text;
 }
 
-// Сдать всё, что накопилось. Вызывается, когда мы И ТАК стоим в башне (перед взятием задания и
-// сразу после победы), отдельных поездок ради сдачи не делаем.
-async function handInOrdoItemsAtTower(page, towerText = null) {
-  if (ordoItemsToHandIn <= 0) return false;
-
-  let handed = 0;
-  for (let i = 0; i < Math.min(ordoItemsToHandIn, 4); i++) {
-    const text = i === 0 && towerText ? towerText : await getBodyText(page);
-    const linkText = ORDO_HANDIN_TEXTS.find((t) => text.includes(t));
-
-    if (!linkText) {
-      if (handed === 0) {
-        // Предмет на руках есть, а ссылки не видно -- значит настоящая надпись другая. Печатаем
-        // экран и ссылки башни ОДИН раз за визит, чтобы вытащить её из лога и дописать в список.
-        console.log(`Ордо: предметов к сдаче ${ordoItemsToHandIn}, но ссылки сдачи на экране нет. Экран: ${snapshotText(text, 400)}`);
-        const linkTexts = await page
-          .$$eval('a', (as) => as.map((a) => (a.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))
-          .catch(() => []);
-        console.log(`Ордо: ссылки башни: ${linkTexts.join(' | ')}`);
-      }
-      break;
-    }
-
-    const ok = await clickByTexts(page, [linkText, linkText.toLowerCase()], `Ордо: ${linkText}`);
-    if (!ok) break;
-    await pause(page, 800, 1500);
-    handed += 1;
-    console.log(`Ордо: сдал предмет задания (${snapshotText(await getBodyText(page), 200)})`);
-  }
-
-  if (handed > 0) {
-    ordoItemsToHandIn = Math.max(0, ordoItemsToHandIn - handed);
-    persistDailyQuestState();
-    console.log(`Ордо: сдано предметов ${handed}, осталось несданных ${ordoItemsToHandIn}`);
-  }
-  return handed > 0;
-}
-
 async function progressOrdoQuest(page, q) {
   console.log(`${q.label}: маршрут Стоунгард -> ${ORDO_TOWER_ROUTE.join(' -> ')} -> "${q.take}" -> конь q2001_${q.zad} -> бой`);
 
-  const towerText = await walkToOrdoTower(page);
-  await handInOrdoItemsAtTower(page, towerText);
+  await walkToOrdoTower(page);
 
   const taken = await clickByTexts(page, [q.take, q.take.toLowerCase()], `Ордо: взять "${q.take}"`);
   if (!taken) {
@@ -6535,7 +6490,6 @@ async function progressOrdoQuest(page, q) {
   await waitOutOrdoHorseTravel(page);
 
   let fought = false;
-  let outOfReserve = false;
 
   for (let i = 0; i < 14; i++) {
     throwIfPausedByManager(`${q.label}: шаг миссии`);
@@ -6544,7 +6498,6 @@ async function progressOrdoQuest(page, q) {
     const restNow = ordoRestMinutesFromText(text);
     if (restNow !== null) {
       console.log(`${q.label}: кончился резерв по дороге (отдохнуть ещё ${restNow} мин) -> прерываю маршрут`);
-      outOfReserve = true;
       delayOrdoQuest(q.key, restNow + 2, 'кончился резерв по дороге');
       break;
     }
@@ -6571,23 +6524,11 @@ async function progressOrdoQuest(page, q) {
     return false;
   }
 
-  ordoItemsToHandIn += 1;
+  ordoItemsCollected += 1;
   delayOrdoQuest(q.key, q.banMinutes, 'запрет после победы');
-  console.log(`${q.label}: бой пройден, предмет задания в инвентаре (несданных: ${ordoItemsToHandIn})`);
-
-  if (outOfReserve) {
-    console.log(`${q.label}: на сдачу резерва уже нет -- предмет полежит в инвентаре до следующего визита в башню`);
-    return true;
-  }
-
-  // Сдаём сразу: обратная дорога -- те же 4 шага, а мораль +3 и медаль ждать смысла нет.
-  try {
-    await walkToOrdoTower(page);
-    await handInOrdoItemsAtTower(page);
-  } catch (e) {
-    if (isScenarioPausedError(e)) throw e;
-    console.log(`${q.label}: до башни за сдачей не дошёл (${e.message}) -- предмет остаётся в инвентаре, сдам при следующем визите`);
-  }
+  // Никакой сдачи: предмет остаётся в сумке (Паша: "нужно их собирать"). Слот задания игра
+  // освободила сама после победы, так что возвращаться в башню незачем.
+  console.log(`${q.label}: бой пройден, предмет задания в инвентаре (всего собрано за время работы бота: ${ordoItemsCollected})`);
   return true;
 }
 
