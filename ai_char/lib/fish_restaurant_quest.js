@@ -363,6 +363,15 @@ async function runFishRestaurantQuestIfAvailable(page) {
       S.fishRestaurantFocusStartedAt = 0;
       S.fishRestaurantSuppressedUntil = 0;
       persistDailyQuestState();
+    } else {
+      // Проход не продвинулся. Раньше фокус в таком случае висел до таймаута (часы), и всё это
+      // время исключительный режим не пускал остальные квесты - Паша 24.09.2026 прислал список:
+      // Харчевня, Еда для рыбака, Грабим корованы и прочее висели открытыми весь день.
+      // Не вышло - отпускаем фокус и не лезем в ресторан полчаса, пусть работают другие квесты.
+      S.fishRestaurantFocusStartedAt = 0;
+      S.fishRestaurantSuppressedUntil = Date.now() + 30 * 60 * 1000;
+      persistDailyQuestState();
+      console.log('Fish Restaurant: проход не продвинулся - отпускаю фокус на 30 минут, чтобы шли другие квесты.');
     }
     return Boolean(ok);
   }
