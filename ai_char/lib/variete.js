@@ -9,6 +9,7 @@ module.exports = { progressVarieteQuest };
 
 const { QUEST_FIGHT_HP_FLOOR } = require('./state');
 const { pause } = require('./core');
+const { waitOutHorseTravel } = require('./assassins');
 const { fightLoop } = require('./fight');
 // tryPerformStepOptional у AI__ живёт в ./hp, а не в ./ui (у Цунами всё в одном файле) - на этом
 // порт и падал: «Квест: tryPerformStepOptional is not a function» на каждом заходе.
@@ -39,6 +40,10 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     ],
     waitAfterClickMs: 3000,
   });
+  // «Выполнение» сажает на коня: экран «В пути еще N сек.». У Цунами этого ожидания нет, и порт
+  // падал на следующем же шаге - «Не найден шаг Амулет ... В пути еще 1 сек.» (живьём 24.09.2026).
+  await waitOutHorseTravel(page, page.url());
+  await pause(page, 700, 1300);
 
   async function click(text, label) {
     await performStep(page, {
