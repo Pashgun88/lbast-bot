@@ -334,7 +334,11 @@ function canRunFishEyeRewardNow() {
   return S.fishEyeFightsToday >= FISH_EYE_DAILY_FIGHT_LIMIT && !S.fishEyeRewardClaimedToday;
 }
 
-async function runNonQQuestSafe(page, label, fn) {
+// keepPlace: не убегать в город при ошибке. Нужно эскортным сценам (Рыбный ресторан): сцена
+// продолжается ссылкой «Продолжить квест» С ТОЙ ЖЕ локации, а recoverToCity уводит персонажа и
+// маршрут приходится начинать заново. Паша 24.09.2026: «рыбный ресторан ты не доделал до конца и
+// прыгнул в город».
+async function runNonQQuestSafe(page, label, fn, { keepPlace = false } = {}) {
   if (S.characterDownDetected) {
     console.log(`${label}: пропускаю, персонаж выбыл из строя.`);
     return false;
@@ -347,6 +351,10 @@ async function runNonQQuestSafe(page, label, fn) {
   } catch (e) {
     console.log(`${label} error: ${e.message}`);
     noteHpFromPageText(e.message, label);
+    if (keepPlace) {
+      console.log(`${label}: остаюсь на месте - сцену продолжу в следующем круге.`);
+      return null;
+    }
     await recoverToCity(page, `${label}: ${e.message}`);
     noteHpFromPageText(await getBodyText(page), label);
     return null; // indicates recovery happened

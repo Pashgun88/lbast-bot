@@ -216,79 +216,84 @@ async function skipTravelVignettes(page, targetTexts, maxAttempts = 8) {
   }
 }
 
-// Засада по ходу квеста. На экранах маршрута игра иногда сразу ставит бой: «ХОЛМЫ. В этот раз он
-// послушался и выскочил на берег. Следом за ним вылетел пятнистый аллигатор. В бой!». Это часть
-// квеста, а не случайный бот, но skipTravelVignettes такие экраны не трогает (и правильно - он не
-// имеет права начинать бой), шаг «Идти направо за Яшкой» не находится, маршрут падает, а
-// recoverToCity уводит персонажа с локации. Паша 24.09.2026: «ты начинаешь выполнять рыбный
-// ресторан и уходишь с локации после 1го боя. Так ты никогда не выполнишь».
-// Поэтому засаду принимаем ЗДЕСЬ, с гейтом по HP, и продолжаем маршрут.
-async function fightQuestAmbushIfAny(page, label) {
-  const text = await getBodyText(page);
-  if (!/В\s*бой/i.test(text)) return false;
-  if (!(await questFightHpGate(page, `${label} (засада)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
-  console.log(`${label}: на экране засада - принимаю бой.`);
-  if (!(await clickByTexts(page, ['В бой!', 'В бой'], `${label}: В бой`))) return false;
-  await fightLoop(page);
-  await pause(page, 800, 1500);
-  // После боя сцена либо идёт дальше сама, либо ждёт «Продолжить квест» / «Далее».
-  await clickByTexts(page, ['Продолжить квест', 'Далее'], `${label}: продолжить после засады`).catch(() => {});
-  await pause(page, 600, 1200);
-  return true;
-}
+// Награда №1: ветка "Болота", по пути засада с аллигатором и три нарастающих боя с призраком.
+// 24.09.2026 переписано: раньше это была жёсткая цепочка performStep по одному шагу. Любой сбой
+// (засада, прерванная сцена) ронял её на первом же шаге, а следующий круг начинал маршрут заново
+// с развилки - Паша дважды про это сказал: «ты начинаешь выполнять рыбный ресторан и уходишь с
+// локации после 1го боя», «рыбный ресторан ты не доделал до конца и прыгнул в город».
+// Теперь идём ПО ЭКРАНУ: смотрим, какие ссылки есть, и делаем то, что уместно. Такой проход
+// подхватывает сцену с любого места - в том числе после боя и после перезапуска драйвера.
+const REWARD1_STEPS = [
+  'Идти направо за Яшкой', 'Забрать налево', 'Шагнуть вперёд', 'Шагнуть вперед',
+  'Мы выберем то, что нам пригодится', 'Идти к лианам', 'Попробовать встать',
+];
+const REWARD1_FIGHT_LINKS = ['Напасть', 'В бой!', 'В бой'];
+const REWARD1_MAX_SCREENS = 40;
 
-// Шаг маршрута. Порядок важен: сперва виньетки, потом проверяем, есть ли на экране сам шаг, и
-// только если его нет - смотрим, не засада ли это. Так бой начинается лишь там, где идти больше
-// некуда, и мы не примем бой на экране, где он был лишь одним из вариантов.
-async function routeStep(page, label, stepName, currentTexts) {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    await skipTravelVignettes(page, currentTexts);
-    if (await existsAnyText(page, currentTexts)) break;
-    if (!(await fightQuestAmbushIfAny(page, label))) break;
-  }
-  await performStep(page, { stepName, currentTexts, retries: 3 });
-  return true;
-}
-
-// Награда №1: "Без награды" (только дины) - ветка "Болота", 3 нарастающих боя с призраком.
 async function progressFishRestaurantReward1(page) {
   const FR = 'Рыбный ресторан reward #1';
   await goToFishRestaurantBranch(page, 'Болота', ['Веди-ка ты меня на болота']);
 
-  await routeStep(page, FR, 'Идти направо за Яшкой', ['Идти направо за Яшкой']);
+  let fights = 0;
+  let idle = 0;
+  for (let i = 0; i < REWARD1_MAX_SCREENS; i++) {
+    await skipTravelVignettes(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS]);
+    const text = await getBodyText(page);
+    if (/Задание выполнено|Задание завершено|Квест выполнен/i.test(text)) {
+      console.log(`${FR}: задание выполнено (боёв ${fights}).`);
+      return true;
+    }
+    const links = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') || '' }))
+      .filter((x) => x.t && x.h)).catch(() => []);
+    const find = (names) => links.find((l) => names.some((n) => l.t === n));
 
-  await routeStep(page, FR, 'Забрать налево', ['Забрать налево']);
+    const step = find(REWARD1_STEPS);
+    if (step) {
+      idle = 0;
+      console.log(`${FR}: ${step.t}`);
+      await page.goto(new URL(step.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 700, 1300);
+      continue;
+    }
 
-  await routeStep(page, FR, 'Шагнуть вперёд', ['Шагнуть вперёд', 'Шагнуть вперед']);
+    const fight = find(REWARD1_FIGHT_LINKS);
+    if (fight) {
+      idle = 0;
+      // Бой в сцене бросать нельзя - ждём подлечивания, а не убегаем (эскорт-квест).
+      if (!(await questFightHpGate(page, `${FR} (бой ${fights + 1})`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+        console.log(`${FR}: HP мало перед боем ${fights + 1} - остаюсь в сцене, продолжу в следующем круге.`);
+        return false;
+      }
+      console.log(`${FR}: бой ${fights + 1} (${fight.t})`);
+      await page.goto(new URL(fight.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await fightLoop(page);
+      fights += 1;
+      await pause(page, 800, 1500);
+      continue;
+    }
 
-  await routeStep(page, FR, 'Мы выберем то, что нам пригодится', ['Мы выберем то, что нам пригодится']);
+    // После боя игра выкидывает на локацию, а сцена ждёт на ссылке «Продолжить квест».
+    const cont = find(['Продолжить квест']);
+    if (cont) {
+      idle = 0;
+      await page.goto(new URL(cont.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 700, 1300);
+      continue;
+    }
 
-  await routeStep(page, FR, 'Идти к лианам', ['Идти к лианам']);
-
-  await routeStep(page, FR, 'Попробовать встать', ['Попробовать встать']);
-
-  // Три боя подряд, раньше шли вообще без проверки HP (в утреннем аудите гейтов этот маршрут
-  // пропущен). waitForRecovery: маршрут эскортный и бросать его на середине нельзя - Паша,
-  // 17.09.2026: "рыбный ресторан ты начинал делать и убежал на другой квест". Поэтому при
-  // низком HP ждём подлечивания между боями, а не выходим из квеста.
-  if (!(await questFightHpGate(page, `${FR} (бой 1/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
-  console.log('Fish Restaurant reward #1: бой 1/3 (Призрак в топях)');
-  await fightLoop(page);
-  await pause(page, 800, 1500);
-
-  await routeStep(page, FR, 'Напасть (1)', ['Напасть']);
-  if (!(await questFightHpGate(page, `${FR} (бой 2/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
-  console.log('Fish Restaurant reward #1: бой 2/3 (сложный Призрак в топях)');
-  await fightLoop(page);
-  await pause(page, 800, 1500);
-
-  await routeStep(page, FR, 'Напасть (2)', ['Напасть']);
-  if (!(await questFightHpGate(page, `${FR} (бой 3/3)`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) return false;
-  console.log('Fish Restaurant reward #1: бой 3/3 (сложный Призрак в топях)');
-  await fightLoop(page);
-
-  console.log('Fish Restaurant reward #1: проход завершён.');
-  return true;
+    // Нечего нажать. Один раз перечитываем локацию (сцена могла ещё не проявиться), потом выходим.
+    if (idle === 0) {
+      idle = 1;
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 900, 1500);
+      continue;
+    }
+    console.log(`${FR}: на экране нет ни шага, ни боя, ни продолжения (боёв ${fights}) - оставляю как есть.`);
+    return fights >= 3;
+  }
+  console.log(`${FR}: ${REWARD1_MAX_SCREENS} экранов подряд без конца квеста - выхожу, продолжу в следующем круге.`);
+  return false;
 }
 
 const FISH_RESTAURANT_REWARD_HANDLERS = {
@@ -343,7 +348,8 @@ async function runFishRestaurantQuestIfAvailable(page) {
     // Берём фокус на время прохода: пока он держится, isExclusiveQQuestInProgress не даст
     // начать другие квесты, и маршрут доводится до конца (или до таймаута в 30 минут).
     if (!S.fishRestaurantFocusStartedAt) S.fishRestaurantFocusStartedAt = Date.now();
-    const ok = await runNonQQuestSafe(page, `Fish Restaurant reward #${S.fishRestaurantNextRewardNumber}`, () => handler(page));
+    const ok = await runNonQQuestSafe(page, `Fish Restaurant reward #${S.fishRestaurantNextRewardNumber}`,
+      () => handler(page), { keepPlace: true });
     if (ok) {
       S.fishRestaurantDoneToday = true;
       S.fishRestaurantNextRewardNumber += 1;
