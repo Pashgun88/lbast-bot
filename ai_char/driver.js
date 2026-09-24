@@ -702,6 +702,13 @@ async function loginIfNeeded(page) {
       r = await runCycleStep(page, 'Сдача предметов Ордо', () => runOrdoMedalTurnIn(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
+      // Демон - РАНЬШЕ Ордо: слот «ответственного задания» один на двоих, Ордо можно брать
+      // сколько угодно, а демон даётся раз в сутки. Пока он шёл после Ордо, задание на демона
+      // просто не бралось («у вас уже есть задание»), и у озера не было камышей.
+      r = await runCycleStep(page, 'demon lake quest step', () => runDemonLakeQuestIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
       r = await runCycleStep(page, 'Ордо экзекуторс', () => runOrdoQuestsIfAvailable(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
@@ -719,10 +726,6 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'gallery quest step', () => runGalleryQuestIfAvailable(page));
-      didAnything = didAnything || r.didAnything;
-      if (r.ko) continue;
-
-      r = await runCycleStep(page, 'demon lake quest step', () => runDemonLakeQuestIfAvailable(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
