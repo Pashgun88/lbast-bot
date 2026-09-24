@@ -112,6 +112,10 @@ async function progressVarieteQuest(page, { questCount } = {}) {
   let idle = 0;
   for (let i = 0; i < MAX_SCREENS; i++) {
     const text = await getBodyText(page);
+    if (i > 0 && i % 10 === 0) {
+      const seen = await screenLinks(page);
+      console.log(`Варьете: экран ${i}, ссылки: ${seen.map((l) => l.t).join(' | ').slice(0, 300)}`);
+    }
     if (DONE_RE.test(text)) {
       console.log(`Варьете: квест завершён (боёв ${fights}).`);
       varieteStarted = false;
@@ -148,6 +152,9 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     const cont = findOption(links, CONTINUE_TEXTS); // «Далее» повторяется много раз подряд
     if (cont) {
       idle = 0;
+      // Логируем и «Далее»: без этого проход 80 экранов молчал в логе, и было не понять, что он
+      // жмёт по кругу (24.09.2026).
+      console.log(`Варьете: ${cont.hit.t.slice(0, 40)} (продолжение)`);
       await page.goto(new URL(cont.hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 700, 1300);
       continue;
