@@ -7221,6 +7221,28 @@ function msUntilNextMisttownPrePosition() {
   return soonest === null ? null : soonest - now;
 }
 
+// Насколько близко должно быть событие, чтобы ожидание считалось активным -- то есть чтобы имело
+// смысл выводить окно браузера вперёд и пульсировать часто.
+const NIGHT_WAIT_ACTIVE_WINDOW_MS = 60 * 60 * 1000;
+// Редкий пульс холостого ожидания (когда до события далеко).
+const NIGHT_WAIT_IDLE_MIN_MS = 45 * 60 * 1000;
+const NIGHT_WAIT_IDLE_MAX_MS = 60 * 60 * 1000;
+
+// Сон в режиме ночного ожидания. Раньше он просто брал обычную задержку цикла (14-21 мин)
+// независимо от того, через сколько событие -- и бот перезагружал страницу каждые ~18 минут,
+// хотя ближайшее событие могло быть через двое суток (Паша, 24.09.2026: "зачем так часто
+// обновляется в игре когда ждет событие? если ближайшее не сегодня даже"). Расписание уже лежит
+// в состоянии и перечитывается раз в сутки, так что частый пульс нужен только ради отлова
+// входящей атаки -- на холостом ходу хватает раза в час. Клампы ниже (до пре-позиции и до старта
+// обычного сценария) всё равно укоротят сон, если событие окажется ближе.
+function nightWaitSleepMs() {
+  const untilPre = msUntilNextMisttownPrePosition();
+  if (untilPre !== null && untilPre <= NIGHT_WAIT_ACTIVE_WINDOW_MS) {
+    return getRandomCycleDelayMs();
+  }
+  return NIGHT_WAIT_IDLE_MIN_MS + Math.round(Math.random() * (NIGHT_WAIT_IDLE_MAX_MS - NIGHT_WAIT_IDLE_MIN_MS));
+}
+
 // Подводит следующее пробуждение цикла к моменту, когда пора вставать на уличную точку заранее --
 // вызывается в конце каждого цикла (см. doScenario), не только когда событие уже "due".
 function scheduleMisttownSecretWakeupIfSoon() {
@@ -9402,7 +9424,13 @@ async function returnToLocationPage(page) {
           continue;
         }
 
-        await page.bringToFront().catch(() => {});
+        // Окно браузера дёргаем вперёд только когда событие действительно близко и нам вот-вот
+        // придётся кликать. На холостых пульсах окно не трогаем: оно выпрыгивало поверх всего
+        // каждые 15-20 минут, хотя до ближайшего события могли быть сутки.
+        const untilPreNow = msUntilNextMisttownPrePosition();
+        if (untilPreNow !== null && untilPreNow <= NIGHT_WAIT_ACTIVE_WINDOW_MS) {
+          await page.bringToFront().catch(() => {});
+        }
 
         await runMisttownSecretEventIfDue(page);
         scheduleMisttownSecretWakeupIfSoon();
@@ -9410,7 +9438,7 @@ async function returnToLocationPage(page) {
         const remainingMs = FARM_START_AFTER_MS - Date.now();
         if (remainingMs <= 0) break;
 
-        let waitMs = Math.min(nextCycleDelayOverrideMs ?? getRandomCycleDelayMs(), remainingMs);
+        let waitMs = Math.min(nextCycleDelayOverrideMs ?? nightWaitSleepMs(), remainingMs);
         nextCycleDelayOverrideMs = null;
 
         // scheduleMisttownSecretWakeupIfSoon подводит пробуждение к событию только за 15 минут до
@@ -9421,7 +9449,10 @@ async function returnToLocationPage(page) {
         if (untilPrePosition !== null) {
           waitMs = Math.min(waitMs, Math.max(30 * 1000, untilPrePosition));
         }
-        console.log(`Ночное ожидание: сплю ${Math.round(waitMs / 60000)} мин (до старта обычного сценария ${Math.round(remainingMs / 60000)} мин)`);
+        const untilPreLog = untilPrePosition === null
+          ? 'ближайшее событие не запланировано'
+          : `до ближайшего события ${(untilPrePosition / 3600000).toFixed(1)} ч`;
+        console.log(`Ночное ожидание: сплю ${Math.round(waitMs / 60000)} мин (${untilPreLog}; до старта обычного сценария ${Math.round(remainingMs / 60000)} мин)`);
         await sleepPlain(waitMs);
 
         if (Date.now() >= FARM_START_AFTER_MS) break;
