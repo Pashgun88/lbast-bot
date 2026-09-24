@@ -10,9 +10,11 @@ module.exports = { progressVarieteQuest };
 const { QUEST_FIGHT_HP_FLOOR } = require('./state');
 const { pause } = require('./core');
 const { fightLoop } = require('./fight');
-const { questFightHpGate } = require('./hp');
+// tryPerformStepOptional у AI__ живёт в ./hp, а не в ./ui (у Цунами всё в одном файле) - на этом
+// порт и падал: «Квест: tryPerformStepOptional is not a function» на каждом заходе.
+const { questFightHpGate, tryPerformStepOptional } = require('./hp');
 const { clickInfoForQuest } = require('./quest_menu');
-const { clickByTexts, existsAnyText, performStep, tryPerformStepOptional } = require('./ui');
+const { clickByTexts, existsAnyText, performStep } = require('./ui');
 
 async function progressVarieteQuest(page, { questCount } = {}) {
   const QUEST = 'Варьете'; // "Варьете"
