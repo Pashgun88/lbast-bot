@@ -6,10 +6,13 @@ const { chromium } = require('playwright');
 const m = require('../module');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const ALLOW = new Set([
-  'Выделанная кожа бизона',
-  'Выделанная Кожа кабана',
-  'Руна силы ветра (6)',
+// Название -> сколько штук продать. Для вещей Ордо строго по одной: надетые экземпляры в списке
+// продажи не появляются, но лимит - вторая страховка, чтобы не раздеть персонажа.
+const ALLOW = new Map([
+  ['Боевой посох Ордо экзекуторс', 1],
+  ['Кираса ордо экзекуторс', 1],
+  ['Щит ухода', 1],
+  ['Сапоги защиты', 1],
 ]);
 const MAX_SALES = 40;
 
@@ -43,7 +46,7 @@ const MAX_SALES = 40;
             if (names.includes(t)) return { t, h };
           }
           return null;
-        }, [...ALLOW]);
+        }, [...ALLOW.keys()].filter((n) => (ALLOW.get(n) || 0) > 0));
         if (target) break;
       }
       if (!target) { console.log('больше нечего продавать из списка.'); break; }
@@ -55,7 +58,9 @@ const MAX_SALES = 40;
       if (!confirm) { console.log(`нет подтверждения «- Да» для ${target.t} - останавливаюсь.`); break; }
       await open(new URL(confirm, page.url()).href);
       sold += 1;
-      console.log(`продал: ${target.t}`);
+      ALLOW.set(target.t, (ALLOW.get(target.t) || 1) - 1);
+      console.log(`продал: ${target.t} (осталось продать по этому названию: ${ALLOW.get(target.t)})`);
+      if ([...ALLOW.values()].every((n) => n <= 0)) { console.log('лимиты по списку исчерпаны.'); break; }
     }
     await open('shop.php?mod=prodat');
     const after = await money();
