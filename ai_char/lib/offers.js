@@ -168,11 +168,13 @@ async function acceptOrdoOffersIfAny(page) {
     // 24.09.2026: игра спрашивает «Вы уверены что хотите...» - подтверждения в коде не было, и
     // сделка так и висела на вопросе (в логе это выглядело как удачный приём). Жмём подтверждение
     // и только потом считаем передачу принятой.
+    // Кнопка подтверждения на этой странице называется «Купить» (живьём 24.09.2026: ссылки были
+    // «Передачи | Купить | Вернуться», где «Вернуться» - отказ).
     if (/Вы уверены/i.test(after)) {
       const confirms = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
         .map((a) => ({ href: a.getAttribute('href') || '', label: (a.textContent || '').trim() }))
         .filter((x) => /mod=offers/.test(x.href))).catch(() => []);
-      const pick = confirms.find((c) => /^(Да|Подтвердить|Принять|Согласен|Согласиться)/i.test(c.label));
+      const pick = confirms.find((c) => /^(Да|Подтвердить|Принять|Купить|Согласен|Согласиться)/i.test(c.label));
       if (!pick) {
         console.log(`Передачи: «${name}» спросило подтверждение, а кнопки не нашлось. Ссылки: ${confirms.map((c) => c.label).join(' | ').slice(0, 200)}`);
         continue;
