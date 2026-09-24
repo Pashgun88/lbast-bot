@@ -241,11 +241,13 @@ if (!ALLOWED_CHAT_ID) {
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 // Каждый сценарий: путь к скрипту + доп. переменные окружения при запуске.
-// "Квесты + Блейки" и "Квесты + Гоблины" — один и тот же главный скрипт, отличается только
-// цель фарма после квестов (FARM_TARGET читается в daily_quests_piraty.js).
+// "Квесты + ..." — один и тот же главный скрипт, отличается только цель фарма после квестов
+// (FARM_TARGET читается в daily_quests_piraty.js). Отдельная "Янтарная гора" — старый
+// самостоятельный скрипт без квестов, оставлен как есть.
 const SCRIPTS = {
   'Квесты + Блейки': { path: './daily_quests_piraty.js', env: { FARM_TARGET: 'blake' } },
   'Квесты + Гоблины': { path: './daily_quests_piraty.js', env: { FARM_TARGET: 'goblins' } },
+  'Квесты + Янтарь': { path: './daily_quests_piraty.js', env: { FARM_TARGET: 'yantar' } },
   'Янтарная гора': { path: './yantar_v_gore.js', env: {} },
 };
 
@@ -256,7 +258,7 @@ const START_DELAYS = {
 const KEYBOARD = {
   keyboard: [
     ['Квесты + Блейки', 'Квесты + Гоблины'],
-    ['Янтарная гора'],
+    ['Квесты + Янтарь', 'Янтарная гора'],
     ['Запустить сейчас', 'Статус', 'Стоп'],
     ['Пауза', 'Продолжить'],
     ['Старт 6ч'],

@@ -171,10 +171,16 @@ let morningScreenshotDoneToday = false;
 // используется и как условие выхода из критического восстановления в Последнем доме.
 const BLAKE_MIN_HP = 1800;
 
-// Цель фарма после квестов: 'blake' (по умолчанию) или 'goblins'. Задаётся менеджером через
-// переменную окружения FARM_TARGET при запуске сценария (кнопки "Квесты + Блейки" / "Квесты + Гоблины").
-const FARM_TARGET = String(process.env.FARM_TARGET || 'blake').toLowerCase() === 'goblins' ? 'goblins' : 'blake';
-const FARM_LABEL = FARM_TARGET === 'goblins' ? 'гоблинов' : 'Блейка';
+// Цель фарма после квестов: 'blake' (по умолчанию), 'goblins' или 'yantar' (Янтарная гора).
+// Задаётся менеджером через переменную окружения FARM_TARGET при запуске сценария (кнопки
+// "Квесты + Блейки" / "Квесты + Гоблины" / "Квесты + Янтарная гора").
+// Янтарная гора ведёт себя ТОЧНО как Блейк (Паша, 24.09.2026: "сделай идентично блейкам, это
+// тоже в море"): остров за платной лодкой, поэтому те же пороги HP и то же правило "с острова
+// ради филлеров не уходим" -- в отличие от гоблинов, к которым ведёт бесплатный портал.
+const FARM_TARGETS = ['blake', 'goblins', 'yantar'];
+const FARM_TARGET_RAW = String(process.env.FARM_TARGET || 'blake').toLowerCase();
+const FARM_TARGET = FARM_TARGETS.includes(FARM_TARGET_RAW) ? FARM_TARGET_RAW : 'blake';
+const FARM_LABEL = { blake: 'Блейка', goblins: 'гоблинов', yantar: 'Янтарной горой' }[FARM_TARGET];
 console.log(`Farm target: ${FARM_TARGET}`);
 
 // Отложенный старт (менеджер, кнопка "Старт Nч") передаёт момент, когда пора включать обычный
@@ -5251,19 +5257,222 @@ async function ensureBlakeFightScreen(page) {
   await openBlakeFight(page);
 }
 
-// Farm-target-aware wrappers: pick Blake or goblins depending on FARM_TARGET so doScenario's
-// farm loop stays generic. Goblins reach their spot via the same Амулет -> Последний портал
-// shortcut, so the "stay put and resume next cycle" behaviour works for both.
+// Янтарная гора (порт из yantar_v_gore.js). Первая половина маршрута -- та же, что у Блейка
+// (Амулет -> Девтаун -> ремесленный район -> восток -> Пристань), дальше другая лодка: остров
+// Старого башмака вместо острова Блейка, и вместо хижины -- шахта в горе.
+// Полный маршрут, продиктованный пользователем:
+//   Пристань -> Взять лодку до острова Старого башмака за 10 дин -> Далее -> Идти на восток ->
+//   Идти на север x3 -> Идти к горе x2 -> Спуститься в шахту -> Идти дальше -> Идти налево ->
+//   Идти дальше -> В бой!
+// ВАЖНО: ссылки направлений ("Идти на север", "Идти к горе") остаются видимыми и ПОСЛЕ клика,
+// поэтому у повторяющихся шагов nextTexts пуст и skipIfNextVisible выключен -- иначе performStep
+// решит, что следующий шаг уже виден, и не докликает нужное число раз.
+async function goRouteToAmber(page) {
+  console.log('Иду по маршруту к Янтарной горе');
+
+  const AMULET     = 'Амулет';
+  const DEVTOWN    = 'Девтаун';
+  const EAST_CRAFT = 'На восток, в ремесленный район';
+  const GO_EAST    = 'Идти на восток';
+  const PORT       = 'портовый район';
+  const PIER       = 'Пристань';
+  const BOAT       = 'Взять лодку до острова Старого башмака за 10 дин';
+  const BOAT_SHORT = 'острова Старого башмака';
+  const NEXT       = 'Далее';
+  const NORTH      = 'Идти на север';
+  const TO_MOUNT   = 'Идти к горе';
+
+  const amuletOk = await clickByTexts(page, [AMULET, AMULET.toLowerCase()], AMULET);
+  if (amuletOk) await pause(page, 800, 1600);
+
+  await performStep(page, {
+    stepName: DEVTOWN,
+    currentTexts: [DEVTOWN, DEVTOWN.toLowerCase()],
+    nextTexts: [EAST_CRAFT, EAST_CRAFT.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: EAST_CRAFT,
+    currentTexts: [EAST_CRAFT, EAST_CRAFT.toLowerCase()],
+    nextTexts: [GO_EAST, GO_EAST.toLowerCase()],
+    retries: 3,
+  });
+
+  await performStep(page, {
+    stepName: GO_EAST,
+    currentTexts: [GO_EAST, GO_EAST.toLowerCase()],
+    nextTexts: [PORT, PORT.toLowerCase(), PIER, PIER.toLowerCase()],
+    retries: 4,
+  });
+
+  if (await existsAnyText(page, [PIER, PIER.toLowerCase()])) {
+    console.log('После "Идти на восток" уже видна Пристань, шаг "портовый район" пропускаю');
+  } else {
+    await performStep(page, {
+      stepName: PORT,
+      currentTexts: [PORT, PORT.toLowerCase()],
+      nextTexts: [PIER, PIER.toLowerCase()],
+      retries: 4,
+    });
+  }
+
+  await performStep(page, {
+    stepName: PIER,
+    currentTexts: [PIER, PIER.toLowerCase()],
+    nextTexts: [BOAT, BOAT.toLowerCase(), BOAT_SHORT, BOAT_SHORT.toLowerCase()],
+    retries: 4,
+  });
+
+  // Текст лодки в игре периодически меняется (регистр, стрелки-префиксы, формат цены), поэтому
+  // короткий вариант "острова Старого башмака" оставлен запасным.
+  await performStep(page, {
+    stepName: BOAT,
+    currentTexts: [BOAT, BOAT.toLowerCase(), BOAT_SHORT, BOAT_SHORT.toLowerCase()],
+    waitAfterClickMs: 7000,
+    nextTexts: [NEXT, NEXT.toLowerCase(), GO_EAST, GO_EAST.toLowerCase()],
+    retries: 3,
+  });
+
+  if (await existsAnyText(page, [GO_EAST, GO_EAST.toLowerCase()])) {
+    console.log('После лодки уже доступен шаг "Идти на восток", шаг "Далее" пропускаю');
+  } else {
+    await performStep(page, {
+      stepName: NEXT,
+      currentTexts: [NEXT, NEXT.toLowerCase()],
+      nextTexts: [GO_EAST, GO_EAST.toLowerCase()],
+      retries: 3,
+    });
+  }
+
+  await performStep(page, {
+    stepName: `${GO_EAST} (остров)`,
+    currentTexts: [GO_EAST, GO_EAST.toLowerCase()],
+    nextTexts: [NORTH, NORTH.toLowerCase()],
+    retries: 3,
+  });
+
+  for (let i = 0; i < 3; i++) {
+    await performStep(page, {
+      stepName: `${NORTH} (${i + 1}/3)`,
+      currentTexts: [NORTH, NORTH.toLowerCase()],
+      nextTexts: [],
+      skipIfNextVisible: false,
+      retries: 3,
+    });
+  }
+
+  for (let i = 0; i < 2; i++) {
+    await performStep(page, {
+      stepName: `${TO_MOUNT} (${i + 1}/2)`,
+      currentTexts: [TO_MOUNT, TO_MOUNT.toLowerCase(), 'К горе', 'к горе'],
+      nextTexts: [],
+      skipIfNextVisible: false,
+      retries: 3,
+    });
+  }
+
+  await openAmberFight(page);
+}
+
+// Внутри горы: шахта -> дальше -> налево -> дальше -> В бой. Каждый шаг необязателен по
+// отдельности -- если мы вернулись сюда после боя, часть экранов уже пройдена.
+async function openAmberFight(page) {
+  const SHAFT   = 'Спуститься в шахту';
+  const FORWARD = 'Идти дальше';
+  const LEFT    = 'Идти налево';
+  const TO_MOUNT = 'Идти к горе';
+  const UDAR_RE = /Ударить/i;
+  const DONE_RE = /Бой завершен!/i;
+  const FIGHT_TEXTS = ['В бой!', 'в бой!', 'В бой', 'в бой'];
+
+  const text = await getBodyText(page);
+  if (UDAR_RE.test(text) || DONE_RE.test(text)) {
+    console.log('Экран боя уже открыт');
+    return;
+  }
+
+  // После боя игра выбрасывает обратно к подножию -- тогда до шахты снова два клика "Идти к горе".
+  for (let i = 0; i < 2; i++) {
+    if (!await existsAnyText(page, [TO_MOUNT, TO_MOUNT.toLowerCase(), 'К горе', 'к горе'])) break;
+    await performStep(page, {
+      stepName: `${TO_MOUNT} (возврат ${i + 1}/2)`,
+      currentTexts: [TO_MOUNT, TO_MOUNT.toLowerCase(), 'К горе', 'к горе'],
+      nextTexts: [],
+      skipIfNextVisible: false,
+      retries: 3,
+    });
+  }
+
+  const INSIDE = [
+    { name: SHAFT,   texts: [SHAFT, SHAFT.toLowerCase(), 'Войти в шахту', 'войти в шахту'] },
+    { name: FORWARD, texts: [FORWARD, FORWARD.toLowerCase()] },
+    { name: LEFT,    texts: [LEFT, LEFT.toLowerCase(), 'Налево', 'налево'] },
+    { name: FORWARD, texts: [FORWARD, FORWARD.toLowerCase()] },
+  ];
+
+  for (const step of INSIDE) {
+    if (await existsAnyText(page, [...FIGHT_TEXTS, 'Ударить', 'ударить'])) break;
+    if (!await existsAnyText(page, step.texts)) continue;
+    await performStep(page, {
+      stepName: `Янтарная гора: ${step.name}`,
+      currentTexts: step.texts,
+      nextTexts: [],
+      skipIfNextVisible: false,
+      retries: 3,
+    });
+  }
+
+  const refreshed = await getBodyText(page);
+  if (/В\s*бой/i.test(refreshed) && !UDAR_RE.test(refreshed)) {
+    await performStep(page, {
+      stepName: 'В бой (Янтарная гора)',
+      currentTexts: FIGHT_TEXTS,
+      nextTexts: ['Ударить', 'ударить', 'Бой завершен!'],
+      retries: 3,
+    });
+    await pause(page, 1000, 2000);
+  }
+}
+
+function isAmberLocation(text) {
+  const s = String(text || '');
+  return /Янтарная\s+гора/i.test(s) || /Спуститься в шахту/i.test(s) || /Идти к горе/i.test(s);
+}
+
+async function ensureAmberFightScreen(page) {
+  const UDAR_RE = /Ударить/i;
+  const DONE_RE = /Бой завершен!/i;
+
+  const text = await getBodyText(page);
+  if (UDAR_RE.test(text) || DONE_RE.test(text)) return;
+
+  if (isAmberLocation(text) || /В\s*бой/i.test(text)) {
+    await openAmberFight(page);
+    return;
+  }
+
+  await goRouteToAmber(page);
+}
+
+// Farm-target-aware wrappers: pick Blake, goblins or Янтарная гора depending on FARM_TARGET so
+// doScenario's farm loop stays generic. Goblins reach their spot via the Амулет -> Последний
+// портал shortcut; Блейк и Янтарная гора -- оба острова за платной лодкой, поэтому у них одни и
+// те же пороги HP и одинаковое поведение "остаёмся на месте до следующего цикла".
 function shouldFightFarmByStats(stats) {
   return FARM_TARGET === 'goblins' ? shouldFightByStats(stats) : shouldFightBlakeByStats(stats);
 }
 
 function isFarmLocation(text) {
-  return FARM_TARGET === 'goblins' ? isGoblinsLocation(text) : isBlakeLocation(text);
+  if (FARM_TARGET === 'goblins') return isGoblinsLocation(text);
+  if (FARM_TARGET === 'yantar') return isAmberLocation(text);
+  return isBlakeLocation(text);
 }
 
 async function ensureFarmFightScreen(page) {
-  return FARM_TARGET === 'goblins' ? ensureGoblinFightScreen(page) : ensureBlakeFightScreen(page);
+  if (FARM_TARGET === 'goblins') return ensureGoblinFightScreen(page);
+  if (FARM_TARGET === 'yantar') return ensureAmberFightScreen(page);
+  return ensureBlakeFightScreen(page);
 }
 
 const STONEGUARD_FASTWAY_URL = 'http://lbast.ru/location.php?r=6174&mod=fastway&lway=2';
@@ -9004,7 +9213,7 @@ async function doScenario(page) {
   // без лишних платных проходов (лодка на остров всё равно одна). На острове рыбалку по-прежнему
   // пропускаем: !isFarmLocation гарантирует, что с Блейка ради рыбалки мы не уходим.
   if (!isFarmLocation(read.text) && canRunFishingNow()) {
-    console.log('Прощальный заброс на материке перед переездом на Блейка');
+    console.log(`Прощальный заброс на материке перед переездом на ${FARM_LABEL}`);
     await runFishingTask(page);
   }
 
