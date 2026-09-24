@@ -209,6 +209,9 @@ async function runFarmSession(page) {
       const due = [];
       if (canRunFishEyeFightNow()) due.push('Рыбий глаз');
       if (canRunDrabasNow()) due.push('камни Драбаса');
+      // И вообще любой боевой квест: он важнее фарма, а резерв у нас один на всё. 24.09.2026
+      // сессия успевала выжрать резерв до 2 минут, и «Варьете» весь час не проходило по порогу.
+      if (hasPendingFightQuestsNow()) due.push(`квесты (${(S.farmHeldBy || []).join(', ') || 'есть'})`);
       if (due.length) {
         console.log(`Фарм-сессия: подошёл срок - ${due.join(', ')}. Прерываю фарм, вернусь после.`);
         break;
@@ -294,7 +297,7 @@ const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
 const { checkLevelUpIfDue } = require('./lib/levelup');
-const { canRunFishEyeFightNow, canRunDrabasNow } = require('./lib/daily_quests');
+const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendingFightQuestsNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([

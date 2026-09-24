@@ -125,9 +125,19 @@ async function runDailyQuests(page, stats) {
   const menuText = await getBodyText(page);
   let listedQuests = parseQuestNamesFromQMenuText(menuText);
   console.log('Q menu quest names:', JSON.stringify(listedQuests));
-  S.lastListedQuestNames = listedQuests; // кэш для решения "можно ли фармить" в следующем цикле
   if (listedQuests.length === 0) {
     appendDebugSnapshot('Q menu parse returned empty list', { label: 'q_menu_empty_parse', url: page.url(), text: menuText });
+    // 24.09.2026: разбор меню иногда возвращает пустой список, хотя в шапке Q больше нуля. Раньше
+    // этот пустой список попадал в кэш, ферма решала «квестов нет» и запускала часовую сессию,
+    // которая съедала весь резерв - а потом квесты весь час писали «need >=10 reserve minutes».
+    // Пустой разбор при непустом счётчике - не ответ, а сбой чтения: держим прошлый список.
+    if (typeof questCount === 'number' && questCount > 0) {
+      console.log(`Q-меню: разбор пуст, а в шапке Q=${questCount} - считаю это сбоем чтения, оставляю прошлый список.`);
+    } else {
+      S.lastListedQuestNames = listedQuests;
+    }
+  } else {
+    S.lastListedQuestNames = listedQuests; // кэш для решения "можно ли фармить" в следующем цикле
   }
 
   // Exclusive quests: while one of these is in progress, do not start any other Q-quests.
