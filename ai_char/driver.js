@@ -415,6 +415,13 @@ async function waitForHeal(page) {
     let first = true;
     while (Date.now() < until) {
       const cur = await readLocationStats(page);
+      // 24.09.2026: Паша поднял персонажа мясом краба, а внутренний цикл досиживал свои 200 минут
+      // по расчёту регена и не перечитывал HP - живой персонаж простоял бы до вечера. Подняли
+      // (краб, эликсир, чужая помощь) - выходим сразу, внешний for перечитает статы честно.
+      if (typeof cur.hpCurrent === 'number' && cur.hpCurrent > 0) {
+        console.log(`Восстановление: HP уже ${cur.hpCurrent}/${cur.hpMax} - выхожу из ожидания раньше срока.`);
+        break;
+      }
       if (first && !/Кулак Хаоса/i.test(await getBodyText(page).catch(() => ''))) {
         await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
         await new Promise((r) => setTimeout(r, 8000));
