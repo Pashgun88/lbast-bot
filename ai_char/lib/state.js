@@ -228,10 +228,12 @@ S.assassinMerchantAttemptsToday = 0;
 S.assassinMerchantNoCaravanAt = 0;
 const ASSASSIN_MERCHANT_MAX_ATTEMPTS_PER_DAY = 6;
 
-// Галерея искусств/лазулиты: одноразовый (не дневной) квест — раз сдан, никогда не
-// появится в Q снова. Флаг без day-key, чтобы после первой сдачи диспетчер не ходил
-// каждый цикл в Рыбацкую деревню проверять Марсиуса заново.
-S.galleryQuestDone = false;
+// Галерея искусств/лазулиты: квест МНОГОРАЗОВЫЙ. Раньше здесь стоял флаг galleryQuestDone
+// ("сдал один раз — больше не ходим"), и после первой же сдачи диспетчер переставал ходить к
+// Марсиусу навсегда. Паша 25.09.2026: "это многоразовый квест и у меня и у него" — в каталоге
+// "Все квесты" он в разделе МНОГОРАЗОВЫЕ, после сдачи встаёт кулдаун около недели.
+// Храним момент последней сдачи и ходим по периоду.
+S.galleryLastDoneAt = 0;
 
 // "Орден Тригмагистров: Охота на демона" (Демон озера) — маршрут записан со слов Паши
 // 14.09.2026 (продиктован по памяти, не проверен вживую). Обычный дневной квест.
@@ -359,7 +361,10 @@ function restoreDailyQuestState() {
   }
   if (Number.isFinite(s.assassinMerchantAttemptsToday)) S.assassinMerchantAttemptsToday = s.assassinMerchantAttemptsToday;
 
-  if (typeof s.galleryQuestDone === 'boolean') S.galleryQuestDone = s.galleryQuestDone;
+  if (Number.isFinite(s.galleryLastDoneAt)) S.galleryLastDoneAt = s.galleryLastDoneAt;
+  // Совместимость со старым состоянием: был булев флаг "сдан навсегда". Если он стоял, считаем,
+  // что сдача была когда-то давно -- период уже истёк, и квест пойдёт при первой возможности.
+  else if (s.galleryQuestDone === true) S.galleryLastDoneAt = 0;
 
   if (typeof s.demonLakeDayKey === 'string') S.demonLakeDayKey = s.demonLakeDayKey;
   if (typeof s.demonLakeDoneToday === 'boolean') S.demonLakeDoneToday = s.demonLakeDoneToday;
@@ -404,7 +409,7 @@ function persistDailyQuestState() {
     caravanRobberyDayKey: S.caravanRobberyDayKey, caravanRobberyDoneToday: S.caravanRobberyDoneToday,
     fishingDayKey: S.fishingDayKey, fishingCatchesToday: S.fishingCatchesToday,
     assassinGuildDayKey: S.assassinGuildDayKey, assassinGuildDoneToday, assassinMerchantAttemptsToday: S.assassinMerchantAttemptsToday,
-    galleryQuestDone: S.galleryQuestDone,
+    galleryLastDoneAt: S.galleryLastDoneAt,
     demonLakeDayKey: S.demonLakeDayKey, demonLakeDoneToday: S.demonLakeDoneToday,
     shipwreckDayKey: S.shipwreckDayKey, shipwreckDoneToday: S.shipwreckDoneToday,
     fishRestaurantJournalOpened: S.fishRestaurantJournalOpened, fishRestaurantDayKey: S.fishRestaurantDayKey, fishRestaurantDoneToday: S.fishRestaurantDoneToday, fishRestaurantNextRewardNumber: S.fishRestaurantNextRewardNumber,

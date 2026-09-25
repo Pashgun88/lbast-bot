@@ -28,9 +28,20 @@ const {
 const { clickByTexts, existsAnyText, performStep } = require('./ui');
 
 // ===================================================================================
-// Галерея искусств / лазулиты (AI__): одноразовый (не дневной) квест. Пройден и
-// проверен вживую 14.09.2026 — маршрут ниже записан 1:1 по реальному прохождению,
-// см. LESSONS_AI_CHAR.md, раздел "Галерея искусств / лазулиты".
+// Галерея искусств / лазулиты. Квест МНОГОРАЗОВЫЙ (Паша, 25.09.2026: "это многоразовый
+// квест и у меня и у него") -- в каталоге "Все квесты" он в разделе МНОГОРАЗОВЫЕ, после
+// сдачи встаёт кулдаун около недели.
+//
+// Маршрут поиска переписан 25.09.2026 после живого прохождения на Цунами. Прежняя версия
+// (записанная 14.09.2026) расходилась с игрой в двух местах:
+//   1) поиск считался простым циклом "жать Искать лазулиты, пока не выпадет камень". На деле
+//      это ветвящаяся сценка: виньетка про побережье -> "Идти вперед" -> развилка
+//      "Идти по берегу" / "Свернуть на косу" -> "Ударить их мечом" -> ДВА боя подряд ->
+//      "Продолжить квест" -> "Уйти". Нужна именно КОСА, берег уводит мимо;
+//   2) находка определялась по слову "лазулит", а оно есть и в описании побережья -- то есть
+//      засчитывалась там, где камня не было, и Марсиус потом выдавал задание заново.
+// Ещё деталь: ссылка "Искать лазулиты" живёт на клетке (location.php), а сценка уводит на свои
+// экраны, где её уже нет -- каждый заход начинаем с возврата на клетку.
 // ===================================================================================
 
 function absUrl(href) {
@@ -46,6 +57,74 @@ async function findLinkHref(page, regex) {
 }
 
 const FISH_VILLAGE_KONJ_URL = 'http://lbast.ru/location.php?mod=konj&lway=7';
+
+// Порядок = приоритет: на экране бывает несколько ссылок, берём первую из списка.
+// "Идти по берегу" сюда НЕ входит намеренно -- это вторая половина развилки, и она уводит мимо.
+const GALLERY_SCENE_STEPS = [
+  'Свернуть на косу',
+  'Ударить их мечом',
+  'Идти вперед',
+  'Продолжить квест',
+  'Далее',
+];
+const GALLERY_SEARCH_ROUNDS = 4;
+const GALLERY_SCENE_SCREENS = 24;
+
+// Один заход в сценку поиска: "Искать лазулиты" и дальше до конца (два боя и выход).
+// true -- дошли до боёв, камень наш; false -- коса не выпала, стоит повторить; null -- сбой.
+async function runGalleryScene(page, round) {
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const searchHref = await findLinkHref(page, /Искать лазулиты/);
+  if (!searchHref) {
+    console.log('Gallery quest: объект "Искать лазулиты" не найден на клетке — маршрут сбился.');
+    return null;
+  }
+  await page.goto(absUrl(searchHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  let fights = 0;
+  for (let screen = 0; screen < GALLERY_SCENE_SCREENS; screen++) {
+    const text = await getBodyText(page);
+
+    // Уже на боевом экране: уйти с заряженного боя нельзя, поэтому ждём лечения, а не отказываемся
+    // (иначе бой потом подберёт обработчик атак в обход гейта -- история с корованом 17.09.2026).
+    if (/Ударить/i.test(text)) {
+      if (!(await questFightHpGate(page, `Gallery: бой ${fights + 1}`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
+        return null;
+      }
+      await fightLoop(page);
+      fights += 1;
+      console.log(`Gallery quest: бой ${fights} пройден.`);
+      await pause(page, 900, 1500);
+      continue;
+    }
+
+    const toFight = await findLinkHref(page, /В бой!/);
+    if (toFight) {
+      await page.goto(absUrl(toFight), { waitUntil: 'domcontentloaded', timeout: 60000 });
+      continue;
+    }
+
+    let next = null;
+    for (const name of GALLERY_SCENE_STEPS) {
+      const href = await findLinkHref(page, new RegExp(name));
+      if (href) { next = { name, href }; break; }
+    }
+    if (next) {
+      await page.goto(absUrl(next.href), { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 600, 1100);
+      continue;
+    }
+
+    // Сценка кончилась (ссылок не осталось) -- выходим "Уйти", если он есть.
+    const out = await findLinkHref(page, /Уйти/);
+    if (out) await page.goto(absUrl(out), { waitUntil: 'domcontentloaded', timeout: 60000 });
+    console.log(`Gallery quest: заход ${round} завершён, боёв ${fights}.`);
+    return true;
+  }
+
+  console.log(`Gallery quest: сценка ${round} не кончилась за ${GALLERY_SCENE_SCREENS} экранов.`);
+  return true;
+}
 
 async function progressGalleryLazuliteQuest(page) {
   await page.goto(FISH_VILLAGE_KONJ_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -82,85 +161,74 @@ async function progressGalleryLazuliteQuest(page) {
     await pause(page, 500, 900);
   }
 
-  // Поиск лазулитов — случайные засады (боты) перед успехом, обычно 1-2 боя. Деремся
-  // через fightLoop и повторяем клик, пока не увидим текст с находкой (без "В бой!").
-  let found = false;
-  for (let attempt = 0; attempt < 6 && !found; attempt++) {
-    const lazuliteHref = await findLinkHref(page, /Искать лазулиты/);
-    if (!lazuliteHref) {
-      console.log('Gallery quest: объект "Искать лазулиты" не найден на клетке — маршрут сбился.');
+  // Успех определяет МАРСИУС, а не текст поиска. Прежняя версия считала находкой любой экран со
+  // словом "лазулит", а оно есть и в описании побережья -- и квест "завершался" без камня.
+  // Наблюдения к тому же расходятся: 14.09.2026 на AI__ камень выпал после пары случайных засад,
+  // 25.09.2026 на Цунами -- через сценку с косой и двумя боями. Поэтому не гадаем: отыграли заход
+  // -- сходили к Марсиусу. Принял ("Благодарствую"/"Получено N дин") -- готово; снова выдал
+  // задание -- значит камня нет, возвращаемся на побережье и пробуем ещё раз.
+  for (let round = 1; round <= GALLERY_SEARCH_ROUNDS; round++) {
+    const r = await runGalleryScene(page, round);
+    if (r === null) return false;
+
+    // Обратно: 2 клетки на восток до Рыбацкой деревни, к Марсиусу.
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    for (let i = 0; i < 2; i++) {
+      const eastHref = await findLinkHref(page, /Идти на восток|На восток/);
+      if (!eastHref) break;
+      await page.goto(absUrl(eastHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 500, 900);
+    }
+
+    const galleryHref2 = await findLinkHref(page, /Галерея искусств/);
+    if (!galleryHref2) {
+      console.log('Gallery quest: не нашёл галерею на обратном пути для сдачи.');
       return false;
     }
-    await page.goto(absUrl(lazuliteHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const galleryBase2 = absUrl(galleryHref2);
+    await page.goto(`${galleryBase2}&go=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 700, 1200);
+    await page.goto(`${galleryBase2}&go=3`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
     text = await getBodyText(page);
-
-    if (/В бой!/i.test(text)) {
-      // Засада уже сработала - уйти с неё нельзя, поэтому именно ждём подлечивания, а не
-      // отказываемся: отказ оставил бы заряженный экран "В бой!" (ровно та история, что с
-      // корованом 17.09.2026, когда бой потом начал обработчик атак в обход гейта).
-      if (!(await questFightHpGate(page, `Gallery: засада (попытка ${attempt + 1})`, QUEST_FIGHT_HP_FLOOR, { waitForRecovery: true }))) {
-        return false;
-      }
-      console.log(`Gallery quest: засада на поиске лазулитов (попытка ${attempt + 1}), бой.`);
-      await fightLoop(page);
-    } else if (/лазулит/i.test(text)) {
-      console.log('Gallery quest: лазулит найден.');
-      found = true;
-    } else {
-      console.log('Gallery quest: непонятный ответ на поиске лазулитов:', text.slice(0, 300));
-      return false;
+    if (/Благодарствую|Получено \d+ дин/i.test(text)) {
+      console.log(`Gallery quest: лазулит сдан Марсиусу с ${round}-го захода, задание завершено.`);
+      return true;
     }
-    await pause(page, 900, 1500);
+
+    console.log(`Gallery quest: после захода ${round} камня нет (Марсиус снова выдал задание).`);
+    if (round === GALLERY_SEARCH_ROUNDS) break;
+
+    // Ещё раз на побережье: 2 клетки на запад.
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    for (let i = 0; i < 2; i++) {
+      const westHref = await findLinkHref(page, /На запад|Идти на запад/);
+      if (!westHref) break;
+      await page.goto(absUrl(westHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 500, 900);
+    }
   }
 
-  if (!found) {
-    console.log('Gallery quest: не удалось найти лазулит за отведённое число попыток сегодня.');
-    return false;
-  }
-
-  // Обратно: 2 клетки на восток до Рыбацкой деревни, сдать Марсиусу.
-  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  for (let i = 0; i < 2; i++) {
-    const eastHref = await findLinkHref(page, /Идти на восток|На восток/);
-    if (!eastHref) break;
-    await page.goto(absUrl(eastHref), { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await pause(page, 500, 900);
-  }
-
-  const galleryHref2 = await findLinkHref(page, /Галерея искусств/);
-  if (!galleryHref2) {
-    console.log('Gallery quest: не нашёл галерею на обратном пути для сдачи.');
-    return false;
-  }
-  const galleryBase2 = absUrl(galleryHref2);
-  await page.goto(`${galleryBase2}&go=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await pause(page, 700, 1200);
-  await page.goto(`${galleryBase2}&go=3`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  text = await getBodyText(page);
-  if (/Благодарствую|Получено \d+ дин/i.test(text)) {
-    console.log('Gallery quest: лазулит сдан Марсиусу, задание завершено.');
-    return true;
-  }
-
-  console.log('Gallery quest: сдача не подтвердилась, текст:', text.slice(0, 300));
+  console.log(`Gallery quest: за ${GALLERY_SEARCH_ROUNDS} заходов лазулит так и не добыт.`);
   return false;
 }
 
-// Одноразовый квест — не дневной. Раньше сам открывал меню Q, чтобы проверить наличие
-// квеста, но это добавляло лишнюю навигацию/клик по "Q" ПЕРЕД тем, как runDailyQuests
-// делает то же самое, и путало состояние страницы (пустой список квестов на втором
-// клике). Теперь просто флаг galleryQuestDone: как только квест сдан один раз —
-// диспетчер больше никогда не ходит проверять Марсиуса.
+// В меню Q этот квест не показывается -- он берётся прямо у Марсиуса, поэтому гейт только по
+// собственному периоду. Раньше здесь стоял флаг galleryQuestDone ("сдал один раз -- больше не
+// ходим"), но квест МНОГОРАЗОВЫЙ, и после первой же сдачи диспетчер переставал ходить навсегда.
+// Период взят по живому наблюдению на Цунами 25.09.2026: сразу после сдачи в каталоге встало
+// "через 6 дн.", значит цикл около недели.
+const GALLERY_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function runGalleryQuestIfAvailable(page) {
-  if (S.galleryQuestDone) {
+  if (Date.now() - (S.galleryLastDoneAt || 0) < GALLERY_PERIOD_MS) {
     return false;
   }
 
   const GALLERY_QUEST = 'Галерея искусств';
   const ok = await runQuestStepSafe(page, GALLERY_QUEST, () => progressGalleryLazuliteQuest(page));
   if (ok) {
-    S.galleryQuestDone = true;
+    S.galleryLastDoneAt = Date.now();
     persistDailyQuestState();
   }
   return ok;
