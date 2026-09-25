@@ -7112,8 +7112,16 @@ function misttownSecretDayTimeToDate({ day, hour, minute, second }, now) {
 
 const MISTTOWN_SECRET_RECHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+// Пол на частоту походов к зазывале. Признак "дата в прошлом" сам по себе не гаснет: если зазывала
+// объявил что-то, чего мы не распознали (не распарсили строку, разошлись часы), условие остаётся
+// истинным и поход повторяется на каждом заходе. В ночном ожидании, где сон считается по
+// будильникам, это выливалось бы в поездку в Стоунгард каждые несколько минут до утра.
+const MISTTOWN_SECRET_MIN_RECHECK_MS = 15 * 60 * 1000;
+
 function needMisttownSecretRefresh(now) {
+  // Дат нет вовсе -- расписание нужно немедленно, никакой пол тут не уместен.
   if (MISTTOWN_SECRET_THEMES.some((t) => !Number.isFinite(misttownSecretDueAt[t]))) return true;
+  if (now - lastMisttownSecretCheckAt < MISTTOWN_SECRET_MIN_RECHECK_MS) return false;
   if (MISTTOWN_SECRET_THEMES.some((t) => misttownSecretDueAt[t] <= now)) return true;
   if (now - lastMisttownSecretCheckAt >= MISTTOWN_SECRET_RECHECK_INTERVAL_MS) return true;
   return false;
@@ -7226,6 +7234,27 @@ function msUntilNextMisttownPrePosition() {
 // Насколько близко должно быть событие, чтобы выводить окно браузера вперёд (bringToFront).
 const NIGHT_WAIT_ACTIVE_WINDOW_MS = 60 * 60 * 1000;
 
+// Запас после объявленного момента, по истечении которого дата считается заведомо прошедшей.
+const MISTTOWN_SECRET_STALE_MARGIN_MS = 2 * 60 * 1000;
+
+// Через сколько расписание протухнет и его пора будет перечитать у зазывалы. Нужно отдельно от
+// пре-позиции: место на событие занимается ЗА 3 МИНУТЫ до старта, поэтому сразу после попытки
+// объявленная дата всё ещё в будущем, и needMisttownSecretRefresh не считает её устаревшей.
+// Без этого будильника ночное ожидание после события считало бы срок по остальным трём темам и
+// могло проспать новую дату только что отработавшей (Паша, 25.09.2026: "и после прошедшего
+// события запишется новое и так же отработает?").
+function msUntilMisttownScheduleStale() {
+  const now = Date.now();
+  let soonest = null;
+  for (const theme of MISTTOWN_SECRET_THEMES) {
+    const dueAt = misttownSecretDueAt[theme];
+    if (!Number.isFinite(dueAt)) return 0; // даты нет вовсе -- расписание нужно прямо сейчас
+    const staleAt = dueAt + MISTTOWN_SECRET_POLL_WINDOW_MS + MISTTOWN_SECRET_STALE_MARGIN_MS;
+    if (soonest === null || staleAt < soonest) soonest = staleAt;
+  }
+  return soonest === null ? null : Math.max(0, soonest - now);
+}
+
 // Сон в режиме ночного ожидания: СРАЗУ до пре-позиции ближайшего события, без промежуточных
 // пробуждений. Изначально здесь стояла обычная задержка цикла (14-21 мин) независимо от того,
 // через сколько событие, и бот перезагружал страницу каждые ~18 минут, хотя ближайшее событие
@@ -7235,10 +7264,24 @@ const NIGHT_WAIT_ACTIVE_WINDOW_MS = 60 * 60 * 1000;
 // Расписание событий уже лежит в состоянии, перечитывать его незачем; а сон всё равно ограничен
 // сверху стартом обычного сценария (обычно 6 часов), так что на протухшем расписании мы застрять
 // не можем -- дальше начинается обычный цикл со своей проверкой.
-// null -- событий в расписании нет, спать можно до самого старта обычного сценария.
+// Будильников два: пре-позиция ближайшего неотработанного события и момент, когда расписание
+// протухнет и за ним надо будет сходить к зазывале. Берём тот, что раньше.
+// null -- расписания нет вовсе, спать можно до самого старта обычного сценария.
 function nightWaitSleepMs() {
+  const candidates = [];
+
   const untilPre = msUntilNextMisttownPrePosition();
-  return untilPre === null ? null : Math.max(30 * 1000, untilPre);
+  if (untilPre !== null) candidates.push(Math.max(30 * 1000, untilPre));
+
+  // Будить себя раньше, чем needMisttownSecretRefresh разрешит следующий поход, бессмысленно --
+  // проснёмся и ничего не сделаем. Поэтому берём максимум из "когда протухнет" и "когда можно".
+  const untilStale = msUntilMisttownScheduleStale();
+  if (untilStale !== null) {
+    const untilAllowed = Math.max(0, lastMisttownSecretCheckAt + MISTTOWN_SECRET_MIN_RECHECK_MS - Date.now());
+    candidates.push(Math.max(30 * 1000, untilStale, untilAllowed));
+  }
+
+  return candidates.length ? Math.min(...candidates) : null;
 }
 
 // Подводит следующее пробуждение цикла к моменту, когда пора вставать на уличную точку заранее --
@@ -9436,17 +9479,21 @@ async function returnToLocationPage(page) {
         const remainingMs = FARM_START_AFTER_MS - Date.now();
         if (remainingMs <= 0) break;
 
-        // Спим одним куском до пре-позиции ближайшего события (или до старта обычного сценария,
-        // если событий в расписании нет). Промежуточных пробуждений нет: страницу в это время
-        // трогать незачем, а проспать событие нельзя -- именно по нему и выставлен будильник.
-        const untilPrePosition = nightWaitSleepMs();
-        let waitMs = Math.min(nextCycleDelayOverrideMs ?? untilPrePosition ?? remainingMs, remainingMs);
+        // Спим одним куском до ближайшего будильника (пре-позиция события либо поход к зазывале
+        // за новым расписанием), но не дольше, чем до старта обычного сценария. Промежуточных
+        // пробуждений нет: страницу в это время трогать незачем.
+        const nextAlarmMs = nightWaitSleepMs();
+        const waitMs = Math.min(nextCycleDelayOverrideMs ?? nextAlarmMs ?? remainingMs, remainingMs);
         nextCycleDelayOverrideMs = null;
 
-        const untilPreLog = untilPrePosition === null
-          ? 'событий в расписании нет'
-          : `до ближайшего события ${(untilPrePosition / 3600000).toFixed(1)} ч`;
-        console.log(`Ночное ожидание: сплю ${Math.round(waitMs / 60000)} мин, страницу не трогаю (${untilPreLog}; до старта обычного сценария ${Math.round(remainingMs / 60000)} мин)`);
+        const untilPre = msUntilNextMisttownPrePosition();
+        const untilStale = msUntilMisttownScheduleStale();
+        const hours = (ms) => (ms / 3600000).toFixed(1);
+        const why = [
+          untilPre === null ? 'событий в расписании нет' : `до события ${hours(untilPre)} ч`,
+          untilStale === null ? null : `до обновления расписания ${hours(untilStale)} ч`,
+        ].filter(Boolean).join('; ');
+        console.log(`Ночное ожидание: сплю ${Math.round(waitMs / 60000)} мин, страницу не трогаю (${why}; до старта обычного сценария ${Math.round(remainingMs / 60000)} мин)`);
         await sleepPlain(waitMs);
 
         if (Date.now() >= FARM_START_AFTER_MS) break;
