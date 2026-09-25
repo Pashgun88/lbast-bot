@@ -70,6 +70,16 @@ async function goToFishRestaurant(page) {
   // Остальные реплики между ними - best-effort клики, не критичные (страница может
   // проскочить их сама); если что-то не найдётся, просто идём дальше к развилке.
   await performStep(page, { stepName: 'Рыбный ресторан (вход)', currentTexts: ['Рыбный ресторан', 'рыбный ресторан'], retries: 3 });
+  // 25.09.2026: дальше проход падал на «Тёща Кумуса», а performStep при ненайденном шаге
+  // перезагружает location.php - и настоящий экран внутри ресторана в лог не попадал ни разу.
+  // Печатаем его сразу после входа, до любых шагов.
+  {
+    const inside = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .map((a) => (a.innerText || '').trim()).filter(Boolean)).catch(() => []);
+    const insideText = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+    console.log(`Рыбный ресторан: внутри ссылки: ${inside.join(' | ').slice(0, 300)}`);
+    console.log(`Рыбный ресторан: внутри текст: ${insideText.slice(0, 400)}`);
+  }
   await performStep(page, { stepName: 'Тёща Кумуса', currentTexts: ['Тёща Кумуса', 'тёща кумуса'], retries: 3 });
   await tryPerformStepOptional(page, { stepName: 'Я насчет работы.', currentTexts: ['Я насчет работы.'] });
   await tryPerformStepOptional(page, { stepName: 'Скоро вернусь.', currentTexts: ['Скоро вернусь.'] });
