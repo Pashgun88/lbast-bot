@@ -187,10 +187,27 @@ async function readHideCounts(page) {
   const text = await getBodyText(page).catch(() => '');
   const num = (re) => { const m = text.match(re); return m ? Number(m[1]) : 0; };
   if (!/У вас\s+\d+\s+дин/i.test(text)) return null; // инвентарь не открылся - счёт неизвестен
-  return {
+  const counts = {
     boar: num(/Кожа дикого кабана\s+(\d+)/i),
     bison: num(/Кожа дикого бизона\s+(\d+)/i),
   };
+  // Последний известный счёт держим в S: раунды фарма в общем цикле не могут лазить в инвентарь
+  // каждый круг, а равновесие соблюдать должны (25.09.2026, Паша: «у тебя кож бизона 20 а кабана
+  // 43, ты не следишь?»).
+  S.lastHideCounts = { ...counts, at: Date.now() };
+  return counts;
+}
+
+// Равновесие кож. Паша, 18.09.2026: «выгоднее всего если кож будет равное количество». Ограничение
+// стояло ТОЛЬКО на бизона («не ходим на бизона, пока его кож больше кабаньих»), а кабан бился всегда
+// - к 25.09 вышло 20 против 43. Теперь правило симметричное: отстающего бьём, ушедшего вперёд не
+// трогаем. Допуск в 2 кожи, чтобы не переключаться из-за одной шкуры.
+const HIDE_BALANCE_TOLERANCE = 2;
+function hideBalanceAllows(target, hides = S.lastHideCounts) {
+  if (!hides || typeof hides.boar !== 'number' || typeof hides.bison !== 'number') return true;
+  if (target === 'boar') return hides.boar <= hides.bison + HIDE_BALANCE_TOLERANCE;
+  if (target === 'bison') return hides.bison <= hides.boar + HIDE_BALANCE_TOLERANCE;
+  return true;
 }
 
 async function runFarmSession(page) {
@@ -268,15 +285,22 @@ async function runFarmSession(page) {
     // Рыбалка между боями: попытка раз в 2 минуты, до 6 карасей в день.
     await runFishingIfDue(page).catch((e) => console.log('Фарм-сессия: рыбалка:', e.message));
     const buffed = await isAnyBuffAleActive(page).catch(() => false);
-    // Кабан первым; бизон - только пока его кож не больше кабаньих (счёт неизвестен - бьём обоих).
+    // Бьём того, чьих кож меньше: правило равновесия работает в обе стороны (см. hideBalanceAllows).
     const g = await runSawmillGuardRound(page).catch((e) => { console.log('Фарм-сессия: сторож лесопилки:', e.message); return false; });
     if (g) fights += 1;
-    const k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
-    if (k) fights += 1;
+    let k = false;
+    if (hideBalanceAllows('boar', hides)) {
+      k = await runBoarFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: кабан:', e.message); return false; });
+      if (k) fights += 1;
+    } else if (hides) {
+      console.log(`Фарм-сессия: кабаньих кож ${hides.boar} против ${hides.bison} бизоньих - кабана пропускаю, догоняю бизоном.`);
+    }
     let b = false;
-    if (!hides || hides.bison <= hides.boar) {
+    if (hideBalanceAllows('bison', hides)) {
       b = await runBisonFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: бизон:', e.message); return false; });
       if (b) fights += 1;
+    } else if (hides) {
+      console.log(`Фарм-сессия: бизоньих кож ${hides.bison} против ${hides.boar} кабаньих - бизона пропускаю, догоняю кабаном.`);
     }
     if (!b && !k && !g) {
       // обе цели на кулдауне или маршрут не прошёл - не долбим сервер, ждём минуту
@@ -851,6 +875,11 @@ async function loginIfNeeded(page) {
       r = await runCycleStep(page, 'Bison farm round', () => {
         if (!farmAllowed) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
+        // Равновесие кож соблюдаем и в одиночных раундах цикла, по последнему известному счёту.
+        if (!hideBalanceAllows('bison')) {
+          console.log(`Бизон пропущен: кож бизона ${S.lastHideCounts.bison}, кабана ${S.lastHideCounts.boar} - догоняем кабаном.`);
+          return Promise.resolve(false);
+        }
         return runBisonFarmRound(page, buffedForFarm);
       });
       didAnything = didAnything || r.didAnything;
@@ -860,6 +889,10 @@ async function loginIfNeeded(page) {
         // Кабан разрешён и в режиме без боёв (Паша, 23.09.2026), поэтому farmAllowed, не Full.
         if (!farmAllowed) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
+        if (!hideBalanceAllows('boar')) {
+          console.log(`Кабан пропущен: кож кабана ${S.lastHideCounts.boar}, бизона ${S.lastHideCounts.bison} - догоняем бизоном.`);
+          return Promise.resolve(false);
+        }
         return runBoarFarmRound(page, buffedForFarm);
       });
       didAnything = didAnything || r.didAnything;
