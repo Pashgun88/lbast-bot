@@ -380,8 +380,13 @@ if (require.main === module) {
     const page = ctx.pages()[0] || (await ctx.newPage());
     const { fightLoop } = require('./fight_standalone');
     const { resetToQuestMenu, clickInfoForQuest } = require('./qmenu_standalone');
-    const r = await runGuide(page, process.argv[2], process.argv[3], { fightLoop, resetToQuestMenu, clickInfoForQuest });
-    console.log('RESULT', JSON.stringify(r));
-    await ctx.close();
+    try {
+      const r = await runGuide(page, process.argv[2], process.argv[3], { fightLoop, resetToQuestMenu, clickInfoForQuest });
+      console.log('RESULT', JSON.stringify(r));
+    } catch (e) {
+      console.log('RESULT error', String(e.message).split('\n')[0]);
+    } finally {
+      await ctx.close();
+    }
   })();
 }

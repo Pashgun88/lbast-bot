@@ -8,6 +8,7 @@ const fs = require('fs');
 // Квесты, записанные маршрутом в guides/*.steps (см. guides/quests.js). Раннер общий и ничего
 // отсюда не импортирует -- бой и меню квестов передаются ему параметрами из runDailyQuests.
 const { runGuideQuestsIfDue, hasGuideQuestInProgress, GUIDE_QUESTS } = require('./guides/quests');
+const { runGalleryLazuliteQuest } = require('./guides/gallery');
 
 // За сколько до мисттаунского события не начинать длинную цепочку по маршруту.
 const GUIDE_QUEST_MISTTOWN_GUARD_MS = 90 * 60 * 1000;
@@ -227,6 +228,15 @@ let schoolTempleDoneToday = false;
 // накопительный счётчик для лога, переживающий перезапуск процесса.
 let ordoNextTryAt = {};
 let ordoItemsCollected = 0;
+// Галерея искусств (лазулиты): многоразовый квест Рыбацкой деревни. В меню Q не показывается,
+// поэтому единственный гейт -- собственный период. 25.09.2026 сразу после сдачи в каталоге
+// встало «через 6 дн.», значит период около недели.
+let galleryLastDoneAt = 0;
+const GALLERY_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
+// Порогов для этого квеста Паша не задавал -- это осторожный дефолт: в сценке два боя подряд
+// плюс десяток переходов.
+const GALLERY_MIN_RESERVE_MINUTES = 15;
+const GALLERY_MIN_HP = 1300;
 // Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
 // уличного зазывалы и закэшированные, чтобы не ходить к нему каждый цикл (см. комментарий у
 // goToMisttownSecretArea/runMisttownSecretEventIfDue). misttownSecretAttemptedAt хранит,
@@ -314,6 +324,7 @@ function restoreDailyQuestState() {
 
   if (s.ordoNextTryAt && typeof s.ordoNextTryAt === 'object') ordoNextTryAt = s.ordoNextTryAt;
   if (Number.isFinite(s.ordoItemsCollected)) ordoItemsCollected = s.ordoItemsCollected;
+  if (Number.isFinite(s.galleryLastDoneAt)) galleryLastDoneAt = s.galleryLastDoneAt;
 
   if (s.misttownSecretDueAt && typeof s.misttownSecretDueAt === 'object') misttownSecretDueAt = s.misttownSecretDueAt;
   if (s.misttownSecretAttemptedAt && typeof s.misttownSecretAttemptedAt === 'object') misttownSecretAttemptedAt = s.misttownSecretAttemptedAt;
@@ -361,7 +372,7 @@ function persistDailyQuestState() {
     elkHuntDayKey, elkHuntDoneToday,
     demonHuntDayKey, demonHuntDoneToday,
     schoolTempleDayKey, schoolTempleDoneToday,
-    ordoNextTryAt, ordoItemsCollected,
+    ordoNextTryAt, ordoItemsCollected, galleryLastDoneAt,
     misttownSecretDueAt, misttownSecretAttemptedAt, lastMisttownSecretCheckAt, needsArrowFarm,
     extraDailyDayKey, extraDailyDoneToday,
     thursdayDayKey, thursdayGravediggerDoneToday, thursdayButcherFightsToday, thursdayWitchFightsToday,
@@ -1790,6 +1801,32 @@ async function runDailyQuests(page, stats) {
         await resetToQuestMenu(page, questCount);
         listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
       }
+    }
+  }
+
+  // Галерея искусств (лазулиты): в меню Q не показывается вообще, берётся прямо у Марсиуса в
+  // Рыбацкой деревне, поэтому гейт только по собственному периоду. Маршрут -- guides/gallery.js.
+  if (exclusiveInProgress.length === 0 && Date.now() - galleryLastDoneAt >= GALLERY_PERIOD_MS) {
+    const galleryMisttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
+    const galleryHp = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
+    if (galleryMisttownSoon) {
+      console.log(`Галерея: пропускаю, скоро мисттаунское событие (${galleryMisttownSoon}).`);
+    } else if (typeof reserveMinutes !== 'number' || reserveMinutes < GALLERY_MIN_RESERVE_MINUTES) {
+      console.log(`Галерея: пропускаю (нужно >=${GALLERY_MIN_RESERVE_MINUTES} резервных минут, есть=${reserveMinutes ?? 'n/a'})`);
+    } else {
+      const galleryOk = await runNonQQuestSafe(page, 'Галерея искусств', () => runGalleryLazuliteQuest(page, {
+        fightLoop,
+        throwIfPaused: throwIfPausedByManager,
+        hpCurrent: galleryHp,
+        minHp: GALLERY_MIN_HP,
+      }));
+      if (galleryOk) {
+        didAnything = true;
+        galleryLastDoneAt = Date.now();
+        persistDailyQuestState();
+      }
+      await resetToQuestMenu(page, questCount);
+      listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
     }
   }
 

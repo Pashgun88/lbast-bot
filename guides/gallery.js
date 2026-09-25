@@ -1,33 +1,46 @@
-// «Галерея искусств» (лазулиты) — квест Рыбацкой деревни. Портирован из проекта AI-персонажа
-// (ветка claude/lbast-character-registration-gc7bey, ai_char/lib/quests_story.js), где пройден
-// вживую 14.09.2026.
+// «Галерея искусств» (лазулиты) — квест Рыбацкой деревни.
 //
 // Почему JS, а не *.steps: половина маршрута — не клики по тексту, а прямые переходы по href с
-// дописанными параметрами (&go=1 -> &go=3 у Марсиуса), плюс цикл «Искать лазулиты» со случайными
-// засадами. В формате шагов это не выражается.
+// дописанными параметрами (&go=1 -> &go=3 у Марсиуса), плюс сценка поиска с двумя боями.
 //
-// ВАЖНО, отличие от AI-персонажа: у него квест был помечен одноразовым (флаг galleryQuestDone).
-// Для Цунами это неверно — в каталоге «Все квесты» 25.09.2026 «Галерея искусств [с 2 ур.]» стоит
-// в разделе МНОГОРАЗОВЫЕ КВЕСТЫ. Поэтому здесь никакого «сделано навсегда»: период решает
-// вызывающий код по кулдауну из каталога.
+// Маршрут (подъезд перенесён из ai_char/lib/quests_story.js, сценка поиска продиктована Пашей
+// 25.09.2026 и уточнена разведкой того же дня):
+//   конь в Рыбацкую деревню (lway=7) -> Галерея искусств: &go=1 «Подняться в галерею»,
+//   &go=3 «Идти в каморку художника» — там Марсиус выдаёт задание
+//   -> 2 клетки на запад, на побережье
+//   -> «Искать лазулиты» -> «Свернуть на косу» -> несколько экранов «Идти вперед»/«Далее»
+//      -> «Ударить их мечом» -> ДВА боя подряд -> «Продолжить квест» -> «Уйти»
+//   -> 2 клетки на восток -> снова Галерея (&go=1 -> &go=3): доложить о выполнении ТАМ ЖЕ,
+//      где брали задание.
 //
-// Маршрут: конь в Рыбацкую деревню (lway=7) -> Галерея искусств (&go=1, затем &go=3 — это Марсиус
-// и выдача задания) -> 2 клетки на запад -> «Искать лазулиты» -> 2 клетки на восток -> снова
-// Галерея (&go=1 -> &go=3) — сдача.
+// Две ловушки, на которых спотыкалась версия AI-персонажа (обе исправлены здесь):
+//   1) там поиск был простым циклом «жать Искать лазулиты, пока не выпадет камень», а это
+//      ветвящаяся сценка: на развилке «Идти по берегу» / «Свернуть на косу» нужна именно коса;
+//   2) находку там определяли по слову «лазулит», а оно есть и в описании побережья — то есть
+//      «находка» засчитывалась там, где камня не было, и Марсиус потом выдавал задание заново.
 //
-// НЕ ЗАКОНЧЕН. Разведка 25.09.2026 показала, что поиск лазулитов устроен НЕ так, как в версии
-// AI-персонажа (там это был простой цикл «жать Искать лазулиты, пока не выпадет камень или
-// засада»). На самом деле это ветвящаяся сценка:
-//   1) «Искать лазулиты» -> «Вы бредете по побережью, высматривая синие камушки…» -> «Идти вперед»
-//   2) «…надежды обогатиться тают… Впереди узкая каменистая коса… едва уловимый переливчатый
-//      смех» -> ВЫБОР: «Идти по берегу» или «Свернуть на косу»
-// Какая ветка ведёт к лазулиту, а какая к засаде/потере — неизвестно, гайда у kate2008 на этот
-// квест нет. Поэтому цикл ниже честно упирается в развилку и выходит, а не гадает.
+// Ещё отличие: у AI-персонажа квест помечен одноразовым (флаг galleryQuestDone). Для Цунами это
+// неверно — в каталоге «Все квесты» он стоит в разделе МНОГОРАЗОВЫЕ КВЕСТЫ.
 const { sleep, getBodyText, goto } = require('./lib');
 const { travelWait, restIfBlocked } = require('./guide_run');
 
 const FISH_VILLAGE_KONJ = 'location.php?mod=konj&lway=7';
-const MAX_SEARCH_ATTEMPTS = 6;
+// Потолки на всякий случай: сценка конечная, но зацикливаться на ней мы не хотим.
+const MAX_SEARCH_ROUNDS = 4;
+const MAX_SCENE_SCREENS = 24;
+// Порог HP перед выездом. Это НЕ правило Паши (он его для этого квеста не задавал), а осторожный
+// дефолт: в сценке два боя подряд. Переопределяется через deps.minHp.
+const DEFAULT_MIN_HP = 1300;
+
+// Порядок = приоритет: на одном экране бывает несколько ссылок, берём первую из списка.
+// «Идти по берегу» сюда не входит НАМЕРЕННО — это вторая половина развилки, и она уводит мимо.
+const SCENE_STEPS = [
+  'Свернуть на косу',
+  'Ударить их мечом',
+  'Идти вперед',
+  'Продолжить квест',
+  'Далее',
+];
 
 function absUrl(href) {
   if (href.startsWith('http')) return href;
@@ -54,7 +67,8 @@ async function step(page, url, label) {
   return false;
 }
 
-// Марсиус в галерее: сначала &go=1 (войти), затем &go=3 (говорить). Так было записано живьём.
+// Марсиус: &go=1 — «Подняться в галерею», &go=3 — «Идти в каморку художника». Один и тот же
+// адрес и выдаёт задание, и принимает выполненное — зависит от того, с чем мы пришли.
 async function talkToMarsius(page, galleryHref) {
   const base = absUrl(galleryHref);
   await goto(page, `${base}&go=1`);
@@ -64,10 +78,73 @@ async function talkToMarsius(page, galleryHref) {
   return await getBodyText(page);
 }
 
+const SHORT = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+
+// Один заход в сценку: «Искать лазулиты» и дальше до конца (два боя и выход).
+// true — дошли до боёв (камень наш), false — коса не выпала, стоит повторить, null — сбой.
+async function runSearchScene(page, { fightLoop, throwIfPaused, round }) {
+  // Ссылка «Искать лазулиты» живёт на клетке (location.php), а сценка уводит на свои экраны,
+  // где её уже нет. Поэтому каждый заход начинаем с возврата на клетку.
+  await goto(page, 'location.php');
+  const search = await findHref(page, 'Искать лазулиты');
+  if (!search) {
+    console.log('Галерея: на клетке нет «Искать лазулиты» — маршрут сбился');
+    return null;
+  }
+  if (!(await step(page, absUrl(search), `искать лазулиты (заход ${round})`))) return null;
+
+  let fights = 0;
+  for (let screen = 0; screen < MAX_SCENE_SCREENS; screen++) {
+    if (throwIfPaused) throwIfPaused(`Галерея: сценка ${round}.${screen}`);
+    const text = await getBodyText(page);
+    console.log(`Галерея: сценка ${round}.${screen} >>> ${SHORT(text).slice(0, 200)}`);
+
+    if (/Ударить/i.test(text)) {
+      await fightLoop(page);
+      fights += 1;
+      console.log(`Галерея: бой ${fights} пройден`);
+      await sleep(1200);
+      continue;
+    }
+
+    const toFight = await findHref(page, 'В бой!');
+    if (toFight) {
+      if (!(await step(page, absUrl(toFight), `в бой (${fights + 1})`))) return null;
+      continue;
+    }
+
+    let next = null;
+    for (const name of SCENE_STEPS) {
+      const href = await findHref(page, name);
+      if (href) { next = { name, href }; break; }
+    }
+
+    if (next) {
+      if (!(await step(page, absUrl(next.href), next.name))) return null;
+      continue;
+    }
+
+    // Ссылок сценки не осталось. После боёв это конец — выходим «Уйти». До боёв это значит, что
+    // заход не вывел на косу (сценка случайная), и надо пробовать ещё раз.
+    const out = await findHref(page, 'Уйти');
+    if (out) await step(page, absUrl(out), 'Уйти');
+    if (fights > 0) return true;
+    console.log(`Галерея: заход ${round} кончился без боёв — коса не выпала, пробую снова`);
+    return false;
+  }
+
+  console.log(`Галерея: сценка ${round} не кончилась за ${MAX_SCENE_SCREENS} экранов`);
+  return fights > 0;
+}
+
 async function runGalleryLazuliteQuest(page, deps = {}) {
-  const { fightLoop, throwIfPaused } = deps;
+  const { fightLoop, throwIfPaused, hpCurrent = null, minHp = DEFAULT_MIN_HP } = deps;
   if (typeof fightLoop !== 'function') {
-    console.log('Галерея: не передан fightLoop, без него засады не пройти');
+    console.log('Галерея: не передан fightLoop, без него сценку не пройти');
+    return false;
+  }
+  if (minHp && typeof hpCurrent === 'number' && hpCurrent < minHp) {
+    console.log(`Галерея: пропускаю (нужно >=${minHp} HP на два боя подряд, есть=${hpCurrent})`);
     return false;
   }
 
@@ -84,18 +161,16 @@ async function runGalleryLazuliteQuest(page, deps = {}) {
   }
 
   let text = await talkToMarsius(page, galleryHref);
-
-  // Лазулит мог остаться с прошлого незавершённого захода — тогда Марсиус сразу принимает его.
-  if (/Благодарствую|Получено \d+ дин/i.test(text)) {
+  if (/Благодарствую|Получено \d+ дин|Задание выполнено/i.test(text)) {
     console.log('Галерея: лазулит был на руках, Марсиус принял — задание завершено');
     return true;
   }
-  if (!/Задание получено|лазулит/i.test(text)) {
-    console.log(`Галерея: неожиданный ответ Марсиуса, прекращаю: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
+  if (!/Задание получено/i.test(text)) {
+    console.log(`Галерея: Марсиус не выдал задание, прекращаю: ${SHORT(text).slice(0, 300)}`);
     return false;
   }
 
-  // На запад две клетки от деревни.
+  // На запад две клетки от деревни, на побережье.
   await goto(page, 'location.php');
   for (let i = 0; i < 2; i++) {
     if (throwIfPaused) throwIfPaused(`Галерея: запад ${i + 1}/2`);
@@ -107,56 +182,18 @@ async function runGalleryLazuliteQuest(page, deps = {}) {
     if (!(await step(page, absUrl(west), `на запад ${i + 1}/2`))) return false;
   }
 
-  // Поиск: засада либо находка. С заряженного экрана боя уйти нельзя, поэтому дерёмся, а не
-  // отказываемся -- отказ оставил бы висеть "В бой!" и его потом подобрал бы обработчик атак.
-  let found = false;
-  for (let attempt = 1; attempt <= MAX_SEARCH_ATTEMPTS && !found; attempt++) {
-    if (throwIfPaused) throwIfPaused(`Галерея: поиск ${attempt}`);
-    // Ссылка «Искать лазулиты» живёт на клетке (location.php), а сам поиск уводит на экран-
-    // виньетку, где её уже нет. Поэтому перед каждой попыткой возвращаемся на клетку.
-    await goto(page, 'location.php');
-    const search = await findHref(page, 'Искать лазулиты');
-    if (!search) {
-      console.log('Галерея: на клетке нет «Искать лазулиты» — маршрут сбился');
-      return false;
-    }
-    if (!(await step(page, absUrl(search), `искать лазулиты (${attempt})`))) return false;
-
-    // Поиск -- не один экран, а цепочка: «Искать лазулиты» даёт виньетку про побережье, дальше
-    // «Идти вперед» и так несколько раз, пока не выпадет находка или засада. Проверять текст на
-    // слово "лазулит" нельзя -- оно есть и в описании побережья; факт находки игра помечает
-    // скобками "[Получен ...]", как и в других квестах.
-    for (let screen = 0; screen < 10; screen++) {
-      text = await getBodyText(page);
-      console.log(`Галерея: поиск ${attempt}.${screen} >>> ${text.replace(/\s+/g, ' ').slice(0, 220)}`);
-
-      if (/В бой!/i.test(text)) {
-        console.log(`Галерея: засада на поиске (попытка ${attempt}), дерусь`);
-        await fightLoop(page);
-        break;
-      }
-      if (/\[\s*Получен/i.test(text)) {
-        console.log(`Галерея: лазулит найден (попытка ${attempt})`);
-        found = true;
-        break;
-      }
-
-      const next = await findHref(page, 'Идти вперед|Искать дальше|Далее');
-      if (!next) {
-        console.log(`Галерея: попытка ${attempt} кончилась без находки`);
-        break;
-      }
-      if (!(await step(page, absUrl(next), `поиск ${attempt}.${screen}`))) return false;
-    }
-    await sleep(1200);
+  let done = false;
+  for (let round = 1; round <= MAX_SEARCH_ROUNDS && !done; round++) {
+    const r = await runSearchScene(page, { fightLoop, throwIfPaused, round });
+    if (r === null) return false;
+    done = r;
   }
-
-  if (!found) {
-    console.log(`Галерея: за ${MAX_SEARCH_ATTEMPTS} попыток лазулит не нашёлся`);
+  if (!done) {
+    console.log(`Галерея: за ${MAX_SEARCH_ROUNDS} заходов сценка с косой так и не выпала`);
     return false;
   }
 
-  // Обратно две клетки на восток и сдача.
+  // Обратно две клетки на восток и доложить там же, где брали.
   await goto(page, 'location.php');
   for (let i = 0; i < 2; i++) {
     if (throwIfPaused) throwIfPaused(`Галерея: восток ${i + 1}/2`);
@@ -175,13 +212,13 @@ async function runGalleryLazuliteQuest(page, deps = {}) {
   }
 
   text = await talkToMarsius(page, galleryBack);
-  console.log(`Галерея: экран сдачи целиком >>> ${text.replace(/\s+/g, ' ')}`);
-  if (/Благодарствую|Получено \d+ дин/i.test(text)) {
-    console.log(`Галерея: лазулит сдан Марсиусу — ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
+  console.log(`Галерея: экран сдачи >>> ${SHORT(text).slice(0, 500)}`);
+  if (/Благодарствую|Получено \d+ дин|Задание выполнено/i.test(text)) {
+    console.log('Галерея: доложено Марсиусу, задание завершено');
     return true;
   }
 
-  console.log(`Галерея: сдача не подтвердилась: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
+  console.log('Галерея: сдача не подтвердилась (см. экран выше)');
   return false;
 }
 
@@ -200,8 +237,15 @@ if (require.main === module) {
     });
     const page = ctx.pages()[0] || (await ctx.newPage());
     const { fightLoop } = require('./fight_standalone');
-    const ok = await runGalleryLazuliteQuest(page, { fightLoop });
-    console.log('RESULT', ok);
-    await ctx.close();
+    try {
+      const ok = await runGalleryLazuliteQuest(page, { fightLoop });
+      console.log('RESULT', ok);
+    } catch (e) {
+      // Иначе упавший прогон (сеть, DNS) оставлял браузер висеть на профиле, и следующий запуск
+      // не мог его занять.
+      console.log('RESULT error', String(e.message).split('\n')[0]);
+    } finally {
+      await ctx.close();
+    }
   })();
 }
