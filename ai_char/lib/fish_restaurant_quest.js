@@ -258,8 +258,13 @@ async function progressFishRestaurantReward1(page) {
   let lastSignature = '';
   let sameScreenTimes = 0;
   let contDumped = false;
+  // Сколько раз подряд нажали «Продолжить квест» без единого шага сюжета между ними.
+  let contClicks = 0;
   for (let i = 0; i < REWARD1_MAX_SCREENS; i++) {
-    await skipTravelVignettes(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS]);
+    // 25.09.2026: пропуск виньеток стоял ЗДЕСЬ, до чтения экрана, и жал первую ссылку в рамке
+    // (`.bBorder a`). На диалоге Тёщи Кумуса это уводило на локацию форта, где оставалось одно
+    // «Продолжить квест» - отсюда и брался круг. Теперь виньетки пропускаем только тогда, когда
+    // на экране не нашлось ни известной реплики, ни боя, ни продолжения (ниже).
     const text = await getBodyText(page);
     if (/Задание выполнено|Задание завершено|Квест выполнен/i.test(text)) {
       console.log(`${FR}: задание выполнено (боёв ${fights}).`);
@@ -287,6 +292,7 @@ async function progressFishRestaurantReward1(page) {
     const step = find(REWARD1_STEPS);
     if (step) {
       idle = 0;
+      contClicks = 0;
       console.log(`${FR}: ${step.t}`);
       await page.goto(new URL(step.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 700, 1300);
@@ -313,7 +319,13 @@ async function progressFishRestaurantReward1(page) {
     const cont = find(['Продолжить квест']);
     if (cont) {
       idle = 0;
+      contClicks += 1;
       console.log(`${FR}: Продолжить квест (возврат в сцену)`);
+      if (contClicks > 3) {
+        console.log(`${FR}: «Продолжить квест» ${contClicks} раза подряд возвращает сюда же - сцена не открывается, выхожу.`);
+        console.log(`${FR}: ссылки экрана: ${links.map((l) => l.t).join(' | ').slice(0, 300)}`);
+        return false;
+      }
       if (!contDumped) {
         contDumped = true;
         console.log(`${FR}: экран перед «Продолжить квест»: ${links.map((l) => l.t).join(' | ').slice(0, 300)}`);
@@ -327,6 +339,10 @@ async function progressFishRestaurantReward1(page) {
     // Нечего нажать. Один раз перечитываем локацию (сцена могла ещё не проявиться), потом выходим.
     if (idle === 0) {
       idle = 1;
+      // Сначала пробуем пропустить виньетку (экран-флейвор с одной ссылкой), и только если и это
+      // не помогло - перечитываем локацию.
+      await skipTravelVignettes(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS]);
+      if (await existsAnyText(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS, 'Продолжить квест'])) continue;
       await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 900, 1500);
       continue;
