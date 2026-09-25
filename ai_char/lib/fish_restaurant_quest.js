@@ -257,6 +257,7 @@ async function progressFishRestaurantReward1(page) {
   // иначе не понять, какой реплики не хватает в REWARD1_STEPS.
   let lastSignature = '';
   let sameScreenTimes = 0;
+  let contDumped = false;
   for (let i = 0; i < REWARD1_MAX_SCREENS; i++) {
     await skipTravelVignettes(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS]);
     const text = await getBodyText(page);
@@ -269,7 +270,11 @@ async function progressFishRestaurantReward1(page) {
       .filter((x) => x.t && x.h)).catch(() => []);
     const find = (names) => links.find((l) => names.some((n) => l.t === n));
 
-    const signature = `${links.map((l) => l.t).join('|')}##${text.replace(/\s+/g, ' ').slice(0, 200)}`;
+    // Часы сайта в первой строке («09:28:54, Пт.») меняются каждую секунду: с ними в подписи любой
+    // экран выглядел новым, и защита от круга не срабатывала ни разу (живьём 25.09.2026, 40 кликов
+    // «Продолжить квест» подряд). Время из подписи вырезаем.
+    const plain = text.replace(/\d{1,2}:\d{2}(:\d{2})?/g, '').replace(/\s+/g, ' ');
+    const signature = `${links.map((l) => l.t).join('|')}##${plain.slice(0, 200)}`;
     sameScreenTimes = signature === lastSignature ? sameScreenTimes + 1 : 0;
     lastSignature = signature;
     if (sameScreenTimes >= 2) {
@@ -309,6 +314,11 @@ async function progressFishRestaurantReward1(page) {
     if (cont) {
       idle = 0;
       console.log(`${FR}: Продолжить квест (возврат в сцену)`);
+      if (!contDumped) {
+        contDumped = true;
+        console.log(`${FR}: экран перед «Продолжить квест»: ${links.map((l) => l.t).join(' | ').slice(0, 300)}`);
+        console.log(`${FR}: текст: ${plain.slice(0, 400)}`);
+      }
       await page.goto(new URL(cont.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 700, 1300);
       continue;
