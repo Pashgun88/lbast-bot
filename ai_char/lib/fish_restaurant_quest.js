@@ -393,6 +393,8 @@ async function runFishRestaurantQuestIfAvailable(page) {
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
     const locText = await getBodyText(page);
     if (!/Продолжить квест/i.test(locText)) {
+      // 25.09.2026: молчаливый выход было не отличить от «шаг вообще не вызвался» - пишем причину.
+      console.log(`Fish Restaurant: квеста нет в Q-меню и на локации нет «Продолжить квест» - пропускаю круг. В меню было: ${qNamesNow.join(', ').slice(0, 200)}`);
       return false;
     }
     console.log('Fish Restaurant: не в Q-меню, но есть "Продолжить квест" - квест в процессе, резюмирую.');
