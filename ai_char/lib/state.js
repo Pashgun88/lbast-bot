@@ -263,6 +263,10 @@ S.fishRestaurantJournalOpened = false;
 S.fishRestaurantDayKey = '';
 S.fishRestaurantDoneToday = false;
 S.fishRestaurantNextRewardNumber = 1;
+// Какие пронумерованные награды ресторана уже взяты. Паша 25.09.2026: «просто запиши что 1ая и 14ая
+// награды взяты» (14-я - Амулет исцеления, ветка «Болота»). Номер следующей награды перепрыгивает
+// всё, что в этом списке, чтобы не проходить уже пройденное.
+S.fishRestaurantRewardsTaken = [];
 // Паша, 17.09.2026: "рыбный ресторан ты начинал делать и убежал на другой квест". Маршрут
 // награды длинный (вереница шагов + 3 боя), и любой упавший шаг раньше просто возвращал
 // управление в цикл, который шёл к следующему квесту. Делаем квест эксклюзивным на время
@@ -385,6 +389,7 @@ function restoreDailyQuestState() {
   if (typeof s.fishRestaurantDayKey === 'string') S.fishRestaurantDayKey = s.fishRestaurantDayKey;
   if (typeof s.fishRestaurantDoneToday === 'boolean') S.fishRestaurantDoneToday = s.fishRestaurantDoneToday;
   if (Number.isFinite(s.fishRestaurantNextRewardNumber)) S.fishRestaurantNextRewardNumber = s.fishRestaurantNextRewardNumber;
+  if (Array.isArray(s.fishRestaurantRewardsTaken)) S.fishRestaurantRewardsTaken = s.fishRestaurantRewardsTaken.filter(Number.isFinite);
   if (typeof s.thursdayDailiesDayKey === 'string') S.thursdayDailiesDayKey = s.thursdayDailiesDayKey;
   if (s.thursdayDailiesDone && typeof s.thursdayDailiesDone === 'object') {
     S.thursdayDailiesDone = {
@@ -422,7 +427,7 @@ function persistDailyQuestState() {
     galleryQuestDone: S.galleryQuestDone,
     demonLakeDayKey: S.demonLakeDayKey, demonLakeDoneToday: S.demonLakeDoneToday,
     shipwreckDayKey: S.shipwreckDayKey, shipwreckDoneToday: S.shipwreckDoneToday,
-    fishRestaurantJournalOpened: S.fishRestaurantJournalOpened, fishRestaurantDayKey: S.fishRestaurantDayKey, fishRestaurantDoneToday: S.fishRestaurantDoneToday, fishRestaurantNextRewardNumber: S.fishRestaurantNextRewardNumber,
+    fishRestaurantJournalOpened: S.fishRestaurantJournalOpened, fishRestaurantDayKey: S.fishRestaurantDayKey, fishRestaurantDoneToday: S.fishRestaurantDoneToday, fishRestaurantNextRewardNumber: S.fishRestaurantNextRewardNumber, fishRestaurantRewardsTaken: S.fishRestaurantRewardsTaken,
     thursdayDailiesDayKey: S.thursdayDailiesDayKey, thursdayDailiesDone: S.thursdayDailiesDone,
     harpyHuntDayKey: S.harpyHuntDayKey, harpyHuntFightsToday: S.harpyHuntFightsToday,
   });

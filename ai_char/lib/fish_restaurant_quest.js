@@ -5,7 +5,7 @@
 // всплывают (hoisting), поэтому к моменту любого встречного require все функции уже здесь.
 module.exports = {
   goToFishRestaurant, progressFishRestaurantJournal, goToFishRestaurantBranch, skipTravelVignettes,
-  progressFishRestaurantHills, runFishRestaurantQuestIfAvailable,
+  progressFishRestaurantSwamp, progressFishRestaurantHills, runFishRestaurantQuestIfAvailable,
 };
 
 const {
@@ -239,8 +239,14 @@ const REWARD1_STEPS = [
   'Я насчет работы.', 'Скоро вернусь.', 'Ну рассказывай где искать мрамару?',
   'Веди-ка ты меня на болота',
   // Ветка «Болота»
-  'Идти направо за Яшкой', 'Забрать налево', 'Шагнуть вперёд', 'Шагнуть вперед',
+  'Идти направо за Яшкой', 'Главное это уверенность в себе',
+  'Забрать налево', 'Шагнуть вперёд', 'Шагнуть вперед',
   'Мы выберем то, что нам пригодится', 'Идти к лианам', 'Попробовать встать',
+  // После боя с Призраком в топях правильный выбор - БЕЖАТЬ. Паша прислал гайд 25.09.2026:
+  // «Бежать (Напасть » Бой сложный Призрак в топях*2 » Бежать)». Именно «Напасть» 25.09 увела
+  // в бой с двумя призраками и убила персонажа (HP -67/510). Реплики проверяются раньше боевых
+  // ссылок, поэтому на экране «Бежать | Напасть» жмётся «Бежать».
+  'Бежать',
 ];
 const REWARD1_FIGHT_LINKS = ['Напасть', 'В бой!', 'В бой'];
 const REWARD1_MAX_SCREENS = 40;
@@ -254,7 +260,7 @@ const BRANCH_EDGE = ['Веди-ка ты меня на опушку', 'опуш�
 // Реплики диалога ДО развилки - общие для любой ветки.
 const PRE_FORK_STEPS = ['Я насчет работы.', 'Скоро вернусь.', 'Ну рассказывай где искать мрамару?'];
 
-async function walkFishRestaurantScene(page, { label, branchName, branchTexts, steps }) {
+async function walkFishRestaurantScene(page, { label, branchName, branchTexts, steps, maxFights = 3 }) {
   const FR = label;
   await goToFishRestaurantBranch(page, branchName, branchTexts);
 
@@ -315,6 +321,14 @@ async function walkFishRestaurantScene(page, { label, branchName, branchTexts, s
     }
 
     const fight = find(REWARD1_FIGHT_LINKS);
+    if (fight && fights >= maxFights) {
+      // Предел боёв в сцене. На Болотах он равен одному: второй - тот самый сложный Призрак в
+      // топях x2, который убивает. Если правильной реплики («Бежать») на экране нет, лучше выйти и
+      // показать экран, чем лезть в заведомо проигранный бой.
+      console.log(`${FR}: боёв уже ${fights}, предел ${maxFights} - во второй бой не иду.`);
+      console.log(`${FR}: ссылки экрана: ${links.map((l) => l.t).join(' | ').slice(0, 300)}`);
+      return fights > 0;
+    }
     if (fight) {
       idle = 0;
       // Бой в сцене бросать нельзя - ждём подлечивания, а не убегаем (эскорт-квест).
@@ -384,15 +398,22 @@ async function progressFishRestaurantHills(page) {
   });
 }
 
-// Болота (награда №1) закрыты по решению Паши: «эту ветку больше вообще не проходить».
-// Функция оставлена только чтобы прошлое поведение не вызывалось случайно.
-async function progressFishRestaurantSwampDisabled() {
-  console.log('Рыбный ресторан: ветка «Болота» закрыта по решению Паши (второй бой не по силам) - не иду.');
-  return false;
+// Награда №1 - ветка «Болота» (Амулет исцеления). Паша уточнил 25.09.2026: «не болота а только
+// второй призрак в топях, там есть и другие прохождения в болотах». То есть ветка рабочая, запрещён
+// один конкретный бой - сложный Призрак в топях x2 после «Напасть». Отсюда maxFights: 1 - второй бой
+// в этой сцене не берём ни при каких условиях.
+async function progressFishRestaurantSwamp(page) {
+  return walkFishRestaurantScene(page, {
+    label: 'Рыбный ресторан (Болота)',
+    branchName: 'Болота',
+    branchTexts: BRANCH_SWAMP,
+    steps: REWARD1_STEPS,
+    maxFights: 1,
+  });
 }
 
 const FISH_RESTAURANT_REWARD_HANDLERS = {
-  1: progressFishRestaurantSwampDisabled,
+  1: progressFishRestaurantSwamp,
   2: progressFishRestaurantHills,
 };
 
@@ -448,6 +469,14 @@ async function runFishRestaurantQuestIfAvailable(page) {
   // до развилки Холмы/Болота/Опушка, не открывая журнал вовсе). Поэтому сначала пробуем
   // сегодняшнюю пронумерованную награду (она ограничена одной попыткой в день), а журнал -
   // только если наградный проход на сегодня уже сделан (не мешает ему, не блокирует его).
+  // Пропускаем номера наград, которые уже взяты (Паша 25.09.2026: «просто запиши что 1ая и 14ая
+  // награды взяты»). Иначе драйвер раз за разом ходил бы по уже пройденному маршруту.
+  const taken = new Set(S.fishRestaurantRewardsTaken || []);
+  while (taken.has(S.fishRestaurantNextRewardNumber)) {
+    console.log(`Рыбный ресторан: награда №${S.fishRestaurantNextRewardNumber} уже взята - перехожу к следующей.`);
+    S.fishRestaurantNextRewardNumber += 1;
+    persistDailyQuestState();
+  }
   const handler = FISH_RESTAURANT_REWARD_HANDLERS[S.fishRestaurantNextRewardNumber];
   if (handler) {
     // Берём фокус на время прохода: пока он держится, isExclusiveQQuestInProgress не даст
@@ -457,6 +486,9 @@ async function runFishRestaurantQuestIfAvailable(page) {
       () => handler(page), { keepPlace: true });
     if (ok) {
       S.fishRestaurantDoneToday = true;
+      if (!taken.has(S.fishRestaurantNextRewardNumber)) {
+        S.fishRestaurantRewardsTaken = [...(S.fishRestaurantRewardsTaken || []), S.fishRestaurantNextRewardNumber];
+      }
       S.fishRestaurantNextRewardNumber += 1;
       S.fishRestaurantFocusStartedAt = 0;
       S.fishRestaurantSuppressedUntil = 0;
