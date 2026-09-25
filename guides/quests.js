@@ -27,13 +27,14 @@ const GUIDE_QUESTS = [
     // сравнение всех восьми -- в шапке самого .steps.
     // Условия из гайда: с 8 уровня, раз в 15 дней, город Хорсхуф западнее Эльтауэра,
     // предусловие -- выполненная «Смерть ростовщика» (она же выше в этом списке).
-    // Маршрут вживую ещё не прогонялся: при первом расхождении раннер остановится и напишет,
-    // что было на экране, а quests.js отложит квест -- долбить одно и то же он не станет.
+    // Пройден вживую 25.09.2026: 472 дин + Эликсир регенерации, подробности в шапке .steps.
     name: 'Неожиданная встреча',
     files: ['neozhidannaya_vstrecha.steps'],
     periodDays: 15,
-    // Два боя плюс полтора десятка переходов по городу.
-    minReserveMinutes: 15,
+    // В меню Q не показывается вообще -- см. комментарий у гейта inQMenu ниже.
+    inQMenu: false,
+    // Два боя плюс полтора десятка переходов по городу; за прогон резерв ушёл с ~23 до 7.
+    minReserveMinutes: 20,
   },
 ];
 
@@ -64,7 +65,11 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
   // взятый квест из меню пропадает, а сцена остаётся.
   if (qs.part === undefined) {
     if (qs.lastDone && now - qs.lastDone < q.periodDays * 86400000) return false;
-    if (typeof isInMenu === 'function' && !isInMenu(q.name)) return false;
+    // inQMenu:false -- квест доступен, но в «Доступные задания» (меню Q) не показывается: он
+    // берётся прямо на месте, а меню про него ничего не знает. Таким гейт по меню закрыл бы путь
+    // навсегда (25.09.2026, «Неожиданная встреча»: в каталоге без кулдауна, в меню Q её нет).
+    // Для них единственный гейт -- собственный период квеста плюс бэкофф после сбоя.
+    if (q.inQMenu !== false && typeof isInMenu === 'function' && !isInMenu(q.name)) return false;
     if (q.minReserveMinutes && (typeof reserveMinutes !== 'number' || reserveMinutes < q.minReserveMinutes)) {
       console.log(`${q.name}: пропускаю (нужно >=${q.minReserveMinutes} резервных минут, есть=${reserveMinutes ?? 'n/a'})`);
       return false;

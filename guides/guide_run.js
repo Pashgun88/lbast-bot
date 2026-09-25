@@ -366,9 +366,13 @@ module.exports = { runGuide };
 if (require.main === module) {
   const { chromium } = require('playwright');
   (async () => {
+    const { browserLaunchArgs } = require('./lib');
     const ctx = await chromium.launchPersistentContext(path.join(__dirname, '..', 'chrome-profile'), {
       headless: false,
       viewport: null,
+      // Тот же обход DNS, что в look.js: у Chrome свой резолвер, и он иногда отдаёт
+      // ERR_NAME_NOT_RESOLVED на lbast.ru, когда curl с той же машины ходит нормально.
+      args: await browserLaunchArgs(),
     });
     const page = ctx.pages()[0] || (await ctx.newPage());
     const { fightLoop } = require('./fight_standalone');
