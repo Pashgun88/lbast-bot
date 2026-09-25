@@ -528,31 +528,11 @@ async function runOrdoMedalTurnIn(page) {
   return reports > 0 || items > 0;
 }
 
-// Слот «ответственного задания» один на всех: Ордо, демон, Штольни, бунгало. Ордо в цикле идёт
-// раньше демона и забирал слот каждый раз - в логе 24.09.2026 весь день «у вас уже есть задание»,
-// а у озера нет камышей, потому что задание на демона так и не взято. Паша: «Охота на демона -
-// нужно задание взять». Демон даётся раз в сутки, Ордо - сколько угодно, поэтому пока демон на
-// сегодня не сделан, новое задание Ордо не берём. Если демон почему-то не идёт, после трёх
-// попыток перестаём его ждать, чтобы не потерять и Ордо тоже.
-const DEMON_WAIT_MAX_ATTEMPTS = 3;
-let demonAttemptsToday = 0;
-let demonAttemptsDayKey = '';
-
-function demonHoldsTheSlot() {
-  const today = getDayKeyNow();
-  if (demonAttemptsDayKey !== today) {
-    demonAttemptsDayKey = today;
-    demonAttemptsToday = 0;
-  }
-  if (S.demonLakeDayKey === today && S.demonLakeDoneToday) return false;
-  return demonAttemptsToday < DEMON_WAIT_MAX_ATTEMPTS;
-}
-
+// 25.09.2026, Паша: «почему ордо ждет демона? они должны независимо выполнятся». 24.09 я решил, что
+// Ордо и демон делят один слот «ответственного задания», и поставил Ордо ждать демона до трёх
+// попыток в день. Это было неверно: квесты независимы, и ожидание просто съедало Ордо - в логе
+// весь день «Ордо: жду, пока возьмётся задание на демона». Ожидание убрано.
 async function runOrdoQuestsIfAvailable(page) {
-  if (demonHoldsTheSlot()) {
-    console.log('Ордо: жду, пока возьмётся задание на демона - слот задания один на двоих.');
-    return false;
-  }
   if (!(await resetToQuestMenu(page))) return false;
   await pause(page, 700, 1300);
   const names = parseQuestNamesFromQMenuText(await getBodyText(page));
@@ -595,7 +575,6 @@ async function runDemonLakeQuestIfAvailable(page) {
     return Boolean(reported);
   }
 
-  demonAttemptsToday += 1;
   const ok = await runNonQQuestSafe(page, 'Demon lake quest', () => progressDemonLakeQuest(page));
   if (ok) {
     S.demonLakeDoneToday = true;
