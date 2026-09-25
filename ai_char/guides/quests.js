@@ -167,6 +167,26 @@ async function runGuideQuestIfDue(page, q) {
     if (r.status !== 'done') {
       // Не долбим: после поражения ждём лечения, после расхождения с маршрутом — человека.
       const pauseMin = r.status === 'lost' ? 30 : 180;
+      // 25.09.2026, Паша: «не должно быть причины по которой они не сделались за полдня». Кузница
+      // Рума весь день падала на одном и том же шаге: сохранённый прогресс возобновлял маршрут с
+      // шага 1 («К месту выполнения»), а этот шаг есть только на экране инфо-квеста - персонаж же
+      // стоял где угодно. Пауза 3 часа, и то же самое заново. Теперь считаем срывы на ОДНОМ шаге:
+      // второй подряд - стираем прогресс и следующий заход начинаем с начала маршрута (@qinfo),
+      // а не с середины.
+      const sameStep = qs.failIndex === r.index && qs.failPart === p;
+      qs.failCount = sameStep ? (qs.failCount || 1) + 1 : 1;
+      qs.failIndex = r.index;
+      qs.failPart = p;
+      if (r.status === 'mismatch' && qs.failCount >= 2) {
+        clearProgress(q);
+        delete qs.part;
+        qs.failCount = 0;
+        qs.suppressedUntil = Date.now() + pauseMin * 60000;
+        st[q.name] = qs;
+        saveState(st);
+        console.log(`${q.name}: срыв на шаге ${r.index} второй раз подряд - стираю прогресс, следующий заход начну с начала маршрута (пауза ${pauseMin} мин).`);
+        return true;
+      }
       qs.part = p;
       qs.suppressedUntil = Date.now() + pauseMin * 60000;
       st[q.name] = qs;
@@ -182,6 +202,9 @@ async function runGuideQuestIfDue(page, q) {
   qs.lastDone = Date.now();
   delete qs.part;
   delete qs.suppressedUntil;
+  delete qs.failCount;
+  delete qs.failIndex;
+  delete qs.failPart;
   st[q.name] = qs;
   saveState(st);
   clearProgress(q);

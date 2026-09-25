@@ -11,7 +11,7 @@ module.exports = {
 const { S, getDayKeyNow, persistDailyQuestState, QUEST_FIGHT_HP_FLOOR } = require('./state');
 const { getBodyText, parseStats, pause } = require('./core');
 const { fightLoop } = require('./fight');
-const { noteHpFromPageText, questFightHpGate } = require('./hp');
+const { noteHpFromPageText, questFightHpGate, tryPerformStepOptional } = require('./hp');
 const {
   clickInfoForQuest, dropCurrentAssignment, hasAlreadyHasQuestText, parseQuestNamesFromQMenuText,
   resetToQuestMenu,
@@ -118,10 +118,14 @@ async function ensureTavernQuestTurnedIn(page, { questCount } = {}) {
     retries: 4,
   });
 
-  await performStep(page, {
+  // 25.09.2026, Паша: «не должно быть причины по которой они не сделались за полдня». Доклад уже
+  // прошёл («Доложить о выполнении» -> страница сменилась), а потом ОБЯЗАТЕЛЬНЫЙ шаг «В игру» ронял
+  // весь квест: ссылки на экране не было, performStep бросал ошибку, драйвер уходил в recoverToCity,
+  // и Харчевня осталась незакрытой на весь день - при том что в игре она была сдана. «В игру» - это
+  // косметический возврат на локацию, поэтому шаг необязательный.
+  await tryPerformStepOptional(page, {
     stepName: '\u0412 \u0438\u0433\u0440\u0443',
     currentTexts: ['\u0412 \u0438\u0433\u0440\u0443', '\u0432 \u0438\u0433\u0440\u0443'],
-    retries: 4,
   });
 
   console.log('Tavern quest: turn-in flow finished.');
