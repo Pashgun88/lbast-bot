@@ -523,6 +523,14 @@ async function runOrdoMedalTurnIn(page) {
     await pause(page, 400, 800);
   }
   if (reports || items) console.log(`Ордо: сдал предметов ${reports}, получил вещей ${items}.`);
+  if (items) {
+    // Паша, 25.09.2026: «я там медали обменял, меняй сразу чтобы видно было сколько колец».
+    // После обмена счёт колец устарел (кэш 30 мин) - сбрасываем и сразу печатаем, сколько их стало.
+    const offers = require('./offers');
+    offers.invalidateOrdoRingCache();
+    const rings = await offers.countOrdoRings(page).catch(() => null);
+    if (rings !== null) console.log(`Ордо: колец теперь ${rings} из 5 (нужно на крафт).`);
+  }
   if (items) await equipOrdoGear(page);
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return reports > 0 || items > 0;

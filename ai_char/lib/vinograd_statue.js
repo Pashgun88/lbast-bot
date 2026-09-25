@@ -237,7 +237,11 @@ async function runStatueOfGloryIfDue(page) {
   const buffLooksGone = hpMax > 0 && hpMax < (S.bestHpMaxSeen || 0);
   if (buffLooksGone) console.log(`Статуя славы: HP max ${hpMax} ниже виденного ${S.bestHpMaxSeen} - считаю, что бафа нет.`);
   if (left && Number(left[1]) >= 3 && !buffLooksGone) {
-    const wait = Math.min(Number(left[1]) - 2, 6 * 60); // перепроверка не реже раза в 6 ч
+    // 25.09.2026, Паша: «без статуи ходишь». Строке анкеты верить можно только до следующей
+    // проверки: в 17:27 она обещала 79 минут, код поставил сон на 77 минут - а к 17:40 баф уже
+    // кончился (в шапке 470/470, база без статуи). Поэтому спим не дольше 15 минут: чтение анкеты
+    // это одна страница, зато падение HP max замечаем почти сразу.
+    const wait = Math.min(Number(left[1]) - 2, 15);
     S.nextStatueDueAt = Date.now() + wait * 60000;
     persistDailyQuestState();
     // 24.09.2026, Паша: «что-то ты на статую славы не идёшь». Молчаливый выход было не отличить от

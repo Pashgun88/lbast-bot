@@ -5,7 +5,7 @@
 // (inv.php?mod=offers&go=...&offer_id=...). Свои исходящие (Продавец: AI__) не трогаем.
 // Принимаем только предметы заданий Ордо и только по цене не выше 60 за штуку - как в объявлении.
 
-module.exports = { acceptOrdoOffersIfAny, parseOffers };
+module.exports = { acceptOrdoOffersIfAny, parseOffers, countOrdoRings, invalidateOrdoRingCache };
 
 const { getBodyText, pause } = require('./core');
 const { SELF_NICK } = require('./state');
@@ -38,6 +38,10 @@ const RING_GOAL = 5;
 const RINGS_RECHECK_MS = 30 * 60 * 1000;
 let ringsCheckedAt = 0;
 let ringsOwned = 0;
+
+// Сбросить кэш счёта колец. Нужно сразу после обмена медалей: Паша 25.09.2026 - «меняй сразу чтобы
+// видно было сколько колец», а кэш держится 30 минут и показывал бы старое число.
+function invalidateOrdoRingCache() { ringsCheckedAt = 0; }
 
 // Сколько колец на руках. Паша 24.09.2026: «где 5 колец, у тебя одно в инвентаре и одно на тебе», а
 // счётчик рапортовал 4 из 5. Причина: `invMod=2&cpage=2` и `cpage=3` при отсутствии второй страницы
