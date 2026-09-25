@@ -941,6 +941,29 @@ async function loginIfNeeded(page) {
       idleStreak = 0;
       await pause(page, 800, 1500);
     } else {
+      // 25.09.2026, Паша: «продолжай фарм». Цикл ничего не сделал, а спать 20 минут при полном HP
+      // незачем: длинная фарм-сессия выше запускается только когда нет открытых боевых квестов, а
+      // в Q висели два задания Ордо, которые сами не стартуют (слот «ответственного задания» ждёт
+      // демона). Получалось ожидание ради квестов, которые всё равно не идут. Если делать нечего,
+      // а бои разрешены и HP хватает - идём фармить, а не спать.
+      if (process.env.AI_DISABLE_PODVALY !== '1' && getFightMode() === 'all' && !isSleepTime()) {
+        const idleFarmStats = await page
+          .goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 })
+          .then(async () => parseStats(await getBodyText(page)))
+          .catch(() => null);
+        if (idleFarmStats && hasEnoughHpForOptionalFight(idleFarmStats)) {
+          console.log('Простой без дел, HP в норме -> вместо ожидания иду фармить.');
+          const farmedIdle = await runFarmSession(page).catch((e) => {
+            console.log('Фарм-сессия (из простоя) упала:', e.message);
+            return false;
+          });
+          if (farmedIdle) {
+            idleStreak = 0;
+            await pause(page, 800, 1500);
+            continue;
+          }
+        }
+      }
       idleStreak += 1;
       // 2 мин, 4 мин, 8 мин ... максимум раз в 20 минут (чтобы не пропускать окно,
       // когда HP уже восстановилось до бойеспособного уровня, но следующая проверка
