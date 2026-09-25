@@ -110,24 +110,46 @@ function parseOffers(pageText) {
   return out;
 }
 
+// 25.09.2026, Паша: «письмо системное ты мне переслал но предметы не принял почемуто». Принимали
+// РОВНО ОДНО предложение за проход (после приёма список сдвигается, и сопоставление описаний с
+// кнопками ломается), а проход - раз в 10 минут. Galla выставила медальоны и цепи: медальоны ушли в
+// 10:36, цепи только в 10:48. Теперь забираем всё за один заход: после каждого приёма перечитываем
+// страницу заново и берём следующее, пока есть что брать и хватает денег.
 async function acceptOrdoOffersIfAny(page) {
   if (Date.now() - lastCheckAt < CHECK_EVERY_MS) return false;
   lastCheckAt = Date.now();
+  let acceptedTotal = 0;
+  let spentTotal = 0;
+  for (let round = 0; round < MAX_ACCEPTS_PER_PASS; round++) {
+    const r = await acceptOneOrdoOffer(page);
+    if (!r.accepted) break;
+    acceptedTotal += 1;
+    spentTotal += r.price;
+  }
+  if (acceptedTotal > 1) {
+    console.log(`Передачи: за этот заход принято ${acceptedTotal} предложений на ${spentTotal} дин.`);
+  }
+  return acceptedTotal > 0;
+}
+
+const MAX_ACCEPTS_PER_PASS = 10;
+
+async function acceptOneOrdoOffer(page) {
   await page.goto(OFFERS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
   const pageText = await getBodyText(page);
-  if (!/Цена сделки/.test(pageText)) return false;
+  if (!/Цена сделки/.test(pageText)) return { accepted: false, price: 0 };
   const money = Number((pageText.match(/У вас\s+(\d+)\s+дин/) || [])[1] || 0);
 
   const links = await readAcceptLinks(page);
   const offers = parseOffers(pageText);
-  if (!links.length || !offers.length) return false;
+  if (!links.length || !offers.length) return { accepted: false, price: 0 };
   if (links.length !== offers.length) {
     console.log(`Передачи: ${offers.length} описаний и ${links.length} кнопок «Принять» - не берусь сопоставлять, ничего не принимаю.`);
-    return false;
+    return { accepted: false, price: 0 };
   }
   if (!ORDO_BUYING_ENABLED) {
     for (const o of offers) console.log(`Передачи: лежит «${o.name}» x${o.qty} от ${o.seller} за ${o.price} дин - по приказу Паши ничего не принимаю.`);
-    return false;
+    return { accepted: false, price: 0 };
   }
   const hasOrdo = offers.some((o) => ORDO_ITEM_RE.test(o.name) && o.seller !== SELF_NICK);
   if (!hasOrdo) {
@@ -135,12 +157,12 @@ async function acceptOrdoOffersIfAny(page) {
       if (o.seller === SELF_NICK) continue; // своё исходящее предложение
       console.log(`Передачи: «${o.name}» от ${o.seller} за ${o.price} дин - это не ордо, не принимаю (жду тебя).`);
     }
-    return false;
+    return { accepted: false, price: 0 };
   }
   const rings = await countOrdoRings(page);
   if (rings >= RING_GOAL) {
     console.log(`Передачи: колец Ордо уже ${rings} из ${RING_GOAL} - на крафт хватает, больше не скупаю.`);
-    return false;
+    return { accepted: false, price: 0 };
   }
   console.log(`Передачи: колец Ордо ${rings}/${RING_GOAL} - беру предметы задания, пока хватает денег.`);
 
@@ -201,5 +223,5 @@ async function acceptOrdoOffersIfAny(page) {
     break;
   }
   if (accepted) console.log(`Передачи: принято ${accepted} предложение(й) на ${spent} дин.`);
-  return accepted > 0;
+  return { accepted: accepted > 0, price: spent };
 }
