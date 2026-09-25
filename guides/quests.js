@@ -36,6 +36,19 @@ const GUIDE_QUESTS = [
     // Два боя плюс полтора десятка переходов по городу; за прогон резерв ушёл с ~23 до 7.
     minReserveMinutes: 20,
   },
+  {
+    // Гайд kate2008 (zhg_web.php?st_id=202272), ветка 1. Пройден вживую 25.09.2026 с первого
+    // раза, без единой правки маршрута: 776 дин + праздничный эль, два боя, HP 3120 -> 2435.
+    // Эль нужен для Штолен, поэтому ветка 1, а не бескровная третья (она портит карму).
+    // Дорога -- @qinfo (телепорт «К месту выполнения»), как диктовал Паша 14.09.2026.
+    name: 'Кораблекрушение',
+    files: ['korablekrushenie.steps'],
+    // В каталоге сразу после сдачи встало «через 9 дн.» -- период ровно 10 суток.
+    periodDays: 10,
+    // Правило Паши, 25.09.2026: «10 резервов и 1300 хп».
+    minReserveMinutes: 10,
+    minHp: 1300,
+  },
 ];
 
 function loadState() {
@@ -54,7 +67,7 @@ function clearProgress(q) {
 
 // Возвращает true, если что-то делали (начали/продолжили квест).
 async function runGuideQuestIfDue(page, q, deps = {}) {
-  const { isInMenu, reserveMinutes } = deps;
+  const { isInMenu, reserveMinutes, hpCurrent } = deps;
   const st = loadState();
   const qs = st[q.name] || {};
   const now = Date.now();
@@ -72,6 +85,12 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
     if (q.inQMenu !== false && typeof isInMenu === 'function' && !isInMenu(q.name)) return false;
     if (q.minReserveMinutes && (typeof reserveMinutes !== 'number' || reserveMinutes < q.minReserveMinutes)) {
       console.log(`${q.name}: пропускаю (нужно >=${q.minReserveMinutes} резервных минут, есть=${reserveMinutes ?? 'n/a'})`);
+      return false;
+    }
+    // Порог в АБСОЛЮТНЫХ HP, а не в доле от максимума: правило задаётся числом (Паша, 25.09.2026
+    // про Кораблекрушение -- "10 резервов и 1300 хп"), и доля поехала бы при росте максимума.
+    if (q.minHp && (typeof hpCurrent !== 'number' || hpCurrent < q.minHp)) {
+      console.log(`${q.name}: пропускаю (нужно >=${q.minHp} HP, есть=${hpCurrent ?? 'n/a'})`);
       return false;
     }
 

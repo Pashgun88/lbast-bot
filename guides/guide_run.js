@@ -16,7 +16,7 @@
 //   @city N      амулетом в город: 1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак Хаоса,
 //                8 Девтаун, 9 Дорожный крест
 //   @heal 0.8    лечиться НА МЕСТЕ до доли от максимума HP (при висящем бое пропускается -- HP
-//                тогда не растёт)
+//                тогда не растёт). Значение БОЛЬШЕ 1 -- абсолютный порог в HP: @heal 1300.
 //   @fight       бой: порог HP, "В бой!"/"Принять бой"/"Напасть", затем fightLoop основного бота
 //   ?@fight      бой, только если он уже на экране (засады)
 //   @qinfo Имя   открыть [инфо] квеста в меню Q и уехать "К месту выполнения"
@@ -56,11 +56,14 @@ async function readHp(page) {
   return hp ? { hp: Number(hp[1]), max: Number(hp[2]), rate: rate ? Number(rate[1]) : null } : null;
 }
 
-async function healInPlace(page, frac) {
+// gate: доля от максимума HP (0..1) либо абсолютный порог, если больше 1. Абсолютный нужен там,
+// где порог задан правилом в HP, а не процентом (Паша, 25.09.2026 про Кораблекрушение:
+// "10 резервов и 1300 хп") -- доля привязалась бы к текущему максимуму и поехала бы при его росте.
+async function healInPlace(page, gate) {
   for (let i = 0; i < 20; i++) {
     const s = await readHp(page);
     if (!s) { await sleep(60000); continue; }
-    const target = Math.ceil(s.max * frac);
+    const target = gate > 1 ? Math.ceil(gate) : Math.ceil(s.max * gate);
     if (s.hp >= target) { console.log(`guide HP ${s.hp}/${s.max} >= ${target}`); return s; }
     const rate = s.rate > 0 ? s.rate : 14;
     const ms = Math.ceil(((target - s.hp) / rate) * 60000) + 10000;
@@ -203,13 +206,13 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         await goto(page, 'location.php');
         await travelWait(page);
       } else if (step.startsWith('@heal')) {
-        const frac = Number(step.split(/\s+/)[1] || HP_GATE);
+        const gate = Number(step.split(/\s+/)[1] || HP_GATE);
         await backToScene(page);
         const lh = await links(page);
         if (lh.some((x) => /^(В бой!?|Принять бой!?)$/i.test(x.t)) || /Ударить/.test(await getBodyText(page))) {
           console.log('guide: @heal пропущен -- бой уже висит, HP не восстанавливается');
         } else {
-          await healInPlace(page, frac);
+          await healInPlace(page, gate);
           await backToScene(page);
         }
       } else if (step.startsWith('@stop')) {
@@ -376,7 +379,8 @@ if (require.main === module) {
     });
     const page = ctx.pages()[0] || (await ctx.newPage());
     const { fightLoop } = require('./fight_standalone');
-    const r = await runGuide(page, process.argv[2], process.argv[3], { fightLoop });
+    const { resetToQuestMenu, clickInfoForQuest } = require('./qmenu_standalone');
+    const r = await runGuide(page, process.argv[2], process.argv[3], { fightLoop, resetToQuestMenu, clickInfoForQuest });
     console.log('RESULT', JSON.stringify(r));
     await ctx.close();
   })();

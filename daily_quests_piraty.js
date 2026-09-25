@@ -1811,6 +1811,7 @@ async function runDailyQuests(page, stats) {
           resetToQuestMenu,
           clickInfoForQuest,
           reserveMinutes,
+          hpCurrent: typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null,
           isInMenu: (name) => isQuestInMenu(listedQuests, name),
           throwIfPaused: throwIfPausedByManager,
         });
