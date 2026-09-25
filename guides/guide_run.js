@@ -363,7 +363,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   return result;
 }
 
-module.exports = { runGuide };
+module.exports = { runGuide, travelWait, restIfBlocked };
 
 // Разовый прогон в своём окне браузера (сценарий при этом должен быть остановлен -- один профиль).
 if (require.main === module) {
