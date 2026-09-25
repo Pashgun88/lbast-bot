@@ -157,6 +157,18 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         await sleep(6000);
         await goto(page, 'location.php');
         await travelWait(page);
+      } else if (step.startsWith('@ale')) {
+        // Выпить Праздничный эль ровно тогда, когда он нужен - перед боем, а не на старте маршрута
+        // (25.09.2026: два эля сгорели на заходах, упавших на первом шаге).
+        const { tryDrinkBuffAle, isAnyBuffAleActive } = require('../lib/recovery');
+        if (await isAnyBuffAleActive(page).catch(() => false)) {
+          console.log('@ale: баф эля уже висит, повторно не пью.');
+        } else if (await tryDrinkBuffAle(page, 'Праздничный эль').catch(() => false)) {
+          console.log('@ale: выпит Праздничный эль перед боем.');
+        } else {
+          console.log('@ale: эля нет - иду без него.');
+        }
+        await backToScene(page);
       } else if (step.startsWith('@heal')) {
         // heal in place to the given share of max HP (default HP_GATE) before a step that starts a fight
         const frac = Number(step.split(/\s+/)[1] || HP_GATE);

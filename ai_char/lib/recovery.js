@@ -6,7 +6,7 @@
 module.exports = {
   navigateFastway, goToStoneguardViaFastway, goToCityViaFastway, recoverToCity,
   scheduleLongRestMinutes, isOutfitSlotEmpty, ensureHealingGearEquipped, tryUseHealingElixir,
-  equipNextHealingElixir, normalizeItemName, tryDrinkBuffAle, ensureBuffAlesActive,
+  equipNextHealingElixir, normalizeItemName, tryDrinkBuffAle, ensureBuffAlesActive, hasBuffAleInBag,
   isAnyBuffAleActive, tryDrinkFestiveAle, useRecovery, goToChaosByAmulet, clickHealingRefreshLink,
   runLastHouseRecovery, getStatsFromPage, goToLocationAndReadStats,
 };
@@ -300,6 +300,24 @@ async function ensureBuffAlesActive(page) {
 }
 
 // HP_FLOOR_WITH_BUFF: определено в lib/state.js (константа нужна нескольким файлам).
+
+// Есть ли эль в сумке (не пьём, только смотрим). Нужно Штольням: раньше эль выпивался в момент
+// ПРОВЕРКИ условия, до старта маршрута, и сгорал зря, если маршрут падал на первом шаге
+// (25.09.2026: два эля за утро, оба на упавших заходах - Паша: «а зачем скрипт выпил эль?»).
+async function hasBuffAleInBag(page, aleName) {
+  const currentUrl = page.url();
+  try {
+    await page.goto('http://lbast.ru/inv.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const text = await getBodyText(page);
+    // Без регулярок: имя предмета сравниваем как подстроку нормализованного текста сумки.
+    const has = normalizeItemName(text).includes(normalizeItemName(aleName));
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return has;
+  } catch (e) {
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return false;
+  }
+}
 
 async function isAnyBuffAleActive(page) {
   const currentUrl = page.url();

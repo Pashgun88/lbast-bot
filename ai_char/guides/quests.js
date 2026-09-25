@@ -67,14 +67,18 @@ async function taskSlotFree(page) {
   return !/Текущее задание:[^\n]*отказаться/i.test(t);
 }
 
-// Эль перед Штольнями. true - можно начинать.
+// Эль перед Штольнями. true - можно начинать. 25.09.2026, Паша: «а зачем скрипт выпил эль?» -
+// раньше эль ВЫПИВАЛСЯ прямо здесь, в проверке условия: до маршрута, до его же лечения на 5 минут и
+// до всякой уверенности, что заход вообще состоится. Оба утренних захода упали на первом шаге, и оба
+// эля сгорели впустую. Теперь здесь только проверяем, что эль есть (или баф уже висит), а пьём его
+// в самом маршруте перед первым боем - директива @ale в shtolni.steps.
 async function aleReadyForShtolni(page) {
-  const { tryDrinkBuffAle, isAnyBuffAleActive } = require('../lib/recovery');
-  if (await tryDrinkBuffAle(page, 'Праздничный эль').catch(() => false)) {
-    console.log('Штольни: выпил Праздничный эль перед маршрутом.');
+  const { isAnyBuffAleActive, hasBuffAleInBag } = require('../lib/recovery');
+  if (await isAnyBuffAleActive(page).catch(() => false)) return true;
+  if (await hasBuffAleInBag(page, 'Праздничный эль').catch(() => false)) {
+    console.log('Штольни: Праздничный эль в сумке есть - выпью перед первым боем.');
     return true;
   }
-  if (await isAnyBuffAleActive(page).catch(() => false)) return true;
   let flag = '';
   try { flag = fs.readFileSync(path.join(__dirname, '..', 'shtolni_no_ale.flag'), 'utf8'); } catch { /* нет файла */ }
   const today = new Date().toLocaleDateString('sv-SE'); // ГГГГ-ММ-ДД по местному времени
