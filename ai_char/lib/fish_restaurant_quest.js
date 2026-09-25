@@ -5,7 +5,7 @@
 // всплывают (hoisting), поэтому к моменту любого встречного require все функции уже здесь.
 module.exports = {
   goToFishRestaurant, progressFishRestaurantJournal, goToFishRestaurantBranch, skipTravelVignettes,
-  progressFishRestaurantReward1, runFishRestaurantQuestIfAvailable,
+  progressFishRestaurantHills, runFishRestaurantQuestIfAvailable,
 };
 
 const {
@@ -245,16 +245,25 @@ const REWARD1_STEPS = [
 const REWARD1_FIGHT_LINKS = ['Напасть', 'В бой!', 'В бой'];
 const REWARD1_MAX_SCREENS = 40;
 
-async function progressFishRestaurantReward1(page) {
-  const FR = 'Рыбный ресторан reward #1';
-  await goToFishRestaurantBranch(page, 'Болота', ['Веди-ка ты меня на болота']);
+// Ветки развилки. Паша 25.09.2026: «пометь эту ветку как пройденую и иди со второй завтра»,
+// «эту ветку больше вообще не проходить» - Болота закрыты навсегда (там второй бой убивает даже с
+// тремя Большими эликсирами), следующая - Холмы.
+const BRANCH_SWAMP = ['Веди-ка ты меня на болота'];
+const BRANCH_HILLS = ['Веди-ка ты меня на холмы', 'холмы'];
+const BRANCH_EDGE = ['Веди-ка ты меня на опушку', 'опушк'];
+// Реплики диалога ДО развилки - общие для любой ветки.
+const PRE_FORK_STEPS = ['Я насчет работы.', 'Скоро вернусь.', 'Ну рассказывай где искать мрамару?'];
+
+async function walkFishRestaurantScene(page, { label, branchName, branchTexts, steps }) {
+  const FR = label;
+  await goToFishRestaurantBranch(page, branchName, branchTexts);
 
   let fights = 0;
   let idle = 0;
   // 25.09.2026, Паша: «рыбный ресторан застопорился». Проход молча накручивал 40 экранов: ветка
   // «Продолжить квест» была единственной без записи в лог и вела на тот же экран по кругу. Теперь
   // клик логируется, а одинаковый экран трижды подряд прекращает проход с полным дампом сцены -
-  // иначе не понять, какой реплики не хватает в REWARD1_STEPS.
+  // иначе не понять, какой реплики не хватает в списке шагов ветки.
   let lastSignature = '';
   let sameScreenTimes = 0;
   let contDumped = false;
@@ -295,7 +304,7 @@ async function progressFishRestaurantReward1(page) {
       return false;
     }
 
-    const step = find(REWARD1_STEPS);
+    const step = find(steps);
     if (step) {
       idle = 0;
       contClicks = 0;
@@ -347,8 +356,8 @@ async function progressFishRestaurantReward1(page) {
       idle = 1;
       // Сначала пробуем пропустить виньетку (экран-флейвор с одной ссылкой), и только если и это
       // не помогло - перечитываем локацию.
-      await skipTravelVignettes(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS]);
-      if (await existsAnyText(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS, 'Продолжить квест'])) continue;
+      await skipTravelVignettes(page, [...steps, ...REWARD1_FIGHT_LINKS]);
+      if (await existsAnyText(page, [...steps, ...REWARD1_FIGHT_LINKS, 'Продолжить квест'])) continue;
       await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 900, 1500);
       continue;
@@ -362,11 +371,39 @@ async function progressFishRestaurantReward1(page) {
   return false;
 }
 
+// Ветка «Холмы»: реплик после развилки мы ещё не видели. Проход идёт по экрану и при незнакомом
+// экране печатает его ссылки - по первому живому заходу список дополняется.
+const REWARD2_STEPS = [...PRE_FORK_STEPS, ...BRANCH_HILLS];
+
+async function progressFishRestaurantHills(page) {
+  return walkFishRestaurantScene(page, {
+    label: 'Рыбный ресторан (Холмы)',
+    branchName: 'Холмы',
+    branchTexts: BRANCH_HILLS,
+    steps: REWARD2_STEPS,
+  });
+}
+
+// Болота (награда №1) закрыты по решению Паши: «эту ветку больше вообще не проходить».
+// Функция оставлена только чтобы прошлое поведение не вызывалось случайно.
+async function progressFishRestaurantSwampDisabled() {
+  console.log('Рыбный ресторан: ветка «Болота» закрыта по решению Паши (второй бой не по силам) - не иду.');
+  return false;
+}
+
 const FISH_RESTAURANT_REWARD_HANDLERS = {
-  1: progressFishRestaurantReward1,
+  1: progressFishRestaurantSwampDisabled,
+  2: progressFishRestaurantHills,
 };
 
 // FISH_RESTAURANT_ENABLED: определено в lib/state.js (константа нужна нескольким файлам).
+
+// HP <= 0 - персонаж выбыл из строя (смерть уводит HP глубоко в минус).
+async function isCharacterDown(page) {
+  const t = await getBodyText(page).catch(() => '');
+  const m = t.match(/\((-?\d+)\/(\d+)\)/);
+  return Boolean(m) && Number(m[1]) <= 0;
+}
 
 async function runFishRestaurantQuestIfAvailable(page) {
   if (!FISH_RESTAURANT_ENABLED) {
@@ -424,6 +461,14 @@ async function runFishRestaurantQuestIfAvailable(page) {
       S.fishRestaurantFocusStartedAt = 0;
       S.fishRestaurantSuppressedUntil = 0;
       persistDailyQuestState();
+    } else if (await isCharacterDown(page)) {
+      // 25.09.2026: на Болотах второй бой убил персонажа. Один такой заход - это ~40 минут лежания,
+      // а без этой проверки квест возвращался каждые 30 минут и клал персонажа снова и снова.
+      // Больше одной смерти в ресторане за день не допускаем.
+      S.fishRestaurantDoneToday = true;
+      S.fishRestaurantFocusStartedAt = 0;
+      persistDailyQuestState();
+      console.log('Рыбный ресторан: персонаж погиб на проходе - закрываю квест на сегодня (одна смерть в день - предел).');
     } else {
       // Проход не продвинулся. Раньше фокус в таком случае висел до таймаута (часы), и всё это
       // время исключительный режим не пускал остальные квесты - Паша 24.09.2026 прислал список:
