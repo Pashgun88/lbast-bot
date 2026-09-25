@@ -7,7 +7,7 @@ const fs = require('fs');
 
 // Квесты, записанные маршрутом в guides/*.steps (см. guides/quests.js). Раннер общий и ничего
 // отсюда не импортирует -- бой и меню квестов передаются ему параметрами из runDailyQuests.
-const { runGuideQuestsIfDue, hasGuideQuestInProgress } = require('./guides/quests');
+const { runGuideQuestsIfDue, hasGuideQuestInProgress, GUIDE_QUESTS } = require('./guides/quests');
 
 // За сколько до мисттаунского события не начинать длинную цепочку по маршруту.
 const GUIDE_QUEST_MISTTOWN_GUARD_MS = 90 * 60 * 1000;
@@ -1637,7 +1637,9 @@ async function runDailyQuests(page, stats) {
     'Еда для рыбака',
     'Грабим корованы',
     'Варьете',
-    'Смерть ростовщика',
+    // Квесты по записанным маршрутам берём прямо из реестра guides/quests.js -- иначе каждый
+    // новый .steps пришлось бы дублировать ещё и здесь, и забытый квест молча уступал бы ферме.
+    ...GUIDE_QUESTS.map((q) => q.name),
     ...ORDO_QUESTS.map((q) => q.menu),
   ];
 
