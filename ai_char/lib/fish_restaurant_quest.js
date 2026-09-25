@@ -273,7 +273,13 @@ async function progressFishRestaurantReward1(page) {
     const links = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
       .map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') || '' }))
       .filter((x) => x.t && x.h)).catch(() => []);
-    const find = (names) => links.find((l) => names.some((n) => l.t === n));
+    // 25.09.2026, Паша: «рыбный ресторан застопорился». Сравнение было на точное равенство, а в
+    // игре реплики записаны с дефисом и точкой: на экране стояло «- Мы выберем то, что нам
+    // пригодится.», в списке - «Мы выберем то, что нам пригодится». Совпадения не было, и проход
+    // уходил в круг. Сравниваем по нормализованной подстроке: без ведущего тире, регистра и точки.
+    const normLink = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е')
+      .replace(/^[\s\-–—]+/, '').replace(/[.!?]+$/, '').replace(/\s+/g, ' ').trim();
+    const find = (names) => links.find((l) => names.some((n) => normLink(l.t).includes(normLink(n))));
 
     // Часы сайта в первой строке («09:28:54, Пт.») меняются каждую секунду: с ними в подписи любой
     // экран выглядел новым, и защита от круга не срабатывала ни разу (живьём 25.09.2026, 40 кликов
