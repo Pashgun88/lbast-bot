@@ -792,7 +792,13 @@ async function runShipwreckQuestIfAvailable(page) {
     const menuOk = await resetToQuestMenu(page);
     if (menuOk) {
       const qNames = parseQuestNamesFromQMenuText(await getBodyText(page));
-      if (!isQuestInMenu(qNames, QUEST)) {
+      // 25.09.2026, Паша: «так кораблекрушение мы же делали и записывали». Квест висел в Q, а флаг
+      // стоял «сделано». Причина: Q-меню иногда читается ПУСТЫМ (в логе «Q menu quest names: []»),
+      // и пустой список проходил как «квеста больше нет» - день закрывался без прохождения.
+      // Пустому разбору больше не верим: это сбой чтения, а не выполненный квест.
+      if (!qNames.length) {
+        console.log('Shipwreck quest: Q-меню прочиталось пустым - не считаю это выполнением, перепроверю в следующем круге.');
+      } else if (!isQuestInMenu(qNames, QUEST)) {
         S.shipwreckDoneToday = true;
         persistDailyQuestState();
         console.log('Shipwreck quest: done today (confirmed gone from Q).');
@@ -800,8 +806,9 @@ async function runShipwreckQuestIfAvailable(page) {
         console.log('Shipwreck quest: flow ran but quest still in Q -> will retry.');
       }
     } else {
-      S.shipwreckDoneToday = true;
-      persistDailyQuestState();
+      // Меню вообще не открылось - тоже сбой чтения, а не выполнение. Раньше здесь ставился флаг
+      // «сделано», и квест выпадал из дня целиком.
+      console.log('Shipwreck quest: Q-меню не открылось - выполнением не считаю, перепроверю позже.');
     }
   }
   return Boolean(ok);

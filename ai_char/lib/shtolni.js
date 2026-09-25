@@ -672,7 +672,8 @@ async function progressShtolniQuest(page) {
     if (backToQ) {
       const qText = await getBodyText(page);
       const qNames = parseQuestNamesFromQMenuText(qText);
-      const stillThere = isQuestInMenu(qNames, QUEST);
+      // Пустой разбор Q-меню - сбой чтения, а не исчезнувший квест (см. Кораблекрушение 25.09.2026).
+      const stillThere = !qNames.length || isQuestInMenu(qNames, QUEST);
       if (!stillThere) {
         finished = true;
       } else {
