@@ -631,61 +631,25 @@ async function progressShipwreckQuest(page) {
   await pause(page, 6500, 7500);
   await waitOutHorseTravel(page, page.url());
 
-  const preFightSteps = [
-    'Далее', 'Далее', 'Далее',
-    'По рукам, вези.',
-    'Столкнуть лодку в воду',
-    'Далее', 'Далее', 'Далее',
-    'Ступить на борт корабля',
-    'Идти в каюту капитана',
-    'Напасть на них',
-  ];
-  for (const step of preFightSteps) {
-    await tryPerformStepOptional(page, { stepName: step, currentTexts: [step, step.toLowerCase()] });
-    await pause(page, 700, 1300);
-  }
-
-  if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
-    if (!(await questFightHpGate(page, 'Кораблекрушение (бой 1)'))) return false;
-    await performStep(page, {
-      stepName: 'В бой!',
-      currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
-      retries: 4,
-    });
-    await fightLoop(page);
-  }
-
-  await pause(page, 700, 1300);
-  await tryPerformStepOptional(page, { stepName: 'Вернуться', currentTexts: ['Вернуться', 'вернуться'] });
-  await pause(page, 700, 1300);
-  await tryPerformStepOptional(page, { stepName: 'Продолжить квест', currentTexts: ['Продолжить квест', 'продолжить квест'] });
-  await pause(page, 700, 1300);
-
-  if (await existsAnyText(page, ['В бой!', 'в бой!', 'В бой', 'в бой'])) {
-    if (!(await questFightHpGate(page, 'Кораблекрушение (бой 2)'))) return false;
-    await performStep(page, {
-      stepName: 'В бой! (2)',
-      currentTexts: ['В бой!', 'в бой!', 'В бой', 'в бой'],
-      retries: 4,
-    });
-    await fightLoop(page);
-  }
-
-  await pause(page, 700, 1300);
-  const postFightSteps = [
-    'Продолжить квест',
-    'Открыть сундук',
-    'Взять деньги и вернуться на палубу',
-    'Сесть за весла',
-    'Причалить к берегу',
-    'достать мешочек с монетами из кармана',
-  ];
-  for (const step of postFightSteps) {
-    const ok = await tryPerformStepOptional(page, { stepName: step, currentTexts: [step, step.toLowerCase()] });
-    if (ok) await pause(page, 700, 1300);
-  }
-
-  return true;
+  // 25.09.2026: раньше здесь была жёсткая цепочка tryPerformStepOptional - каждый шаг молча
+  // пропускался, если его нет на экране, и в логе после «К месту выполнения» не было ничего.
+  // Паша: «так кораблекрушение мы же делали и записывали». Теперь идём по экрану общим проходом
+  // (lib/scene_walk.js), тем же, что вытащил Варьете и Рыбный ресторан. Список реплик - маршрут,
+  // продиктованный Пашей 14.09.2026; порядок в нём не важен, жмётся то, что на экране сейчас.
+  return walkQuestScene(page, {
+    label: 'Кораблекрушение',
+    steps: [
+      'По рукам, вези', 'Столкнуть лодку в воду',
+      'Ступить на борт корабля', 'Идти в каюту капитана',
+      'Вернуться',
+      'Открыть сундук', 'Взять деньги и вернуться на палубу',
+      'Сесть за весла', 'Сесть за вёсла',
+      'Причалить к берегу',
+      'достать мешочек с монетами из кармана',
+      'Далее',
+    ],
+    maxFights: 2,
+  });
 }
 
 // ===================================================================================
@@ -813,3 +777,4 @@ async function runShipwreckQuestIfAvailable(page) {
   }
   return Boolean(ok);
 }
+const { walkQuestScene } = require('./scene_walk');
