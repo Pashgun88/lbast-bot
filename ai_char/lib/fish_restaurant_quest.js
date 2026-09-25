@@ -241,6 +241,12 @@ async function progressFishRestaurantReward1(page) {
 
   let fights = 0;
   let idle = 0;
+  // 25.09.2026, Паша: «рыбный ресторан застопорился». Проход молча накручивал 40 экранов: ветка
+  // «Продолжить квест» была единственной без записи в лог и вела на тот же экран по кругу. Теперь
+  // клик логируется, а одинаковый экран трижды подряд прекращает проход с полным дампом сцены -
+  // иначе не понять, какой реплики не хватает в REWARD1_STEPS.
+  let lastSignature = '';
+  let sameScreenTimes = 0;
   for (let i = 0; i < REWARD1_MAX_SCREENS; i++) {
     await skipTravelVignettes(page, [...REWARD1_STEPS, ...REWARD1_FIGHT_LINKS]);
     const text = await getBodyText(page);
@@ -252,6 +258,16 @@ async function progressFishRestaurantReward1(page) {
       .map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') || '' }))
       .filter((x) => x.t && x.h)).catch(() => []);
     const find = (names) => links.find((l) => names.some((n) => l.t === n));
+
+    const signature = `${links.map((l) => l.t).join('|')}##${text.replace(/\s+/g, ' ').slice(0, 200)}`;
+    sameScreenTimes = signature === lastSignature ? sameScreenTimes + 1 : 0;
+    lastSignature = signature;
+    if (sameScreenTimes >= 2) {
+      console.log(`${FR}: один и тот же экран ${sameScreenTimes + 1} раза подряд - нужной реплики в списке нет.`);
+      console.log(`${FR}: ссылки экрана: ${links.map((l) => l.t).join(' | ').slice(0, 400)}`);
+      console.log(`${FR}: текст экрана: ${text.replace(/\s+/g, ' ').slice(0, 500)}`);
+      return false;
+    }
 
     const step = find(REWARD1_STEPS);
     if (step) {
@@ -282,6 +298,7 @@ async function progressFishRestaurantReward1(page) {
     const cont = find(['Продолжить квест']);
     if (cont) {
       idle = 0;
+      console.log(`${FR}: Продолжить квест (возврат в сцену)`);
       await page.goto(new URL(cont.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 700, 1300);
       continue;
