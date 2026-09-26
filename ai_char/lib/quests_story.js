@@ -366,6 +366,7 @@ async function progressOrdoQuest(page, q) {
     return false;
   }
 
+  let retriedRide = false;
   const horse = `http://lbast.ru/location.php?mod=konj&lway=q2001_${q.zad}`;
   await page.goto(horse, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await waitOutHorseTravel(page, 'http://lbast.ru/location.php');
@@ -392,12 +393,35 @@ async function progressOrdoQuest(page, q) {
       continue;
     }
     const next = ORDO_MISSION_STEPS.find((s) => text.includes(s));
-    if (!next) break; // миссия кончилась - обычная локация
+    if (!next) {
+      // 26.09.2026: здесь был молчаливый break, и он стоил вечера. Шаг Ордо взял задание, сделал
+      // один клик «Идти за скальную гряду», не нашёл следующего шага и ушёл - а задание осталось
+      // в слоте. Слот в игре один, поэтому весь вечер стояли Штольни («слот занят другим квестом»),
+      // и по экрану было не понять, на чём миссия оборвалась. Один раз пробуем заехать заново
+      // (сцена могла сброситься), и в любом случае печатаем экран.
+      console.log(`${q.label}: известного шага миссии на экране нет. Экран: ${snapshotText(text, 400)}`);
+      if (!retriedRide) {
+        retriedRide = true;
+        console.log(`${q.label}: пробую заехать на миссию заново.`);
+        await page.goto(horse, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await waitOutHorseTravel(page, 'http://lbast.ru/location.php');
+        continue;
+      }
+      break;
+    }
     await clickByTexts(page, [next], `${q.label}: ${next}`);
     await pause(page, 800, 1500);
   }
   if (!fought) {
-    console.log(`${q.label}: до боя не дошёл - решит меню Q в следующем цикле.`);
+    // Своё же только что взятое задание не бросаем в слоте: пока оно там, не идут ни Штольни, ни
+    // демон, ни второе Ордо. Снимаем ТОЛЬКО то, что взяли сами в этом же вызове (alreadyHasTask
+    // означает, что задание было чужим/прежним - его не трогаем, это решение Паши).
+    if (!alreadyHasTask) {
+      console.log(`${q.label}: до боя не дошёл, а задание взято мной же - снимаю его, чтобы не держать слот.`);
+      await dropCurrentAssignment(page, `${q.label}: миссия не прошла, слот не держим`);
+    } else {
+      console.log(`${q.label}: до боя не дошёл - решит меню Q в следующем цикле.`);
+    }
     return false;
   }
   console.log(`${q.label}: бой пройден, иду докладывать в башню.`);
