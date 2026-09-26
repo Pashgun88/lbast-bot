@@ -9,6 +9,7 @@ const fs = require('fs');
 // отсюда не импортирует -- бой и меню квестов передаются ему параметрами из runDailyQuests.
 const { runGuideQuestsIfDue, hasGuideQuestInProgress, GUIDE_QUESTS } = require('./guides/quests');
 const { runGalleryLazuliteQuest } = require('./guides/gallery');
+const { runFishRestaurantQuest } = require('./guides/fish_restaurant');
 
 // За сколько до мисттаунского события не начинать длинную цепочку по маршруту.
 const GUIDE_QUEST_MISTTOWN_GUARD_MS = 90 * 60 * 1000;
@@ -237,6 +238,11 @@ const GALLERY_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 // плюс десяток переходов.
 const GALLERY_MIN_RESERVE_MINUTES = 15;
 const GALLERY_MIN_HP = 1300;
+// Рыбный ресторан (Гретхис): ежедневный квест форта «Жженый лист». Пороги -- по замеру 26.09.2026:
+// за прогон резерв ушёл с 23 до -4, с вынужденным отдыхом 5 мин посреди сцены, поэтому 25 минут,
+// а не 15. HP -- как у Кораблекрушения: в худших ветках два-три боя подряд.
+const FISH_RESTAURANT_MIN_RESERVE_MINUTES = 25;
+const FISH_RESTAURANT_MIN_HP = 1300;
 // Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
 // уличного зазывалы и закэшированные, чтобы не ходить к нему каждый цикл (см. комментарий у
 // goToMisttownSecretArea/runMisttownSecretEventIfDue). misttownSecretAttemptedAt хранит,
@@ -1648,6 +1654,7 @@ async function runDailyQuests(page, stats) {
     'Еда для рыбака',
     'Грабим корованы',
     'Варьете',
+    'Рыбный ресторан',
     // Квесты по записанным маршрутам берём прямо из реестра guides/quests.js -- иначе каждый
     // новый .steps пришлось бы дублировать ещё и здесь, и забытый квест молча уступал бы ферме.
     ...GUIDE_QUESTS.map((q) => q.name),
@@ -1778,6 +1785,30 @@ async function runDailyQuests(page, stats) {
       if (await runQuestStepSafe(page, 'Варьете', () => progressVarieteQuest(page, { questCount }))) {
         didAnything = true;
       }
+    }
+    await resetToQuestMenu(page, questCount);
+    listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
+  }
+
+  // Рыбный ресторан: ежедневный квест форта «Жженый лист». Ветка выбирается не здесь, а внутри
+  // прохождения -- по [Журнал наград], который виден только у взятого задания (см. комментарий в
+  // guides/fish_restaurant.js). Поэтому гейт тут обычный: квест в меню, есть резерв и HP.
+  if (isQQuestAllowed('Рыбный ресторан') && isQuestInMenu(listedQuests, 'Рыбный ресторан')) {
+    const restMisttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
+    const restHp = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
+    if (restMisttownSoon) {
+      console.log(`Ресторан: пропускаю, скоро мисттаунское событие (${restMisttownSoon}).`);
+    } else {
+      await runQuestStepSafe(page, 'Рыбный ресторан', () => runFishRestaurantQuest(page, {
+        fightLoop,
+        throwIfPaused: throwIfPausedByManager,
+        resetToQuestMenu: (p) => resetToQuestMenu(p, questCount),
+        clickInfoForQuest,
+        hpCurrent: restHp,
+        reserveMinutes,
+        minHp: FISH_RESTAURANT_MIN_HP,
+        minReserveMinutes: FISH_RESTAURANT_MIN_RESERVE_MINUTES,
+      })) && (didAnything = true);
     }
     await resetToQuestMenu(page, questCount);
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
