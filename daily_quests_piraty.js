@@ -2893,8 +2893,22 @@ async function progressVarieteQuest(page, { questCount } = {}) {
 
   const DALEE = 'Далее'; // "Далее"
 
-  await click('Амулет', 'Амулет'); // Амулет
-  await click('Три поросенка', 'Три поросенка'); // Три поросенка
+  // "К месту выполнения" -- это конь, а не мгновенный переход: следующий шаг попадал на экран
+  // "Вы скачете... В пути еще N сек", и маршрут падал на "Амулет" (26.09.2026, четыре цикла
+  // подряд: Quest step error (Варьете): Не найден или не выполнен шаг "Амулет").
+  await waitOutHorseTravel(page);
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 800, 1600);
+
+  // Если конь уже довёз до города с таверной, Амулет и "Три поросенка" не нужны -- они остаются
+  // запасным путём на случай, когда "К месту выполнения" не сработало (кнопки нет, поездка не
+  // состоялась). Проверяем по "поросенка", а НЕ по "Таверна": таверна есть чуть ли не в каждом
+  // городе (в форте, например, "У старого Тролля"), и проверка по слову "Таверна" пропустила бы
+  // подход, стоя не в том городе, а следующий шаг увёл бы в чужое заведение.
+  if (!(await existsAnyText(page, ['поросенка', 'Поросенка']))) {
+    await click('Амулет', 'Амулет'); // Амулет
+    await click('Три поросенка', 'Три поросенка'); // Три поросенка
+  }
   await performStep(page, {
     stepName: 'Таверна «Три поросенка»',
     currentTexts: ['Таверна «Три поросенка»', 'таверна «три поросенка»', 'Таверна'],
@@ -6702,9 +6716,10 @@ function delayOrdoQuest(key, minutes, reason) {
   console.log(`Ордо (${key}): следующая попытка не раньше чем через ${minutes} мин (${reason})`);
 }
 
-// Прямой goto на конь-шорткат иногда приземляется на промежуточный экран поездки ("В пути еще
-// N сек") вместо конечной локации -- ждём и перезагружаем location.php, пока не доедем.
-async function waitOutOrdoHorseTravel(page, maxAttempts = 8) {
+// Конь (и прямой goto на конь-шорткат, и кнопка "К месту выполнения" у квеста) приземляет на
+// промежуточный экран поездки ("Вы скачете... В пути еще N сек") вместо конечной локации --
+// ждём и перезагружаем location.php, пока не доедем.
+async function waitOutHorseTravel(page, maxAttempts = 8) {
   for (let i = 0; i < maxAttempts; i++) {
     const text = await getBodyText(page);
     if (!/В\s*пути/i.test(text)) return;
@@ -6767,7 +6782,7 @@ async function progressOrdoQuest(page, q) {
   const horseUrl = `http://lbast.ru/location.php?mod=konj&lway=q2001_${q.zad}`;
   await page.goto(horseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await pause(page, 900, 1500);
-  await waitOutOrdoHorseTravel(page);
+  await waitOutHorseTravel(page);
 
   let fought = false;
 
