@@ -367,7 +367,7 @@ async function runCycleStep(page, label, fn) {
     if (!noFightLogged) {
       noFightLogged = true;
       console.log(fightMode === 'none'
-        ? 'Режим без боёв (приказ Паши): из боёв только бизон, кабан и Харчевня, остальное мирное.'
+        ? `Режим без боёв (приказ Паши): из боёв только бизон и Харчевня, и с ${Math.round(fightHpFraction() * 100)}% HP; остальное мирное.`
         : 'Режим только одиночных боёв (Паша, после руны): цепочки боёв пропускаю.');
     }
     return { didAnything: false, ko: false };
