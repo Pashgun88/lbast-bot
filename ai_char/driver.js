@@ -355,8 +355,12 @@ const SINGLE_FIGHT_STEPS = new Set([
   'gallery quest step',
   // Бизон разрешён даже в 'none' - Паша: «бизона можешь попробовать побить, он слабый».
 ]);
-const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round']);
-let noFightLogged = false;
+// 26.09.2026, Паша: «рыбий глаз тоже можешь делать». Мало было добавить имя квеста в
+// WEAK_FIGHT_QUESTS (это гейт Q-меню) - шаг цикла отсекался ЗДЕСЬ, по метке, и молча: за весь
+// день 0 боёв на арене при лимите 10 и невыполненном дейлике «шесть побед». Два гейта на одно
+// решение - и второй о первом не знает; поэтому ниже каждый пропущенный ШАГ пишет себя в лог.
+const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Fish Eye step']);
+const noFightLoggedSteps = new Set();
 
 async function runCycleStep(page, label, fn) {
   const fightMode = getFightMode();
@@ -364,11 +368,11 @@ async function runCycleStep(page, label, fn) {
   const blocked = fightMode === 'none' ? ((CHAIN_FIGHT_STEPS.has(label) || SINGLE_FIGHT_STEPS.has(label)) && !NONE_MODE_ALLOWED_STEPS.has(label))
     : fightMode === 'single' ? CHAIN_FIGHT_STEPS.has(label) : false;
   if (blocked) {
-    if (!noFightLogged) {
-      noFightLogged = true;
+    if (!noFightLoggedSteps.has(label)) {
+      noFightLoggedSteps.add(label);
       console.log(fightMode === 'none'
-        ? `Режим без боёв (приказ Паши): из боёв только бизон и Харчевня, и с ${Math.round(fightHpFraction() * 100)}% HP; остальное мирное.`
-        : 'Режим только одиночных боёв (Паша, после руны): цепочки боёв пропускаю.');
+        ? `Режим ожидания снаряжения: шаг "${label}" пропускаю (из боёв только бизон, кабан, Харчевня и Рыбий глаз, и с ${Math.round(fightHpFraction() * 100)}% HP).`
+        : `Режим только одиночных боёв: шаг "${label}" - цепочка боёв, пропускаю.`);
     }
     return { didAnything: false, ko: false };
   }
