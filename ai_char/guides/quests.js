@@ -61,10 +61,28 @@ const GUIDE_QUESTS = [
 // в анкете строка «Текущее задание: ... - отказаться».
 const SLOT_BUSY_TEXT_RE = /Вы еще не выполнили другое задание|У вас уже есть задание/i;
 const SLOT_RETRY_MIN = 20;
+const SLOT_TAKEN_RE = new RegExp(String.raw`Текущее задание:[^
+]*отказаться`, "i");
+const SLOT_LINE_RE = new RegExp(String.raw`Текущее задание:[^
+]*`, "i");
+// 26.09.2026: раньше при занятом слоте в логе было только «слот задания занят другим квестом», и
+// весь вечер ушёл на то, чтобы выяснить, КТО его занял (оказалось - брошенное задание Ордо).
+// Теперь строка анкеты уходит в лог вместе с отказом: причина видна сразу.
+let lastSlotBusyText = '';
 async function taskSlotFree(page) {
   await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
   const t = await m.getBodyText(page);
-  return !/Текущее задание:[^\n]*отказаться/i.test(t);
+  const busy = SLOT_TAKEN_RE.test(t);
+  if (busy) {
+    const line = (t.match(SLOT_LINE_RE) || [''])[0].replace(/\s+/g, ' ').trim();
+    if (line !== lastSlotBusyText) {
+      lastSlotBusyText = line;
+      console.log(`Слот задания занят, анкета говорит: «${line}»`);
+    }
+  } else {
+    lastSlotBusyText = '';
+  }
+  return !busy;
 }
 
 // Эль перед Штольнями. true - можно начинать. 25.09.2026, Паша: «а зачем скрипт выпил эль?» -
