@@ -717,7 +717,7 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       // 21.09.2026, Паша: раз в 3 дня продавать всю жареную рыбу в Лавке боевых ресурсов Стоунгарда.
-      r = await runCycleStep(page, 'Продажа рыбы', () => sellFriedFishIfDue(page));
+      r = await runCycleStep(page, 'Продажа в лавке ресурсов', () => sellFriedFishIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
       // 23.09.2026, Паша: «будут писать письма о продаже - не забывай принимать в инвентаре.
