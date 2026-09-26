@@ -80,9 +80,11 @@ const HEAL_RATE_HP_PER_MIN = 16;
 // недостаточным запасом против всплеска урона - поднято до 70% (тот же вывод, что раньше
 // сделали для банкира асассинов после его живого КО).
 const OPTIONAL_FIGHT_MIN_HP_FRACTION = 0.7;
+// Порог берём не константой, а через fightHpFraction(): в режиме ожидания шмота (no_fight.flag)
+// он поднимается до 90% - Паша 26.09.2026: «кроме харчевни и бизона и то с 90% начинай».
 function hasEnoughHpForOptionalFight(stats) {
   if (typeof stats.hpCurrent !== 'number' || typeof stats.hpMax !== 'number') return false;
-  return stats.hpCurrent > stats.hpMax * OPTIONAL_FIGHT_MIN_HP_FRACTION;
+  return stats.hpCurrent > stats.hpMax * fightHpFraction();
 }
 
 // Единый хелпер для каждого необязательного/дневного шага цикла - зеркалит
@@ -315,7 +317,7 @@ async function runFarmSession(page) {
 // в общем всё что без боя»). Включается файлом-флагом ai_char/no_fight.flag или AI_NO_FIGHT=1 -
 // файл проверяется каждый цикл, поэтому режим снимается и включается без перезапуска драйвера.
 // Мирное продолжает работать: рыбалка, травы, довольствие, дерево жизни, статуя, кухня, письма, чат.
-const { getFightMode, S } = require('./lib/state');
+const { getFightMode, fightHpFraction, S } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
@@ -849,7 +851,7 @@ async function loginIfNeeded(page) {
       const farmAllowed = hpOkForFarm && !questsPending; // бизон разрешён и в режиме без боёв
       const farmAllowedFull = farmAllowed && !noFight;   // кабан и гарпия - только в обычном режиме
       if (!hpOkForFarm) {
-        console.log(`Ферма пропущена: HP ${stats.hpCurrent}/${stats.hpMax} < ${OPTIONAL_FIGHT_MIN_HP_FRACTION * 100}% - это HP нужно квестам.`);
+        console.log(`Ферма пропущена: HP ${stats.hpCurrent}/${stats.hpMax} < ${Math.round(fightHpFraction() * 100)}% - это HP нужно квестам.`);
       } else if (questsPending) {
         console.log(`Ферма пропущена: есть невыполненные квесты с боями - HP берегу под них: ${(S.farmHeldBy || ['Q-меню ещё не читали']).join(', ')}`);
       }
@@ -886,8 +888,9 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'Boar farm round', () => {
-        // Кабан разрешён и в режиме без боёв (Паша, 23.09.2026), поэтому farmAllowed, не Full.
-        if (!farmAllowed) return Promise.resolve(false);
+        // 23.09.2026 кабан был разрешён и в режиме без боёв, но 26.09.2026 Паша сузил список:
+        // «кроме харчевни и бизона», то есть кабан теперь только в обычном режиме.
+        if (!farmAllowedFull) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
         if (!hideBalanceAllows('boar')) {
           console.log(`Кабан пропущен: кож кабана ${S.lastHideCounts.boar}, бизона ${S.lastHideCounts.bison} - догоняем бизоном.`);

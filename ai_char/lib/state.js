@@ -521,6 +521,14 @@ const AI_SELF_NICK_RE = /\bAI__\b/i;
 // снял ~225 HP за бой даже с эликсиром, 17.09.2026 персонаж погиб на Харчевне/Демоне озера,
 // зайдя в бой без всякой проверки. Дешевле пропустить квест до следующего цикла, чем лечиться.
 const QUEST_FIGHT_HP_FLOOR = 0.7;
+// Пока на нас снаряжение прошлого уровня, бои идут только с почти полного HP. Паша 26.09.2026:
+// «пока не одел шмот на свой уровень тормози бои, кроме харчевни и бизона и то с 90% начинай».
+// Режим 'none' (файл no_fight.flag) как раз и оставляет только бизона и Харчевню - здесь поднимаем
+// для них порог. Как только наденем вещи под уровень, флаг удаляется и всё возвращается к 0.7.
+const GEAR_WAIT_HP_FRACTION = 0.9;
+function fightHpFraction() {
+  return getFightMode() === 'none' ? GEAR_WAIT_HP_FRACTION : QUEST_FIGHT_HP_FLOOR;
+}
 
 // (из lib/stats_decisions.js)
 // Below this HP a simple Chaos Fist heal is not enough; go recover at Форпост/Последний дом instead.
@@ -616,6 +624,6 @@ module.exports = {
   EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, EXCLUSIVE_QUEST_TIMEOUT_BACKOFF_MS,
   EXCLUSIVE_QUEST_CONFLICT_BACKOFF_MS, AI_SELF_NICK, AI_SELF_NICK_RE, QUEST_FIGHT_HP_FLOOR,
   LAST_HOUSE_HP_THRESHOLD, DEVTOWN_FASTWAY_URL, HEALING_ELIXIR_HP_FRACTION, HP_FLOOR_WITH_BUFF,
-  WEAK_FIGHT_QUESTS,
+  WEAK_FIGHT_QUESTS, GEAR_WAIT_HP_FRACTION, fightHpFraction,
   DEMON_LAKE_FASTWAY_URL, FISH_RESTAURANT_ENABLED,
 };

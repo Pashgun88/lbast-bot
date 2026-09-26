@@ -9,7 +9,7 @@ module.exports = {
   getReserveMinutesSafe, waitForReserveAtLeast, waitForHpAbove, tryPerformStepOptional,
 };
 
-const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, getFightMode, PEACEFUL_QUESTS, WEAK_FIGHT_QUESTS, CHAIN_FIGHT_QUESTS } = require('./state');
+const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, fightHpFraction, getFightMode, PEACEFUL_QUESTS, WEAK_FIGHT_QUESTS, CHAIN_FIGHT_QUESTS } = require('./state');
 const { fixedPause, getBodyText, parseStats, pause } = require('./core');
 const { handleIncomingAttackIfAny } = require('./pvp');
 const { recoverToCity } = require('./recovery');
@@ -46,10 +46,12 @@ function noteHpFromPageText(text, label) {
 // здесь нельзя писать `typeof hp === 'number' && hp < max*0.7` - на null все условия ложны и
 // гейт молча пропускает бой. hpFractionForGate падает на последнее достоверное чтение, а если
 // и его нет - возвращает null, и это ЗАПРЕТ боя, а не разрешение.
+// floor по умолчанию берётся динамически: в режиме ожидания шмота (no_fight.flag) это 90%, иначе 70%
+// (Паша 26.09.2026: «кроме харчевни и бизона и то с 90% начинай»). Явно переданный floor сильнее.
 async function questFightHpGate(
   page,
   label,
-  floor = QUEST_FIGHT_HP_FLOOR,
+  floor = fightHpFraction(),
   { waitForRecovery = false, maxWaitMs = 40 * 60 * 1000 } = {},
 ) {
   const text = await getBodyText(page).catch(() => '');
@@ -118,7 +120,7 @@ async function questFightHpGate(
 // ни Q-меню, ни дейликов. Драйвер при этом не падает - он послушно ждёт по 16 минут.
 // Вывод общий: перебирать слова выхода бесполезно, отказываться надо ТАМ, ГДЕ ЕЩЁ МОЖНО УЙТИ,
 // то есть до входа. Сюда же относится любой маршрут в один конец.
-async function preTripHpGate(page, label, floor = QUEST_FIGHT_HP_FLOOR) {
+async function preTripHpGate(page, label, floor = fightHpFraction()) {
   await page
     .goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 })
     .catch(() => {});
