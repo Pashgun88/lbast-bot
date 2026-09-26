@@ -101,6 +101,11 @@ const FARM_SESSION_MIN = Number(process.env.AI_FARM_SESSION_MIN || 60);
 const FARM_HEAL_TARGET = 0.95;
 // До какого HP лечимся, когда ждут квесты с боями (порог входа в них - 70%, берём с запасом).
 const QUEST_HEAL_TARGET = 0.85;
+// Цель лечения обязана быть ВЫШЕ боевого порога, иначе драйвер лечится до 85%, а бой требует 90% -
+// и так по кругу (поймано сразу после включения режима ожидания шмота 26.09.2026).
+function questHealTarget() {
+  return Math.max(QUEST_HEAL_TARGET, Math.min(0.98, fightHpFraction() + 0.03));
+}
 
 // Сон с 23:00 до 05:00 (Паша, 19.09.2026: «уходи спать с 23:00 по 05:00 - солдатский сон короткий
 // но крепкий»). Во сне ни фарма, ни квестов, ни чата. Спать уходит домой, в Кулак Хаоса. Подъём в
@@ -646,7 +651,7 @@ async function loginIfNeeded(page) {
       if (typeof stats.hpCurrent === 'number' && stats.hpMax > 0
         && stats.hpCurrent < stats.hpMax * OPTIONAL_FIGHT_MIN_HP_FRACTION
         && (hasPendingFightQuests() || getFightMode() !== 'all') && !isSleepTime()) {
-        const target = Math.ceil(stats.hpMax * QUEST_HEAL_TARGET);
+        const target = Math.ceil(stats.hpMax * questHealTarget());
         console.log(`Лечение под квесты: HP ${stats.hpCurrent}/${stats.hpMax} -> до ${target} (есть квесты с боями).`);
         if (!/Кулак Хаоса/i.test(text)) {
           await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
