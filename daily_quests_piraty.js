@@ -5590,6 +5590,25 @@ async function openAmberFight(page) {
   }
 }
 
+// Хвост после боя в шахте. fightLoop жмёт только "Бой завершен!"/"Вернуться" и уходит, а у горы
+// после этого остаётся ещё "Продолжить квест" (и иногда "Уйти") -- без них сцена квеста висит
+// незакрытой, и следующий заход в шахту начинается не с начала. Перенесено из finishAmberQuest
+// в yantar_v_gore.js: при первом порте Янтарной горы я взял только маршрут ДО боя (Паша,
+// 26.09.2026: "почему то не продолжает квест после боя").
+async function finishAmberQuest(page) {
+  const SEQUENCE = [
+    { texts: ['Бой завершен!', 'Бой завершен'], label: 'Бой завершен!' },
+    { texts: ['Вернуться', 'вернуться'], label: 'Вернуться' },
+    { texts: ['Продолжить квест', 'продолжить квест'], label: 'Продолжить квест' },
+    { texts: ['Уйти', 'уйти', 'Выйти', 'выйти'], label: 'Уйти' },
+  ];
+
+  for (const step of SEQUENCE) {
+    const clicked = await clickByTexts(page, step.texts, `Янтарная гора: ${step.label}`).catch(() => false);
+    if (clicked) await pause(page, 1000, 2000);
+  }
+}
+
 function isAmberLocation(text) {
   const s = String(text || '');
   return /Янтарная\s+гора/i.test(s) || /Спуститься в шахту/i.test(s) || /Идти к горе/i.test(s);
@@ -9460,6 +9479,7 @@ async function doScenario(page) {
     try {
       await ensureFarmFightScreen(page);
       await fightLoop(page);
+      if (FARM_TARGET === 'yantar') await finishAmberQuest(page);
       didAnyFarmFight = true;
     } catch (e) {
       if (isScenarioPausedError(e)) throw e;
