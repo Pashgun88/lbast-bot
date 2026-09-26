@@ -7,7 +7,10 @@
 
 const { chromium } = require('playwright');
 const path = require('path');
-const { runGuideQuestsIfDue } = require('./guides/quests');
+const { runGuideQuestsIfDue, GUIDE_QUESTS, STATE_FILE: GUIDE_STATE_FILE } = require('./guides/quests');
+function readGuideState() {
+  try { return JSON.parse(require('fs').readFileSync(GUIDE_STATE_FILE, 'utf8')); } catch (e) { return {}; }
+}
 const { runBungaloIfDue } = require('./guides/bungalo');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
@@ -322,7 +325,7 @@ async function runFarmSession(page) {
 // в общем всё что без боя»). Включается файлом-флагом ai_char/no_fight.flag или AI_NO_FIGHT=1 -
 // файл проверяется каждый цикл, поэтому режим снимается и включается без перезапуска драйвера.
 // Мирное продолжает работать: рыбалка, травы, довольствие, дерево жизни, статуя, кухня, письма, чат.
-const { getFightMode, fightHpFraction, S } = require('./lib/state');
+const { getFightMode, fightHpFraction, S, SHTOLNI_MIN_HP_FRACTION } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
@@ -363,6 +366,20 @@ const SINGLE_FIGHT_STEPS = new Set([
 // решение - и второй о первом не знает; поэтому ниже каждый пропущенный ШАГ пишет себя в лог.
 const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Fish Eye step']);
 const noFightLoggedSteps = new Set();
+
+// Есть ли квест по гайду, который сейчас доступен и ждёт только HP? Штольни требуют почти полного
+// запаса (SHTOLNI_MIN_HP_FRACTION), и ферма-филлер обязана уступить: квест раз в сутки, ферма - нет.
+function guideQuestWaitsForHp(stats) {
+  if (!stats || typeof stats.hpCurrent !== 'number' || !stats.hpMax) return null;
+  const st = readGuideState();
+  const q = GUIDE_QUESTS.find((x) => x.name === 'Штольни');
+  if (!q) return null;
+  const done = st['Штольни'] && st['Штольни'].lastDone;
+  const sameDay = done && new Date(done).toLocaleDateString('ru-RU') === new Date().toLocaleDateString('ru-RU');
+  if (sameDay) return null;
+  const need = Math.ceil(stats.hpMax * SHTOLNI_MIN_HP_FRACTION);
+  return stats.hpCurrent < need ? `Штольни (нужно ${need}/${stats.hpMax})` : null;
+}
 
 async function runCycleStep(page, label, fn) {
   const fightMode = getFightMode();
@@ -1015,7 +1032,14 @@ async function loginIfNeeded(page) {
           .goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 })
           .then(async () => parseStats(await getBodyText(page)))
           .catch(() => null);
-        if (idleFarmStats && hasEnoughHpForOptionalFight(idleFarmStats)) {
+        // 26.09.2026: этой веткой ферма обходила бронь HP под квесты. Живой случай того же вечера:
+        // Штольни ждали 99% HP (456/460), простой запустил фарм-сессию на 60 минут при 423/460, и
+        // бизон стачивал ровно то HP, которого квесту не хватало. Квест раз в сутки важнее филлера,
+        // поэтому в простое смотрим, не ждёт ли кто-то HP.
+        const shtolniWaitsForHp = guideQuestWaitsForHp(idleFarmStats);
+        if (shtolniWaitsForHp) {
+          console.log(`Простой: не фармлю - ${shtolniWaitsForHp} ждёт HP (${idleFarmStats.hpCurrent}/${idleFarmStats.hpMax}).`);
+        } else if (idleFarmStats && hasEnoughHpForOptionalFight(idleFarmStats)) {
           console.log('Простой без дел, HP в норме -> вместо ожидания иду фармить.');
           const farmedIdle = await runFarmSession(page).catch((e) => {
             console.log('Фарм-сессия (из простоя) упала:', e.message);
