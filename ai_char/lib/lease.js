@@ -223,11 +223,22 @@ async function acceptPendingLeasesIfAny(page) {
   const afterStats = await readCombatStats(page);
   console.log(`Аренда: мф было ${formatStats(before)}; стало ${formatStats(afterStats)} (надето вещей: ${wornCount} из ${rented.length}).`);
 
-  if (wornCount > 0) resumeNormalFighting('арендованный шмот надет');
+  // Снимать ограничение на бои можно только если шмот РЕАЛЬНО улучшил мф. 26.09.2026 живьём: из
+  // девяти арендованных вещей надеть удалось одну (остальным не хватает Силы 13 против 19-26), и
+  // одно кольцо вместо ордовского разорвало комплект - крит 913 -> 842, уворот 706 -> 592. Код тогда
+  // всё равно снял no_fight.flag, то есть открыл Драбаса и Ордо-главаря персонажу, который стал слабее.
+  const sumBefore = (before.krit || 0) + (before.uvorot || 0);
+  const sumAfter = (afterStats.krit || 0) + (afterStats.uvorot || 0);
+  const better = sumAfter > sumBefore;
+  if (wornCount > 0 && better) {
+    resumeNormalFighting('арендованный шмот надет, мф вырос');
+  } else if (wornCount > 0) {
+    console.log(`Аренда: мф не вырос (${sumBefore} -> ${sumAfter}) - ограничение на бои НЕ снимаю.`);
+  }
   await sendTelegram(
     `аренда: взял ${taken.map((t) => `${t.name} (${t.days} дн., ${t.price} дин)`).join('; ')} на ${spent} дин.`
     + ` Надето ${wornCount} из ${rented.length}. Мф: было ${formatStats(before)}; стало ${formatStats(afterStats)}.`
-    + (wornCount > 0 ? ' Бои снова без ограничений.' : ' Надеть не удалось - бои пока ограничены.'),
+    + (wornCount > 0 && better ? ' Бои снова без ограничений.' : ' Бои пока ограничены: мф не вырос.'),
   ).catch(() => {});
   return true;
 }
