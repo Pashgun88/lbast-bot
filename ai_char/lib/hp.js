@@ -9,7 +9,7 @@ module.exports = {
   getReserveMinutesSafe, waitForReserveAtLeast, waitForHpAbove, tryPerformStepOptional,
 };
 
-const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, fightHpFraction, getFightMode, PEACEFUL_QUESTS, WEAK_FIGHT_QUESTS, CHAIN_FIGHT_QUESTS } = require('./state');
+const { S, EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, QUEST_FIGHT_HP_FLOOR, fightHpFraction, getFightMode, PEACEFUL_QUESTS, WEAK_FIGHT_QUESTS, TOO_STRONG_SINGLE_BOTS, CHAIN_FIGHT_QUESTS } = require('./state');
 const { fixedPause, getBodyText, parseStats, pause } = require('./core');
 const { handleIncomingAttackIfAny } = require('./pvp');
 const { recoverToCity } = require('./recovery');
@@ -185,6 +185,14 @@ async function runQuestStepSafe(page, label, fn) {
   }
   if (fightMode === 'single' && !peaceful && CHAIN_FIGHT_QUESTS.has(label)) {
     console.log(`Quest step skip (только одиночные бои): ${label}`);
+    return false;
+  }
+  // 26.09.2026, Паша: «попробуй пока ждем шмот квесты где одиночные боты». Одиночные - да, но
+  // замеры того же утра показали, что эти двое снимают больше, чем весь запас HP (см.
+  // TOO_STRONG_SINGLE_BOTS): оба нокаута случились с полного HP. Пока на бои стоит ограничение
+  // (шмот не по уровню), в них не ходим и говорим в логе, почему.
+  if (fightMode !== 'all' && !peaceful && TOO_STRONG_SINGLE_BOTS.has(label)) {
+    console.log(`Quest step skip (одиночный, но не по силам в шмоте 6 уровня): ${label} - замер 26.09: один такой бот снимает больше 500 HP с полного запаса.`);
     return false;
   }
   if (S.characterDownDetected) {

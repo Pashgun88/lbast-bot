@@ -592,6 +592,14 @@ const WEAK_FIGHT_QUESTS = new Set(['Харчевня', 'Трактир «Рыб�
 // и решает теперь не режим боёв, а наличие эля (проверка в lib/shtolni.js).
 // Ресторан убран из списка запрещённых в режиме одиночных ботов (Паша, 22.09.2026: включить обратно).
 const CHAIN_FIGHT_QUESTS = new Set(['Шепот']);
+// Одиночные боты, которые ЗАМЕРЕНО не по силам в снаряжении 6 уровня. Оба замера 26.09.2026 сделаны
+// с ПОЛНОГО HP и оба кончились нокаутом: «Камни Драбаса» 510 -> -47 (бот снял ~557), «Ордо: главарь
+// банды» 510 -> -233 (~743). То есть один противник выносит весь запас HP целиком, и ни эликсир
+// (+80), ни порог 90% тут не спасают - это не «слабый одиночный бот», а бой не по уровню.
+// Держим выключенными, пока на персонаже шмот не по уровню (то есть пока стоит no_fight.flag);
+// снимет Паша флаг после покупки снаряжения - вернутся сами.
+const TOO_STRONG_SINGLE_BOTS = new Set(['Камни Драбаса', 'Ордо: главарь банды', 'Ордо: банда']);
+
 const NO_FIGHT_FLAG_PATH = require('path').join(__dirname, '..', 'no_fight.flag');
 let fightModeCache = { at: 0, mode: 'all' };
 function getFightMode() {
@@ -626,6 +634,6 @@ module.exports = {
   EXCLUSIVE_QUEST_ERROR_BACKOFF_MS, EXCLUSIVE_QUEST_TIMEOUT_BACKOFF_MS,
   EXCLUSIVE_QUEST_CONFLICT_BACKOFF_MS, AI_SELF_NICK, AI_SELF_NICK_RE, QUEST_FIGHT_HP_FLOOR,
   LAST_HOUSE_HP_THRESHOLD, DEVTOWN_FASTWAY_URL, HEALING_ELIXIR_HP_FRACTION, HP_FLOOR_WITH_BUFF,
-  WEAK_FIGHT_QUESTS, GEAR_WAIT_HP_FRACTION, fightHpFraction,
+  WEAK_FIGHT_QUESTS, TOO_STRONG_SINGLE_BOTS, GEAR_WAIT_HP_FRACTION, fightHpFraction,
   DEMON_LAKE_FASTWAY_URL, FISH_RESTAURANT_ENABLED,
 };
