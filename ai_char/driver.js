@@ -330,6 +330,7 @@ const { runFortressPowerIfDue } = require('./lib/fortress');
 const { checkLevelUpIfDue } = require('./lib/levelup');
 const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendingFightQuestsNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
+const { acceptPendingLeasesIfAny } = require('./lib/lease');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
   'Шепот quest step',
@@ -724,6 +725,13 @@ async function loginIfNeeded(page) {
       r = await runCycleStep(page, 'Приём передач', () => acceptOrdoOffersIfAny(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
+      // 26.09.2026, Паша: «отправил письмо от твоего имени, надеюсь даст в аренду, у нее не дорого».
+      // Предложение аренды приходит не письмом, а во вкладку «Вы арендовали вещи», и вещь не придёт,
+      // пока его не подтвердить. Шаг без боёв, поэтому работает и в режиме ожидания снаряжения.
+      r = await runCycleStep(page, 'Аренда вещей', () => acceptPendingLeasesIfAny(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
       // 23.09.2026, Паша: «Сила крепости» в Грандине - суточное усиление, пока крепость у нашего клана.
       r = await runCycleStep(page, 'Сила крепости', () => runFortressPowerIfDue(page));
       didAnything = didAnything || r.didAnything;
