@@ -12,6 +12,7 @@ const { S, getDayKeyNow, persistDailyQuestState, QUEST_FIGHT_HP_FLOOR } = requir
 const { getBodyText, parseStats, pause } = require('./core');
 const { fightLoop } = require('./fight');
 const { noteHpFromPageText, questFightHpGate, tryPerformStepOptional } = require('./hp');
+const { fightHpFraction } = require('./state');
 const {
   clickInfoForQuest, dropCurrentAssignment, hasAlreadyHasQuestText, parseQuestNamesFromQMenuText,
   resetToQuestMenu,
@@ -243,10 +244,12 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
     // бою больше 40 минут, "ожидая HP", которое в бою почти не растёт (+18 за 40 мин). Решать,
     // идти ли в бой, можно только пока в него ещё не вошли - на экране задания, а не у бота.
     // waitForRecovery: Харчевню не бросаем на полпути - ждём подлечивания и добиваем ботов.
+    // Порог динамический: пока ждём снаряжение под уровень, Паша велел начинать бои с 90%
+    // (26.09.2026). В обычном режиме это прежние 70%.
     if (!(await questFightHpGate(
       page,
       `Харчевня (бой ${nextIndex}/${BOT_LIMIT})`,
-      QUEST_FIGHT_HP_FLOOR,
+      fightHpFraction(),
       { waitForRecovery: true },
     ))) return false;
 
@@ -262,6 +265,24 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
       await pause(page, 800, 1600);
     }
 
+    // 26.09.2026: после третьего боя маршрут искал «Тушканчик», а персонаж стоял в Ущелье
+    // призраков - performStep бросил ошибку, драйвер ушёл в recoverToCity, и Харчевня встала на
+    // весь день («Tavern quest: repeated errors -> backoff»). Теперь: нет НПС на экране - едем к
+    // месту выполнения заново и смотрим ещё раз; не нашли и там - выходим тихо, показав экран.
+    if (!(await existsAnyText(page, [matched.npc, matched.npc.toLowerCase()]))) {
+      console.log(`Харчевня: «${matched.npc}» не на экране - пробую заново доехать к месту выполнения.`);
+      await openTavernInfoFromMenu();
+      await clickByTexts(page, ['К месту выполнения'], 'Харчевня: к месту выполнения').catch(() => {});
+      await pause(page, 6500, 7500);
+      await clickByTexts(page, ['В пути еще', 'В пути'], 'Харчевня: в пути').catch(() => {});
+      await pause(page, 900, 1500);
+      if (!(await existsAnyText(page, [matched.npc, matched.npc.toLowerCase()]))) {
+        const seen = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+          .map((a) => (a.innerText || '').trim()).filter(Boolean).join(' | ')).catch(() => '');
+        console.log(`Харчевня: «${matched.npc}» так и нет. Экран: ${seen.slice(0, 300)}`);
+        return false;
+      }
+    }
     await performStep(page, {
       stepName: matched.npc,
       currentTexts: [matched.npc, matched.npc.toLowerCase()],
