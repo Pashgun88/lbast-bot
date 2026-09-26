@@ -2965,13 +2965,21 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     'хочу помочь маре',
     'очень помогли',
     'пройти в комнату к маре',
-    'задание завершено',
+    // Финал. В старом маршруте стоял комментарий, что "Свидетели говорят..." -- это реплика-
+    // описание, а не кнопка; 26.09.2026 лог показал обратное: на последнем экране ровно две
+    // ссылки -- "- Работаю над этим, - вернуться в театральный зал." и "- Свидетели говорят, что
+    // ожерелье украла пышногрудая дама по имени Имера.". Вторая и завершает квест.
+    'свидетели говорят',
+    // "?" -- шаг необязательный: если после финальной реплики кнопки "Задание завершено" на
+    // экране нет, сцена всё равно пройдена, и падать из-за этого нельзя.
+    '?задание завершено',
   ];
 
   const normV = (t) => String(t || '')
     .replace(/ /g, ' ').replace(/ё/gi, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
 
   let si = 0;
+  let fillerStreak = 0;
   for (let screen = 0; screen < 140 && si < VARIETE_STEPS.length; screen++) {
     throwIfPausedByManager('Варьете');
     const screenText = await getBodyText(page);
@@ -2986,32 +2994,51 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     const linkTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
       .map((a) => (a.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean));
 
+    const bare = (x) => (x.startsWith('?') ? x.slice(1) : x);
+
     let hit = -1;
     for (let j = si; j < VARIETE_STEPS.length; j++) {
-      if (linkTexts.some((t) => normV(t).includes(normV(VARIETE_STEPS[j])))) { hit = j; break; }
+      if (linkTexts.some((t) => normV(t).includes(normV(bare(VARIETE_STEPS[j]))))) { hit = j; break; }
     }
 
     if (hit >= 0) {
       if (hit > si) {
-        console.log(`Варьете: сцена уже была пройдена до шага "${VARIETE_STEPS[hit]}", пропускаю ${hit - si}.`);
+        console.log(`Варьете: сцена уже была пройдена до шага "${bare(VARIETE_STEPS[hit])}", пропускаю ${hit - si}.`);
       }
-      const stepText = VARIETE_STEPS[hit];
+      const stepText = bare(VARIETE_STEPS[hit]);
       await clickByTexts(page, [stepText, stepText.toLowerCase()], `Варьете: ${stepText}`);
       si = hit + 1;
+      fillerStreak = 0;
       await pause(page, 800, 1600);
       continue;
     }
 
-    if (linkTexts.some((t) => normV(t).startsWith('далее'))) {
-      await clickByTexts(page, ['Далее', 'далее'], 'Варьете: Далее');
+    // Экраны без выбора. "Вернуться" и повторный вход в зал -- это тупики, из которых сцена
+    // продолжается только после возврата назад (26.09.2026: после захода в зал на экране были
+    // ровно ["Обновить","Чат","В игру","Вернуться"]). Считаем их подряд: если сцена так и не
+    // двинулась, лучше упасть с текстом экрана, чем крутиться до предела по экранам.
+    // Сравнение ТОЧНОЕ, а не по подстроке: "вернуться" входит и в реплику "- Работаю над этим, -
+    // вернуться в театральный зал.", и филлер по подстроке увёл бы сцену назад вместо финала.
+    const filler = ['далее', 'продолжить квест', 'вернуться', 'пройти в зал варьете'];
+    const fillerHit = filler.find((f) => linkTexts.some((t) => normV(t).replace(/^[-–—\s]+/, '').replace(/[.!]+$/, '') === f));
+    if (fillerHit && fillerStreak < 4) {
+      fillerStreak += 1;
+      await clickByTexts(page, [fillerHit, fillerHit.toUpperCase()], `Варьете: ${fillerHit}`);
       await pause(page, 600, 1200);
       continue;
     }
 
-    throw new Error(`Варьете: на экране нет ни одного из оставшихся шагов (ждал "${VARIETE_STEPS[si]}"), ссылки: ${JSON.stringify(linkTexts)}`);
+    // Все оставшиеся шаги необязательные -- значит сцена закончилась, а кнопки финала уже нет.
+    if (VARIETE_STEPS.slice(si).every((x) => x.startsWith('?'))) {
+      console.log('Варьете: обязательные шаги пройдены, финальной кнопки на экране нет — считаю сцену законченной.');
+      si = VARIETE_STEPS.length;
+      break;
+    }
+
+    throw new Error(`Варьете: на экране нет ни одного из оставшихся шагов (ждал "${bare(VARIETE_STEPS[si])}"), ссылки: ${JSON.stringify(linkTexts)}, экран: ${String(screenText || '').replace(/\s+/g, ' ').trim().slice(0, 400)}`);
   }
 
-  if (si < VARIETE_STEPS.length) {
+  if (si < VARIETE_STEPS.length && !VARIETE_STEPS.slice(si).every((x) => x.startsWith('?'))) {
     throw new Error(`Варьете: сцена не дошла до конца, остановился перед "${VARIETE_STEPS[si]}"`);
   }
 
@@ -5477,13 +5504,19 @@ async function goRouteToAmber(page) {
   }
 
   for (let i = 0; i < 2; i++) {
-    await performStep(page, {
+    // На подходе к горе бывает случайная встреча: 26.09.2026 после первого "Идти к горе" на
+    // экране уже было "Призрак гнома неспешно парил к вам... В бой!", второй ссылки не осталось,
+    // и обязательный шаг ронял весь маршрут (Farm fight flow error -> recoverToCity -> лодка
+    // заново). Поэтому сначала проверяем бой, а сам шаг делаем необязательным: если ссылка
+    // пропала, openAmberFight ниже доберёт её своим собственным циклом "возврат".
+    if (await existsAnyText(page, ['В бой!', 'в бой!', 'Ударить', 'ударить'])) break;
+    const ok = await tryPerformStepOptional(page, {
       stepName: `${TO_MOUNT} (${i + 1}/2)`,
       currentTexts: [TO_MOUNT, TO_MOUNT.toLowerCase(), 'К горе', 'к горе'],
       nextTexts: [],
       skipIfNextVisible: false,
-      retries: 3,
     });
+    if (!ok) break;
   }
 
   await openAmberFight(page);
