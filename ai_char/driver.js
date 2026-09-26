@@ -797,7 +797,7 @@ async function loginIfNeeded(page) {
 
       r = await runCycleStep(page, 'Fish Eye step', () => {
         if (!hasEnoughHpForOptionalFight(stats)) {
-          console.log(`Fish Eye: HP ${stats.hpCurrent}/${stats.hpMax} < ${OPTIONAL_FIGHT_MIN_HP_FRACTION * 100}%, пропускаем необязательный бой.`);
+          console.log(`Fish Eye: HP ${stats.hpCurrent}/${stats.hpMax} < ${Math.round(fightHpFraction() * 100)}%, пропускаем необязательный бой.`);
           return Promise.resolve(false);
         }
         return runFishEyeIfDue(page);
