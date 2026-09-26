@@ -241,6 +241,8 @@ const GALLERY_MIN_HP = 1300;
 // Рыбный ресторан (Гретхис): ежедневный квест форта «Жженый лист». Пороги -- по замеру 26.09.2026:
 // за прогон резерв ушёл с 23 до -4, с вынужденным отдыхом 5 мин посреди сцены, поэтому 25 минут,
 // а не 15. HP -- как у Кораблекрушения: в худших ветках два-три боя подряд.
+// Варьете: 7 минут (правило Паши, 26.09.2026) -- сцена почти целиком диалоговая.
+const VARIETE_MIN_RESERVE_MINUTES = 7;
 const FISH_RESTAURANT_MIN_RESERVE_MINUTES = 25;
 const FISH_RESTAURANT_MIN_HP = 1300;
 // Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
@@ -1778,13 +1780,13 @@ async function runDailyQuests(page, stats) {
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
   }
 
-  // Варьете: длинная линейная цепочка диалогов + один бой, появляется от случая к случаю (не
-  // привязана к дню недели). Требуем достаточный запас времени до кулдауна, как и другие
-  // Q-квесты с реальным переходом на карту, чтобы не начинать длинный маршрут перед самым
-  // кулдауном/атакой.
+  // Варьете: длинная цепочка диалогов + один бой, появляется от случая к случаю (не привязана к
+  // дню недели). Сцена почти вся в диалогах, переходов по карте мало -- поэтому порог низкий:
+  // 7 минут (правило Паши, 26.09.2026). До этого стояло 15, и 26.09 квест простоял весь день,
+  // отсеиваясь гейтом, хотя резерва на него хватало.
   if (isQQuestAllowed('Варьете') && isQuestInMenu(listedQuests, 'Варьете')) {
-    if (typeof reserveMinutes !== 'number' || reserveMinutes < 15) {
-      console.log(`Quest step skip: Варьете (need >=15 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
+    if (typeof reserveMinutes !== 'number' || reserveMinutes < VARIETE_MIN_RESERVE_MINUTES) {
+      console.log(`Quest step skip: Варьете (need >=${VARIETE_MIN_RESERVE_MINUTES} reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
     } else {
       if (await runQuestStepSafe(page, 'Варьете', () => progressVarieteQuest(page, { questCount }))) {
         didAnything = true;
