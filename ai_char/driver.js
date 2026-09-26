@@ -778,10 +778,9 @@ async function loginIfNeeded(page) {
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
-      r = await runCycleStep(page, 'Ордо экзекуторс', () => runOrdoQuestsIfAvailable(page));
-      didAnything = didAnything || r.didAnything;
-      if (r.ko) continue;
-
+      // 26.09.2026: гайды (Штольни) идут ДО Ордо. Слот «ответственного задания» в игре один, а Ордо
+      // забирает его каждый цикл; Штольни же делаются раз в сутки и до сна. Пока порядок был обратный,
+      // Ордо брало слот, срывалось на миссии и держало его, а Штольни весь вечер писали «слот занят».
       // Повторяемые квесты по записанному маршруту гайда (Смерть ростовщика, раз в 15 дней).
       // Паша, 18.09.2026: «это не одноразовый квест, потом заскриптуй прохождение».
       // 21.09.2026: в режиме одиночных боёв гайды не выключаются целиком - Штольни (с элем) идут,
@@ -789,6 +788,11 @@ async function loginIfNeeded(page) {
       r = await runCycleStep(page, 'Квесты по гайду', () => runGuideQuestsIfDue(page, { singleMode: getFightMode() === 'single' }));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
+
+      r = await runCycleStep(page, 'Ордо экзекуторс', () => runOrdoQuestsIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
       // 22.09.2026, Паша: «делай» - задания в бунгало (о.Дауэрти), только типы с проверенным маршрутом.
       r = await runCycleStep(page, 'Задание в бунгало', () => (getFightMode() === 'none' ? Promise.resolve(false) : runBungaloIfDue(page)));
       didAnything = didAnything || r.didAnything;
