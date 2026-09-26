@@ -234,16 +234,21 @@ let ordoItemsCollected = 0;
 // встало «через 6 дн.», значит период около недели.
 let galleryLastDoneAt = 0;
 const GALLERY_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
-// Порогов для этого квеста Паша не задавал -- это осторожный дефолт: в сценке два боя подряд
-// плюс десяток переходов.
-const GALLERY_MIN_RESERVE_MINUTES = 15;
+// Порог по резерву -- правило Паши от 26.09.2026 (10 минут); порог HP остаётся моей осторожной
+// оценкой: в сценке два боя подряд.
+const GALLERY_MIN_RESERVE_MINUTES = 10;
 const GALLERY_MIN_HP = 1300;
-// Рыбный ресторан (Гретхис): ежедневный квест форта «Жженый лист». Пороги -- по замеру 26.09.2026:
-// за прогон резерв ушёл с 23 до -4, с вынужденным отдыхом 5 мин посреди сцены, поэтому 25 минут,
-// а не 15. HP -- как у Кораблекрушения: в худших ветках два-три боя подряд.
+// Рыбный ресторан (Гретхис): ежедневный квест форта «Жженый лист». 15 минут -- правило Паши от
+// 26.09.2026 (мой замер давал 25: за прогон резерв ушёл с 23 до -4 с отдыхом 5 мин посреди сцены,
+// но раннер умеет ждать отдых на месте, так что порог -- вопрос того, когда начинать).
+// HP -- как у Кораблекрушения: в худших ветках два-три боя подряд.
 // Варьете: 7 минут (правило Паши, 26.09.2026) -- сцена почти целиком диалоговая.
 const VARIETE_MIN_RESERVE_MINUTES = 7;
-const FISH_RESTAURANT_MIN_RESERVE_MINUTES = 25;
+// Пороги ниже -- правила Паши от 26.09.2026, а не оценки по расходу: он играет этот квест руками
+// и знает, сколько минут реально нужно.
+const FISHER_FOOD_MIN_RESERVE_MINUTES = 1;
+const CARAVAN_MIN_RESERVE_MINUTES = 8;
+const FISH_RESTAURANT_MIN_RESERVE_MINUTES = 15;
 const FISH_RESTAURANT_MIN_HP = 1300;
 // Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
 // уличного зазывалы и закэшированные, чтобы не ходить к нему каждый цикл (см. комментарий у
@@ -1757,8 +1762,8 @@ async function runDailyQuests(page, stats) {
   }
 
   if (isQQuestAllowed('Еда для рыбака') && isQuestInMenu(listedQuests, 'Еда для рыбака')) {
-    if (typeof reserveMinutes !== 'number' || reserveMinutes < 10) {
-      console.log(`Quest step skip: Еда для рыбака (need >=10 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
+    if (typeof reserveMinutes !== 'number' || reserveMinutes < FISHER_FOOD_MIN_RESERVE_MINUTES) {
+      console.log(`Quest step skip: Еда для рыбака (need >=${FISHER_FOOD_MIN_RESERVE_MINUTES} reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
     } else {
       if (await runQuestStepSafe(page, 'Еда для рыбака', () => progressFisherFoodQuest(page, { questCount }))) {
         didAnything = true;
@@ -1769,8 +1774,8 @@ async function runDailyQuests(page, stats) {
   }
 
   if (isQQuestAllowed('Грабим корованы') && isQuestInMenu(listedQuests, 'Грабим корованы')) {
-    if (typeof reserveMinutes !== 'number' || reserveMinutes < 10) {
-      console.log(`Quest step skip: Грабим корованы (need >=10 reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
+    if (typeof reserveMinutes !== 'number' || reserveMinutes < CARAVAN_MIN_RESERVE_MINUTES) {
+      console.log(`Quest step skip: Грабим корованы (need >=${CARAVAN_MIN_RESERVE_MINUTES} reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
     } else {
       if (await runQuestStepSafe(page, 'Грабим корованы', () => progressCaravanRobberyQuest(page))) {
         didAnything = true;
