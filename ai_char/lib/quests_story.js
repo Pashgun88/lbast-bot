@@ -338,6 +338,7 @@ async function walkToOrdoTower(page) {
 }
 
 async function progressOrdoQuest(page, q) {
+  if (S.ordoDeadRideUntil && Date.now() < S.ordoDeadRideUntil) return false;
   if (!(await preTripHpGate(page, q.label))) return false;
 
   await walkToOrdoTower(page);
@@ -350,6 +351,12 @@ async function progressOrdoQuest(page, q) {
   await pause(page, 800, 1500);
   const takeText = await getBodyText(page);
   const alreadyHasTask = hasAlreadyHasQuestText(takeText) && !/Задание принято/i.test(takeText);
+  if (!alreadyHasTask && /Задание принято/i.test(takeText)) {
+    // Помним в S, что задание в слоте - НАШЕ. Внутри одного вызова этого мало: процесс
+    // перезапускается, цикл идёт заново, и брошенное нами задание выглядит как «чужое, не трогать».
+    S.ordoTaskTakenLabel = q.label;
+    S.ordoTaskTakenAt = Date.now();
+  }
   if (alreadyHasTask) {
     // 26.09.2026, живой тупик: в слоте висело недоделанное задание Ордо («Вы еще не выполнили
     // задание» на докладе), и этот шаг просто уходил - а вместе с ним стояли Штольни, демон и
@@ -416,12 +423,17 @@ async function progressOrdoQuest(page, q) {
     // Своё же только что взятое задание не бросаем в слоте: пока оно там, не идут ни Штольни, ни
     // демон, ни второе Ордо. Снимаем ТОЛЬКО то, что взяли сами в этом же вызове (alreadyHasTask
     // означает, что задание было чужим/прежним - его не трогаем, это решение Паши).
-    if (!alreadyHasTask) {
-      console.log(`${q.label}: до боя не дошёл, а задание взято мной же - снимаю его, чтобы не держать слот.`);
+    const takenByUs = !alreadyHasTask || S.ordoTaskTakenLabel === q.label;
+    if (takenByUs) {
+      console.log(`${q.label}: до боя не дошёл, а задание в слоте взято мной же${alreadyHasTask ? ' (в одном из прошлых циклов)' : ''} - снимаю, чтобы не держать слот.`);
       await dropCurrentAssignment(page, `${q.label}: миссия не прошла, слот не держим`);
+      S.ordoTaskTakenLabel = null;
+      S.ordoTaskTakenAt = 0;
     } else {
-      console.log(`${q.label}: до боя не дошёл - решит меню Q в следующем цикле.`);
+      console.log(`${q.label}: до боя не дошёл, задание в слоте не моё - не трогаю (решение Паши).`);
     }
+    // Каждые две минуты гонять коня к пустой миссии бессмысленно - полчаса тишины.
+    S.ordoDeadRideUntil = Date.now() + 30 * 60 * 1000;
     return false;
   }
   console.log(`${q.label}: бой пройден, иду докладывать в башню.`);

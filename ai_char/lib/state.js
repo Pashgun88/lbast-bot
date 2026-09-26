@@ -160,6 +160,11 @@ S.lastLeaseSnapshotAt = 0;
 S.lastLeaseLinksSignature = '';
 // Клановый герб (lib/clan_emblem.js): проверяем раз в час, берём когда слот клан-вещи пуст.
 S.lastClanEmblemCheckAt = 0;
+// Ордо: какое задание в слоте взяли МЫ (иначе брошенное своё выглядит как чужое и висит часами),
+// и до какого времени не ездить к миссии, которая не показывает шагов.
+S.ordoTaskTakenLabel = null;
+S.ordoTaskTakenAt = 0;
+S.ordoDeadRideUntil = 0;
 // До какого времени действует «Сила крепости» Грандина (суточный клановый бонус, 23.09.2026).
 S.fortressPowerUntil = 0;
 
