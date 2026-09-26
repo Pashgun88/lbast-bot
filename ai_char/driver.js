@@ -331,6 +331,7 @@ const { checkLevelUpIfDue } = require('./lib/levelup');
 const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendingFightQuestsNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 const { acceptPendingLeasesIfAny } = require('./lib/lease');
+const { takeClanEmblemIfDue } = require('./lib/clan_emblem');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
   'Шепот quest step',
@@ -725,6 +726,12 @@ async function loginIfNeeded(page) {
       r = await runCycleStep(page, 'Приём передач', () => acceptOrdoOffersIfAny(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
+      // 26.09.2026, Паша: «раз в неделю нужно взять клановый герб и одеть его... если в экипировке
+      // на месте клан-вещи - пусто. В замке - активный прогресс». Шаг мирный: ни боёв, ни трат.
+      r = await runCycleStep(page, 'Клановый герб', () => takeClanEmblemIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
       // 26.09.2026, Паша: «отправил письмо от твоего имени, надеюсь даст в аренду, у нее не дорого».
       // Предложение аренды приходит не письмом, а во вкладку «Вы арендовали вещи», и вещь не придёт,
       // пока его не подтвердить. Шаг без боёв, поэтому работает и в режиме ожидания снаряжения.
