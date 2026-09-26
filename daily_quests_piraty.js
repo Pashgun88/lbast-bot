@@ -869,6 +869,10 @@ function scheduleFarmNextCycle(stats, didFight) {
   const cd = typeof stats?.cooldown === 'number' ? stats.cooldown : stats?.reserveMinutes;
   if (typeof cd === 'number' && cd < 0) {
     scheduleLongRestMinutes(randomInt(17, 20), 'farm_cooldown_recovery');
+  } else if (FARM_TARGET === 'yantar' && typeof cd === 'number' && cd < AMBER_MIN_RESERVE_MINUTES) {
+    // Порог боя на горе выше, чем "резерв > 0", поэтому обычный цикл проспал бы окно: минуты
+    // капают сами, ждём ровно добор до 8.
+    scheduleLongRestMinutes(AMBER_MIN_RESERVE_MINUTES - cd + 1, 'amber_reserve_gate');
   } else if (didFight) {
     scheduleQuestFollowup('farm');
   }
@@ -5559,19 +5563,23 @@ async function ensureAmberFightScreen(page) {
 // doScenario's farm loop stays generic. Goblins reach their spot via the Амулет -> Последний
 // портал shortcut; Блейк и Янтарная гора -- оба острова за платной лодкой, поэтому у них одни и
 // те же пороги HP и одинаковое поведение "остаёмся на месте до следующего цикла".
-// Правило Паши (26.09.2026): на ферму не выходим, если резерва меньше 8 минут. Гейтом было
-// "резерв > 0", и 26.09.2026 бот уехал на Янтарную гору с резервом 1: платная лодка, десяток
-// переходов -- и ни одного боя, потому что на бой минут уже не осталось.
-const FARM_MIN_RESERVE_MINUTES = 8;
+// Правило Паши (26.09.2026): на Янтарной горе перед боем нужно >=8 резервных минут. Это НЕ про
+// выезд на ферму, а именно про бой: у Блейка противник в хижине под рукой, а здесь к каждому бою
+// надо заново спускаться в шахту (Спуститься в шахту -> Идти дальше -> Идти налево -> Идти дальше
+// -> В бой), и каждый переход стоит резерва. С меньшим запасом бот встаёт на полпути в шахте.
+const AMBER_MIN_RESERVE_MINUTES = 8;
 
 function farmReserveOf(stats) {
   return typeof stats?.cooldown === 'number' ? stats.cooldown : stats?.reserveMinutes;
 }
 
 function shouldFightFarmByStats(stats) {
-  const reserve = farmReserveOf(stats);
-  if (typeof reserve !== 'number' || reserve < FARM_MIN_RESERVE_MINUTES) return false;
-  return FARM_TARGET === 'goblins' ? shouldFightByStats(stats) : shouldFightBlakeByStats(stats);
+  if (FARM_TARGET === 'goblins') return shouldFightByStats(stats);
+  if (FARM_TARGET === 'yantar') {
+    const reserve = farmReserveOf(stats);
+    if (typeof reserve !== 'number' || reserve < AMBER_MIN_RESERVE_MINUTES) return false;
+  }
+  return shouldFightBlakeByStats(stats);
 }
 
 function isFarmLocation(text) {
@@ -9388,19 +9396,6 @@ async function doScenario(page) {
   if (!isFarmLocation(read.text) && canRunFishingNow()) {
     console.log(`Прощальный заброс на материке перед переездом на ${FARM_LABEL}`);
     await runFishingTask(page);
-  }
-
-  // Резерва не хватает на выезд -- ждём ровно столько, сколько нужно на добор до порога, а не
-  // целый цикл: минуты капают сами, и следующий заход должен попасть в окно, а не проспать его.
-  // Минус по резерву сюда не попадает: им занимается scheduleFarmNextCycle (farm_cooldown_recovery).
-  const farmReserve = farmReserveOf(stats);
-  if (typeof farmReserve === 'number' && farmReserve >= 0 && farmReserve < FARM_MIN_RESERVE_MINUTES) {
-    console.log(`Фарм (${FARM_LABEL}): не выезжаю, резерв ${farmReserve} < ${FARM_MIN_RESERVE_MINUTES} мин`);
-    // Гоблины отдыхают в Стоунгарде -- так же, как на обычном выходе из фарм-цикла ниже; для
-    // островных целей (Блейк/Янтарь) это no-op, уезжать с острова ради отдыха мы не станем.
-    await maybeRestGoblinAtStoneguard(page, stats);
-    scheduleLongRestMinutes(FARM_MIN_RESERVE_MINUTES - farmReserve + 1, 'farm_reserve_gate');
-    return;
   }
 
   let didAnyFarmFight = false;
