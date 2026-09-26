@@ -1686,8 +1686,10 @@ async function runDailyQuests(page, stats) {
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
 
     // If we started / are in progress with an exclusive quest, stop here.
+    // hasAnyTargetQuest: true жёстко -- цепочка не доиграна, и уезжать на ферму нельзя, даже если
+    // из меню Q взятый квест уже пропал.
     if (tavernTakenToday && !tavernDoneToday) {
-      return { didAnything, hasAnyTargetQuest };
+      return { didAnything, hasAnyTargetQuest: true };
     }
   }
 
@@ -1741,7 +1743,7 @@ async function runDailyQuests(page, stats) {
 
     // If we started / are in progress with an exclusive quest, stop here.
     if (shtolniTakenToday && !shtolniDoneToday) {
-      return { didAnything, hasAnyTargetQuest };
+      return { didAnything, hasAnyTargetQuest: true };
     }
   }
 
@@ -1914,7 +1916,13 @@ async function runDailyQuests(page, stats) {
   }
 
   await pause(page, 800, 1600);
-  return { didAnything, hasAnyTargetQuest };
+  // Остаток считаем ПОСЛЕ работы, по свежему listedQuests (он обновляется после каждого блока), а
+  // не по снимку меню до неё. Иначе сданный в этом же проходе квест продолжает выглядеть
+  // доступным, и цикл откладывает ферму на контрольный заход: 26.09.2026 Варьете был сдан, а бот
+  // ушёл спать на 4 минуты с полным HP и 25 минутами резерва.
+  const targetQuestsRemain = TARGET_Q_QUESTS.some((q) => isQuestInMenu(listedQuests, q))
+    || hasGuideQuestInProgress();
+  return { didAnything, hasAnyTargetQuest: targetQuestsRemain };
 }
 
 function getDayKeyNow() {
@@ -9206,7 +9214,9 @@ async function doScenario(page) {
   if (Number.isFinite(stats.questsAvailable) && stats.questsAvailable > 0) {
     const qResult = await runDailyQuests(page, stats);
     didAnyQuest = qResult.didAnything;
-    hadAnyTargetQuestInQMenu = hadAnyTargetQuestInQMenu || qResult.hasAnyTargetQuest;
+    // Не накапливаем по ||: важно состояние ПОСЛЕ прохода, иначе сданный квест навсегда
+    // оставляет цикл в режиме "квесты ещё есть".
+    hadAnyTargetQuestInQMenu = qResult.hasAnyTargetQuest;
 
     read = await goToLocationAndReadStats(page, 'stats after daily quests');
     if (read.attackHandled) {
@@ -9377,7 +9387,7 @@ async function doScenario(page) {
     if (postFishQPass.didAnything) {
       didAnyQuest = true;
     }
-    hadAnyTargetQuestInQMenu = hadAnyTargetQuestInQMenu || postFishQPass.hasAnyTargetQuest;
+    hadAnyTargetQuestInQMenu = postFishQPass.hasAnyTargetQuest;
 
     read = await goToLocationAndReadStats(page, 'stats after daily quests (post-fish)');
     if (read.attackHandled) {
