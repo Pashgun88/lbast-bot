@@ -12,9 +12,10 @@
 //
 // НЕ надеваем принятое сами: разрыв комплекта Ордо стоит ~115 крита и ~118 уворота (замер
 // 26.09.2026, см. память aichar_build_and_gear) - что надеть, решается по мф, а не по названию.
-module.exports = { acceptPendingLeasesIfAny };
+module.exports = { acceptPendingLeasesIfAny, readCombatStats, equipItemByNamePrefix };
 
-const { S } = require('./state');
+const { S, NO_FIGHT_FLAG_PATH } = require('./state');
+const fs = require('fs');
 const { getBodyText, pause } = require('./core');
 const { clickByTexts } = require('./ui');
 const { sendTelegram } = require('../telegram_alerts');
@@ -50,6 +51,85 @@ function readOffer(text) {
   const price = Number((text.match(/[Цц]ена аренды:?\s*(\d+)/) || text.match(/за\s+(\d+)\s*дин/) || [])[1] ?? NaN);
   const days = (text.match(/(\d+)\s*(?:дн|дней|дня|д\.)/) || [])[1];
   return { price: Number.isFinite(price) ? price : null, days: days || null };
+}
+
+// Мф до и после надевания: только по этим числам видно, лучше стало или хуже. Замер 26.09.2026 с
+// Маской призрака показал, что «по описанию лучше» и «в бою лучше» - разные вещи.
+async function readCombatStats(page) {
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const t = await getBodyText(page).catch(() => '');
+  const num = (re) => { const m = t.match(re); return m ? Number(m[1]) : null; };
+  return {
+    krit: num(/Крит:\s*(\d+)/),
+    uvorot: num(/Уворот:\s*(\d+)/),
+    armor: num(/Броня:\s*(\d+)/),
+    hpMax: num(/\(\s*-?\d+\s*\/\s*(\d+)\s*\)/),
+  };
+}
+
+function formatStats(s) {
+  return `крит ${s.krit ?? '?'}, уворот ${s.uvorot ?? '?'}, броня ${s.armor ?? '?'}, HP max ${s.hpMax ?? '?'}`;
+}
+
+// Названия арендованных вещей со вкладки: «* Браслет удачи (перегар) [i] еще 10 дн. (собственник: Hank)».
+function parseRentedNames(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/).map((l) => l.trim())) {
+    const m = line.match(/^\*\s*(.+?)\s*\[i\]\s*ещ[её]\s*\d+/i);
+    if (m) out.push(m[1].trim());
+  }
+  return out;
+}
+
+// «Экипировать» относим к ближайшему предыдущему названию (тот же приём, что в lib/recovery.js для
+// эликсиров): в строке инвентаря имя и действие - разные ссылки, а имён на странице много.
+const INV_PAGES = [
+  'inv.php?invMod=2', 'inv.php?invMod=2&cpage=2', 'inv.php?invMod=2&cpage=3',
+  'inv.php?invMod=3', 'inv.php?invMod=3&cpage=2',
+];
+async function equipItemByNamePrefix(page, name, label = 'Аренда') {
+  for (const url of INV_PAGES) {
+    const ok = await page.goto(`http://lbast.ru/${url}`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+      .then(() => true).catch(() => false);
+    if (!ok) continue;
+    const href = await page.evaluate((n) => {
+      let lastName = '';
+      for (const a of Array.from(document.querySelectorAll('a'))) {
+        const t = (a.textContent || '').trim();
+        if (t === 'Экипировать') { if (lastName.startsWith(n)) return a.getAttribute('href'); continue; }
+        if (t && !/^\d+$/.test(t) && !/^(Использовать|Передать|Экипировать|Снять|Вернуть|Взять)$/.test(t)) lastName = t;
+      }
+      return null;
+    }, name).catch(() => null);
+    if (!href) continue;
+    const full = href.startsWith('http') ? href : `http://lbast.ru/${href.replace(/^\//, '')}`;
+    await page.goto(full, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    const after = await getBodyText(page).catch(() => '');
+    // Игра отказывает текстом «Ваших статов нехватает для экипировки данного предмета» - это не сбой.
+    if (/нехватает для экипировки/i.test(after)) {
+      console.log(`${label}: «${name}» не надеть - не хватает статов: ${snapshot(after, 300)}`);
+      return false;
+    }
+    console.log(`${label}: надел «${name}».`);
+    return true;
+  }
+  console.log(`${label}: «${name}» в инвентаре со ссылкой «Экипировать» не нашёл (уже надета?).`);
+  return false;
+}
+
+// Паша, 26.09.2026: «как только злата ответит бери шмот и одевай и продолжай фармить как обычно».
+// Снятие no_fight.flag возвращает режим 'all': бои без ограничений, порог HP снова 70%, а
+// TOO_STRONG_SINGLE_BOTS (Драбас, Ордо-главарь) снова разрешены.
+function resumeNormalFighting(reason) {
+  try {
+    if (!fs.existsSync(NO_FIGHT_FLAG_PATH)) return false;
+    fs.unlinkSync(NO_FIGHT_FLAG_PATH);
+    console.log(`Бои снова без ограничений: ${reason} (файл no_fight.flag удалён).`);
+    return true;
+  } catch (e) {
+    console.log(`Не смог снять no_fight.flag: ${e.message}`);
+    return false;
+  }
 }
 
 async function acceptPendingLeasesIfAny(page) {
@@ -89,8 +169,27 @@ async function acceptPendingLeasesIfAny(page) {
     console.log(`Аренда: по ссылке «${accept}» кликнуть не удалось. Экран: ${snapshot(after)}`);
     return false;
   }
-  console.log(`Аренда: после «Взять»: ${snapshot(after, 400)}`);
-  // Надевать не спешим - сначала мф. Паше уходит уведомление, чтобы он знал, что вещи на руках.
-  await sendTelegram(`аренда принята${offer.days ? ` (срок ${offer.days} дн.)` : ''}: ${snapshot(after, 200)}`).catch(() => {});
+  console.log(`Аренда: после «${accept}»: ${snapshot(after, 400)}`);
+
+  // Паша, 26.09.2026: «бери шмот и одевай и продолжай фармить как обычно». Надеваем всё, что пришло;
+  // мф пишем до и после - решение уже принято, но цифры нужны: если комплект окажется хуже, это видно
+  // сразу, а не через неделю проигранных боёв.
+  const before = await readCombatStats(page);
+  const rented = parseRentedNames(await openRentedTab(page));
+  console.log(`Аренда: арендованного на руках - ${rented.length ? rented.join(', ') : 'список не прочитался'}`);
+  let wornCount = 0;
+  for (const name of rented) {
+    if (await equipItemByNamePrefix(page, name)) wornCount += 1;
+    await pause(page, 500, 900);
+  }
+  const afterStats = await readCombatStats(page);
+  console.log(`Аренда: мф было ${formatStats(before)}; стало ${formatStats(afterStats)} (надето вещей: ${wornCount}).`);
+
+  if (wornCount > 0) resumeNormalFighting('арендованный шмот надет');
+  await sendTelegram(
+    `аренда принята${offer.days ? ` (срок ${offer.days} дн.)` : ''}: ${rented.join(', ') || snapshot(after, 120)}.`
+    + ` Надето ${wornCount}. Мф: было ${formatStats(before)}; стало ${formatStats(afterStats)}.`
+    + (wornCount > 0 ? ' Бои снова без ограничений.' : ' Бои пока ограничены - надеть не удалось.'),
+  ).catch(() => {});
   return true;
 }
