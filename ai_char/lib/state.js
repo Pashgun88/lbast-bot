@@ -157,6 +157,7 @@ S.lastFishSaleAt = 0;
 // либо нет, между запусками помнить нечего.
 S.lastLeaseCheckAt = 0;
 S.lastLeaseSnapshotAt = 0;
+S.lastLeaseLinksSignature = '';
 // До какого времени действует «Сила крепости» Грандина (суточный клановый бонус, 23.09.2026).
 S.fortressPowerUntil = 0;
 

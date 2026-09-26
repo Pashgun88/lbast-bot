@@ -16,10 +16,15 @@ module.exports = { acceptPendingLeasesIfAny };
 
 const { S } = require('./state');
 const { getBodyText, pause } = require('./core');
-const { clickByTexts, existsAnyText } = require('./ui');
+const { clickByTexts } = require('./ui');
 const { sendTelegram } = require('../telegram_alerts');
 
 const LEASE_URL = 'http://lbast.ru/inv.php?mod=lease';
+// Как выглядит вкладка живьём (прочитано 26.09.2026): «* Браслет удачи (перегар) [i] еще 10 дн.
+// (собственник: Hank) [Вернуть]» - то есть УЖЕ взятая вещь показывает «Вернуть». Ссылку принятия
+// вживую ещё не видели, поэтому ловим несколько вариантов слова, а незнакомый набор ссылок пишем
+// в лог СРАЗУ: пропустить предложение из-за неугаданного слова хуже, чем лишняя строка.
+const ACCEPT_TEXTS = ['Взять', 'Принять', 'Согласиться', 'Арендовать'];
 const CHECK_EVERY_MS = 5 * 60 * 1000;
 // Дороже этого сам не беру: Паша сказал «у нее не дорого», значит крупная цена - это не то
 // предложение, о котором речь, и решать должен он.
@@ -54,11 +59,17 @@ async function acceptPendingLeasesIfAny(page) {
   const text = await openRentedTab(page);
   if (!text) return false;
 
-  // «Взять» - подтверждение предложения. Пока его нет, ничего не пришло.
-  if (!(await existsAnyText(page, ['Взять']))) {
-    if (Date.now() - (S.lastLeaseSnapshotAt || 0) > SNAPSHOT_EVERY_MS) {
+  // Все ссылки вкладки: по ним и решаем, есть ли предложение, и они же - подпись экрана.
+  const linkTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+    .map((a) => (a.textContent || '').trim()).filter(Boolean)).catch(() => []);
+  const accept = ACCEPT_TEXTS.find((t) => linkTexts.includes(t));
+  if (!accept) {
+    const signature = linkTexts.join('|');
+    const changed = signature !== S.lastLeaseLinksSignature;
+    if (changed || Date.now() - (S.lastLeaseSnapshotAt || 0) > SNAPSHOT_EVERY_MS) {
+      S.lastLeaseLinksSignature = signature;
       S.lastLeaseSnapshotAt = Date.now();
-      console.log(`Аренда: предложений нет. Экран: ${snapshot(text, 400)}`);
+      console.log(`Аренда: ссылки принятия нет${changed ? ' (экран ИЗМЕНИЛСЯ)' : ''}. Экран: ${snapshot(text, 400)}`);
     }
     return false;
   }
@@ -71,11 +82,11 @@ async function acceptPendingLeasesIfAny(page) {
   }
 
   console.log(`Аренда: есть предложение (цена ${offer.price ?? 'не указана'}${offer.days ? `, срок ${offer.days} дн.` : ''}) -> беру. Экран: ${snapshot(text)}`);
-  const ok = await clickByTexts(page, ['Взять'], 'Аренда: Взять').catch(() => false);
+  const ok = await clickByTexts(page, [accept], `Аренда: ${accept}`).catch(() => false);
   await pause(page, 800, 1500);
   const after = await getBodyText(page).catch(() => '');
   if (!ok) {
-    console.log(`Аренда: по ссылке «Взять» кликнуть не удалось. Экран: ${snapshot(after)}`);
+    console.log(`Аренда: по ссылке «${accept}» кликнуть не удалось. Экран: ${snapshot(after)}`);
     return false;
   }
   console.log(`Аренда: после «Взять»: ${snapshot(after, 400)}`);
