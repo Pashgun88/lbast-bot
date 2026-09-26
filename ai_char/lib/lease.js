@@ -30,6 +30,10 @@ const CHECK_EVERY_MS = 5 * 60 * 1000;
 // Дороже этого сам не беру: Паша сказал «у нее не дорого», значит крупная цена - это не то
 // предложение, о котором речь, и решать должен он.
 const MAX_LEASE_PRICE = 1500;
+// Сколько всего готов отдать за один заход: у златы две вещи по 300, но лимит нужен от случая,
+// когда кто-то выставит десяток дорогих предложений.
+const MAX_LEASE_TOTAL = 5000;
+const MAX_ACCEPTS = 10;
 // Незнакомый экран показываем в лог не чаще раза в час - иначе каждые 5 минут по простыне.
 const SNAPSHOT_EVERY_MS = 60 * 60 * 1000;
 
@@ -46,12 +50,6 @@ async function openRentedTab(page) {
   return getBodyText(page).catch(() => '');
 }
 
-// Цена и срок стоят в строке предложения рядом с названием; из текста берём то, что найдётся.
-function readOffer(text) {
-  const price = Number((text.match(/[Цц]ена аренды:?\s*(\d+)/) || text.match(/за\s+(\d+)\s*дин/) || [])[1] ?? NaN);
-  const days = (text.match(/(\d+)\s*(?:дн|дней|дня|д\.)/) || [])[1];
-  return { price: Number.isFinite(price) ? price : null, days: days || null };
-}
 
 // Мф до и после надевания: только по этим числам видно, лучше стало или хуже. Замер 26.09.2026 с
 // Маской призрака показал, что «по описанию лучше» и «в бою лучше» - разные вещи.
@@ -71,15 +69,6 @@ function formatStats(s) {
   return `крит ${s.krit ?? '?'}, уворот ${s.uvorot ?? '?'}, броня ${s.armor ?? '?'}, HP max ${s.hpMax ?? '?'}`;
 }
 
-// Названия арендованных вещей со вкладки: «* Браслет удачи (перегар) [i] еще 10 дн. (собственник: Hank)».
-function parseRentedNames(text) {
-  const out = [];
-  for (const line of String(text || '').split(/\r?\n/).map((l) => l.trim())) {
-    const m = line.match(/^\*\s*(.+?)\s*\[i\]\s*ещ[её]\s*\d+/i);
-    if (m) out.push(m[1].trim());
-  }
-  return out;
-}
 
 // «Экипировать» относим к ближайшему предыдущему названию (тот же приём, что в lib/recovery.js для
 // эликсиров): в строке инвентаря имя и действие - разные ссылки, а имён на странице много.
@@ -132,48 +121,97 @@ function resumeNormalFighting(reason) {
   }
 }
 
+// Предложения на вкладке: «* Взять в аренду Дубина циклопа (камень) на 30 дн. за 300 дин. [i]»
+// Уже взятое: «* Браслет удачи (перегар) [i] еще 10 дн. (собственник: Hank) [Вернуть]»
+// Оба вида ищем по всему тексту, а не по началу строки: вся вкладка приходит одной строкой, и
+// первая версия с якорем ^ прочитала «список не прочитался» при двух вещах на руках.
+const OFFER_RE = /Взять в аренду\s+([^*\[]{3,60}?)\s+на\s+(\d+)\s*дн\.\s*за\s*(\d+)\s*дин/gi;
+const RENTED_RE = /\*\s*([^*\[]{3,60}?)\s*\[i\]\s*ещ[её]\s*(\d+)\s*дн/gi;
+
+function parseOffers(text) {
+  const out = [];
+  OFFER_RE.lastIndex = 0;
+  let m;
+  while ((m = OFFER_RE.exec(String(text || ''))) !== null) {
+    out.push({ name: m[1].trim(), days: Number(m[2]), price: Number(m[3]) });
+  }
+  return out;
+}
+
+function parseRentedNames(text) {
+  const out = [];
+  RENTED_RE.lastIndex = 0;
+  let m;
+  while ((m = RENTED_RE.exec(String(text || ''))) !== null) {
+    const name = m[1].trim();
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 async function acceptPendingLeasesIfAny(page) {
   if (Date.now() - (S.lastLeaseCheckAt || 0) < CHECK_EVERY_MS) return false;
   S.lastLeaseCheckAt = Date.now();
 
-  const text = await openRentedTab(page);
+  let text = await openRentedTab(page);
   if (!text) return false;
 
-  // Все ссылки вкладки: по ним и решаем, есть ли предложение, и они же - подпись экрана.
-  const linkTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
-    .map((a) => (a.textContent || '').trim()).filter(Boolean)).catch(() => []);
-  const accept = ACCEPT_TEXTS.find((t) => linkTexts.includes(t));
-  if (!accept) {
+  let offers = parseOffers(text);
+  if (!offers.length) {
+    // Ссылок принятия нет - либо предложений нет, либо формат страницы сменился. Второе обязано
+    // быть видно сразу: пропустить предложение дороже лишней строки в логе.
+    const linkTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .map((a) => (a.textContent || '').trim()).filter(Boolean)).catch(() => []);
+    const hasAcceptLink = ACCEPT_TEXTS.some((t) => linkTexts.includes(t));
     const signature = linkTexts.join('|');
     const changed = signature !== S.lastLeaseLinksSignature;
-    if (changed || Date.now() - (S.lastLeaseSnapshotAt || 0) > SNAPSHOT_EVERY_MS) {
+    if (hasAcceptLink) {
+      console.log(`Аренда: ссылка принятия есть, а строку предложения не разобрал - смотрю глазами. Экран: ${snapshot(text, 600)}`);
+    } else if (changed || Date.now() - (S.lastLeaseSnapshotAt || 0) > SNAPSHOT_EVERY_MS) {
       S.lastLeaseLinksSignature = signature;
       S.lastLeaseSnapshotAt = Date.now();
-      console.log(`Аренда: ссылки принятия нет${changed ? ' (экран ИЗМЕНИЛСЯ)' : ''}. Экран: ${snapshot(text, 400)}`);
+      console.log(`Аренда: предложений нет${changed ? ' (экран ИЗМЕНИЛСЯ)' : ''}. Экран: ${snapshot(text, 400)}`);
     }
-    return false;
+    if (!hasAcceptLink) return false;
   }
 
-  const offer = readOffer(text);
-  if (offer.price !== null && offer.price > MAX_LEASE_PRICE) {
-    console.log(`Аренда: предложение дороже ${MAX_LEASE_PRICE} дин (цена ${offer.price}) - сам не беру, решает Паша. Экран: ${snapshot(text)}`);
-    await sendTelegram(`аренда: пришло предложение за ${offer.price} дин${offer.days ? ` на ${offer.days} дн.` : ''} - сам не брал, жду решения`).catch(() => {});
-    return false;
+  console.log(`Аренда: предложений ${offers.length}: ${offers.map((o) => `${o.name} (${o.days} дн., ${o.price} дин)`).join('; ')}`);
+
+  // Паша, 26.09.2026: «ты взял только дубину, возьме все». Берём ВСЕ предложения по очереди:
+  // каждая ссылка «Взять» относится к своей вещи, и после клика страница возвращается к списку
+  // с оставшимися. Ограничения оставляем только денежные.
+  const taken = [];
+  let spent = 0;
+  for (let i = 0; i < MAX_ACCEPTS; i++) {
+    text = await openRentedTab(page);
+    offers = parseOffers(text);
+    if (!offers.length) break;
+    const next = offers[0];
+    if (next.price > MAX_LEASE_PRICE) {
+      console.log(`Аренда: «${next.name}» за ${next.price} дин дороже ${MAX_LEASE_PRICE} - сам не беру, решает Паша.`);
+      await sendTelegram(`аренда: «${next.name}» за ${next.price} дин - дороже порога, не брал, жду решения`).catch(() => {});
+      break;
+    }
+    if (spent + next.price > MAX_LEASE_TOTAL) {
+      console.log(`Аренда: на «${next.name}» (${next.price}) уже не хватает лимита захода (${MAX_LEASE_TOTAL} дин) - останавливаюсь.`);
+      break;
+    }
+    const ok = await clickByTexts(page, ACCEPT_TEXTS, `Аренда: беру «${next.name}»`).catch(() => false);
+    await pause(page, 800, 1500);
+    const after = await getBodyText(page).catch(() => '');
+    if (!ok || !/успешно взяли в аренду/i.test(after)) {
+      console.log(`Аренда: «${next.name}» взять не удалось. Экран: ${snapshot(after, 300)}`);
+      break;
+    }
+    taken.push(next);
+    spent += next.price;
+    console.log(`Аренда: взял «${next.name}» на ${next.days} дн. за ${next.price} дин.`);
   }
 
-  console.log(`Аренда: есть предложение (цена ${offer.price ?? 'не указана'}${offer.days ? `, срок ${offer.days} дн.` : ''}) -> беру. Экран: ${snapshot(text)}`);
-  const ok = await clickByTexts(page, [accept], `Аренда: ${accept}`).catch(() => false);
-  await pause(page, 800, 1500);
-  const after = await getBodyText(page).catch(() => '');
-  if (!ok) {
-    console.log(`Аренда: по ссылке «${accept}» кликнуть не удалось. Экран: ${snapshot(after)}`);
-    return false;
-  }
-  console.log(`Аренда: после «${accept}»: ${snapshot(after, 400)}`);
+  if (!taken.length) return false;
 
-  // Паша, 26.09.2026: «бери шмот и одевай и продолжай фармить как обычно». Надеваем всё, что пришло;
-  // мф пишем до и после - решение уже принято, но цифры нужны: если комплект окажется хуже, это видно
-  // сразу, а не через неделю проигранных боёв.
+  // Паша: «и потом одень все». Надеваем каждую вещь, что лежит арендованной, и пишем мф до/после -
+  // решение принято, но цифры нужны: разрыв комплекта Ордо стоил 115 крита и 118 уворота (26.09).
   const before = await readCombatStats(page);
   const rented = parseRentedNames(await openRentedTab(page));
   console.log(`Аренда: арендованного на руках - ${rented.length ? rented.join(', ') : 'список не прочитался'}`);
@@ -183,13 +221,13 @@ async function acceptPendingLeasesIfAny(page) {
     await pause(page, 500, 900);
   }
   const afterStats = await readCombatStats(page);
-  console.log(`Аренда: мф было ${formatStats(before)}; стало ${formatStats(afterStats)} (надето вещей: ${wornCount}).`);
+  console.log(`Аренда: мф было ${formatStats(before)}; стало ${formatStats(afterStats)} (надето вещей: ${wornCount} из ${rented.length}).`);
 
   if (wornCount > 0) resumeNormalFighting('арендованный шмот надет');
   await sendTelegram(
-    `аренда принята${offer.days ? ` (срок ${offer.days} дн.)` : ''}: ${rented.join(', ') || snapshot(after, 120)}.`
-    + ` Надето ${wornCount}. Мф: было ${formatStats(before)}; стало ${formatStats(afterStats)}.`
-    + (wornCount > 0 ? ' Бои снова без ограничений.' : ' Бои пока ограничены - надеть не удалось.'),
+    `аренда: взял ${taken.map((t) => `${t.name} (${t.days} дн., ${t.price} дин)`).join('; ')} на ${spent} дин.`
+    + ` Надето ${wornCount} из ${rented.length}. Мф: было ${formatStats(before)}; стало ${formatStats(afterStats)}.`
+    + (wornCount > 0 ? ' Бои снова без ограничений.' : ' Надеть не удалось - бои пока ограничены.'),
   ).catch(() => {});
   return true;
 }
