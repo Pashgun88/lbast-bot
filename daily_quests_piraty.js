@@ -6703,31 +6703,9 @@ async function runSchoolTempleQuest(page) {
     console.log(`Квест (школа/казарма/храм): маршрут нарушен (${e.message}) -- всё равно иду отказываться от задания в анкете`);
   }
 
-  // Вернуться в игру перед открытием анкеты -- после обрыва маршрута мы можем быть где угодно.
-  try {
-    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await pause(page, 800, 1600);
-  } catch (e) {
-    console.log(`Квест (школа/казарма/храм): не удалось вернуться в игру перед анкетой (${e.message})`);
-  }
-
-  await performStep(page, {
-    stepName: PLAYER_NICK,
-    currentTexts: [PLAYER_NICK, PLAYER_NICK.toLowerCase()],
-    retries: 3,
-  }).catch((e) => {
-    console.log(`Квест (школа/казарма/храм): не удалось открыть анкету (${e.message})`);
-  });
-
-  const declined = await clickLinkNextToQuest(
-    page,
-    'Текущее задание',
-    ['отказаться', 'Отказаться'],
-    'Отказаться (строка "Текущее задание")'
-  );
-  if (!declined) {
-    console.log('Квест (школа/казарма/храм): не нашёл "отказаться" в строке "Текущее задание"');
-  }
+  // Тот же отказ, что и у Ордо -- см. declineCurrentTask ниже (одна реализация на оба места,
+  // чтобы правило "кликать только в строке Текущее задание" не разъехалось по копиям).
+  await declineCurrentTask(page, 'Квест (школа/казарма/храм)');
 
   if (routeError) {
     console.log('Квест (школа/казарма/храм): день завершён с обрывом маршрута, попытка на сегодня использована');
@@ -6736,6 +6714,39 @@ async function runSchoolTempleQuest(page) {
 
   console.log('Квест (школа/казарма/храм): маршрут пройден успешно, задание отклонено в анкете');
   return true;
+}
+
+// Отказ от задания в анкете: свой ник -> строка "Текущее задание" -> "отказаться". Вынесено из
+// runSchoolTempleQuest по указанию Паши (27.09.2026: "Можешь отказаться от задания тем же
+// способом что в школе преторианцев после квеста") -- нужно ещё и Ордо, когда миссию пройти не
+// удалось: взятое задание держит слот и блокирует Штольни, Харчевню и Рыбный ресторан.
+// ВАЖНО: кликаем "отказаться" ТОЛЬКО в строке "Текущее задание" -- на странице персонажа есть
+// другие похожие ссылки, и отказ не в той строке отменит не то, что нужно.
+async function declineCurrentTask(page, label) {
+  try {
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 800, 1600);
+  } catch (e) {
+    console.log(`${label}: не удалось вернуться в игру перед анкетой (${e.message})`);
+  }
+
+  await performStep(page, {
+    stepName: PLAYER_NICK,
+    currentTexts: [PLAYER_NICK, PLAYER_NICK.toLowerCase()],
+    retries: 3,
+  }).catch((e) => {
+    console.log(`${label}: не удалось открыть анкету (${e.message})`);
+  });
+
+  const declined = await clickLinkNextToQuest(
+    page,
+    'Текущее задание',
+    ['отказаться', 'Отказаться'],
+    `Отказаться (${label})`
+  );
+  if (!declined) console.log(`${label}: не нашёл "отказаться" в строке "Текущее задание"`);
+  else await pause(page, 800, 1600);
+  return declined;
 }
 
 // ===================================================================================
@@ -6889,6 +6900,7 @@ async function progressOrdoQuest(page, q) {
   await waitOutHorseTravel(page);
 
   let fought = false;
+  let stoppedForRest = false;
 
   for (let i = 0; i < 14; i++) {
     throwIfPausedByManager(`${q.label}: шаг миссии`);
@@ -6898,6 +6910,9 @@ async function progressOrdoQuest(page, q) {
     if (restNow !== null) {
       console.log(`${q.label}: кончился резерв по дороге (отдохнуть ещё ${restNow} мин) -> прерываю маршрут`);
       delayOrdoQuest(q.key, restNow + 2, 'кончился резерв по дороге');
+      // Задание оставляем взятым: следующий заход в башню увидит "у вас уже есть задание" и
+      // доедет до боя. Отказываться тут нельзя -- потеряли бы почти пройденную миссию.
+      stoppedForRest = true;
       break;
     }
 
@@ -6918,13 +6933,17 @@ async function progressOrdoQuest(page, q) {
     await pause(page, 800, 1500);
   }
 
+  if (stoppedForRest) return false;
+
   if (!fought) {
-    // Раньше тут не было бэкоффа: комментарий обещал вернуться, "когда квест снова появится в
-    // меню Q", но "Ордо Экзекуторс" из меню не исчезает никогда. 27.09.2026 это дало вечный цикл
-    // -- каждый цикл бот ехал в башню, БРАЛ оба задания и не доходил до боя. А взятое задание
-    // занимает слот "Текущее задание", из-за чего Штольни получали "откажитесь от текущего в
-    // анкете", а Гретхис не выдавала квест (в ресторане не было [Журнал наград]).
+    // Раньше тут не было ни бэкоффа, ни отказа: код рассчитывал, что взятый квест пропадёт из
+    // меню Q. Он пропадает, когда СДЕЛАН (Паша, 27.09.2026), а после сорванной миссии остаётся --
+    // и 27.09.2026 это дало вечный цикл: каждый цикл бот ехал в башню, брал оба задания и не
+    // доходил до боя. Взятое задание держит слот "Текущее задание", поэтому Штольни отвечали
+    // "откажитесь от текущего в анкете", а Гретхис не выдавала квест (в ресторане пропадал
+    // [Журнал наград]).
     console.log(`${q.label}: до боя не дошёл. Экран: ${snapshotText(await getBodyText(page), 400)}`);
+    await declineCurrentTask(page, q.label);
     delayOrdoQuest(q.key, 60, 'до боя не дошёл');
     return false;
   }
