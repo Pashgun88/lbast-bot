@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const { S, persistDailyQuestState } = require('./state');
 const { readCurrentAssignment, dropCurrentAssignment } = require('./quest_menu');
+const { getBodyText } = require('./core');
 const { sendTelegram } = require('../telegram_alerts');
 
 const DROP_ORDER_FLAG = path.join(__dirname, '..', 'drop_task.flag');
@@ -46,10 +47,21 @@ function recognizeTask(line) {
   return null;
 }
 
+// Анкету открываем НАПРЯМУЮ. 27.09.2026: readCurrentAssignment ищет ссылку на pers.php на текущей
+// странице, а в фарме её на экране нет - и проверка молча возвращала «слот свободен». Из-за этого
+// три квеста подряд шли в сцену и получали «Вы выполняете другую миссию», хотя анкета всё это время
+// показывала «Текущее задание: Вы выполняете ответственное задание. - отказаться».
 async function readSlot(page) {
-  const info = await readCurrentAssignment(page).catch(() => null);
-  if (!info) return { busy: null, line: null };
-  return { busy: !!info.assignment, line: info.assignment || null };
+  try {
+    await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const t = await getBodyText(page);
+    const m = t.match(/Текущее задание:\s*([\s\S]*?)\s*-\s*отказаться/i);
+    if (/Текущее задание/i.test(t)) return { busy: !!m, line: m ? m[1].trim() : null };
+    return { busy: null, line: null };
+  } catch (e) {
+    console.log('Анкета не прочиталась:', String(e.message).split(String.fromCharCode(10))[0]);
+    return { busy: null, line: null };
+  }
 }
 
 // Запоминаем, что слот занят НАМИ и кем именно. Зовётся там, где мы задание берём.
