@@ -381,6 +381,22 @@ function guideQuestWaitsForHp(stats) {
   return stats.hpCurrent < need ? `Штольни (нужно ${need}/${stats.hpMax})` : null;
 }
 
+// Квест по гайду доступен и ждёт ТОЛЬКО резерв - фарм в это время его же и обкрадывает.
+// 27.09.2026: «Вспышки прошлого», «Унесенные ветром» и «Неожиданная встреча» висели с резервом -1 мин,
+// а драйвер уходил в часовую фарм-сессию, которая резерв тратит; так резерв не набрался бы никогда.
+// Метку ставит сам гейт в guides/quests.js (reserveWaitAt), поэтому здесь верим только свежей -
+// не старше 40 минут: за это время квест либо пошёл, либо гейт напишет метку заново.
+function guideQuestWaitsForReserve() {
+  const st = readGuideState();
+  const fresh = Object.entries(st)
+    .filter(([, qs]) => qs && qs.reserveWaitAt && Date.now() - qs.reserveWaitAt < 40 * 60000)
+    .sort((a, b) => (b[1].reserveNeed || 0) - (a[1].reserveNeed || 0));
+  if (!fresh.length) return null;
+  const [name, qs] = fresh[0];
+  const others = fresh.length > 1 ? ` (в очереди ещё ${fresh.length - 1})` : '';
+  return `${name} ждёт резерв: ${qs.reserveHave} из ${qs.reserveNeed} мин${others}`;
+}
+
 async function runCycleStep(page, label, fn) {
   const fightMode = getFightMode();
   // 23.09.2026, Паша: в режиме без боёв, кроме бизона, разрешён кабан («харчевня... потом кабана»).
@@ -1037,8 +1053,11 @@ async function loginIfNeeded(page) {
         // бизон стачивал ровно то HP, которого квесту не хватало. Квест раз в сутки важнее филлера,
         // поэтому в простое смотрим, не ждёт ли кто-то HP.
         const shtolniWaitsForHp = guideQuestWaitsForHp(idleFarmStats);
+        const questWaitsForReserve = guideQuestWaitsForReserve();
         if (shtolniWaitsForHp) {
           console.log(`Простой: не фармлю - ${shtolniWaitsForHp} ждёт HP (${idleFarmStats.hpCurrent}/${idleFarmStats.hpMax}).`);
+        } else if (questWaitsForReserve) {
+          console.log(`Простой: не фармлю - ${questWaitsForReserve}; фарм резерв только тратит.`);
         } else if (idleFarmStats && hasEnoughHpForOptionalFight(idleFarmStats)) {
           console.log('Простой без дел, HP в норме -> вместо ожидания иду фармить.');
           const farmedIdle = await runFarmSession(page).catch((e) => {

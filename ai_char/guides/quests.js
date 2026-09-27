@@ -186,11 +186,20 @@ async function runGuideQuestIfDue(page, q) {
       const reserve = await getReserveMinutesSafe(page).catch(() => null);
       if (typeof reserve === 'number' && reserve < q.minReserveMinutes) {
         qs.suppressedUntil = now + 20 * 60000;
+        // 27.09.2026: три квеста с гейтом по резерву весь час ждали впустую - драйвер в это время
+        // уходил в часовую фарм-сессию, которая резерв и съедала, так что он не поднимался никогда.
+        // Метка ниже говорит простою «квест доступен и ждёт ТОЛЬКО резерв» - фарм тогда не начинаем.
+        qs.reserveWaitAt = now;
+        qs.reserveNeed = q.minReserveMinutes;
+        qs.reserveHave = reserve;
         st[q.name] = qs;
         saveState(st);
         console.log(`${q.name}: резерва ${reserve} мин, нужно ${q.minReserveMinutes} -> проверю через 20 мин.`);
         return false;
       }
+      delete qs.reserveWaitAt;
+      delete qs.reserveNeed;
+      delete qs.reserveHave;
     }
     // Слот проверяем ДО эля: иначе эль выпивается, а задание не берётся.
     if (q.needsSlot && !(await taskSlotFree(page))) {
