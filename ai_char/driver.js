@@ -386,6 +386,17 @@ function guideQuestWaitsForHp(stats) {
 // а драйвер уходил в часовую фарм-сессию, которая резерв тратит; так резерв не набрался бы никогда.
 // Метку ставит сам гейт в guides/quests.js (reserveWaitAt), поэтому здесь верим только свежей -
 // не старше 40 минут: за это время квест либо пошёл, либо гейт напишет метку заново.
+// Незакрытый маршрут по гайду: у квеста в guides_state.json начата часть. Такой квест держит
+// живую сцену, и фарм его только оттягивает - 27.09.2026 «Неожиданная встреча» стояла перед
+// Алеорой, а драйвер ушёл в часовую фарм-сессию и вернулся бы к квесту только через час.
+function guideQuestInProgress() {
+  const st = readGuideState();
+  for (const [name, qs] of Object.entries(st)) {
+    if (qs && qs.part !== undefined && !(qs.suppressedUntil && Date.now() < qs.suppressedUntil)) return name;
+  }
+  return null;
+}
+
 function guideQuestWaitsForReserve() {
   const st = readGuideState();
   // Только если квест реально близко к старту: не дальше 10 минут от своего порога. Иначе фарм
@@ -928,7 +939,9 @@ async function loginIfNeeded(page) {
       // бизона и кабана в каждом цикле его тратили - набраться он не мог. Пока квест по гайду ждёт
       // только резерв, раунды фарма пропускаем: это то же правило «квесты важнее фарма», но про резерв.
       const questReserveWait = guideQuestWaitsForReserve();
-      const farmAllowed = hpOkForFarm && !questsPending && !questReserveWait; // бизон разрешён и в режиме без боёв
+      const questMidRoute = guideQuestInProgress();
+      if (questMidRoute) console.log(`Ферма пропущена: «${questMidRoute}» стоит посреди маршрута - сначала доводим квест.`);
+      const farmAllowed = hpOkForFarm && !questsPending && !questReserveWait && !questMidRoute; // бизон разрешён и в режиме без боёв
       const farmAllowedFull = farmAllowed && !noFight;   // кабан и гарпия - только в обычном режиме
       if (questReserveWait) {
         console.log(`Ферма пропущена: ${questReserveWait} - раунды фарма резерв только тратят.`);
@@ -989,7 +1002,7 @@ async function loginIfNeeded(page) {
       // 27.09.2026: гейт по резерву я поставил только на раунды и на простой, а часовая сессия
       // висит отдельным вызовом - и стартовала как ни в чём не бывало, снова съедая резерв, которого
       // ждали три квеста. Третье место с тем же условием.
-      if (!hasPendingFightQuests() && !questReserveWait && process.env.AI_DISABLE_PODVALY !== '1' && getFightMode() === 'all') {
+      if (!hasPendingFightQuests() && !questReserveWait && !questMidRoute && process.env.AI_DISABLE_PODVALY !== '1' && getFightMode() === 'all') {
         const farmed = await runFarmSession(page).catch((e) => {
           console.log('Фарм-сессия упала:', e.message);
           return false;
@@ -1078,7 +1091,7 @@ async function loginIfNeeded(page) {
         // бизон стачивал ровно то HP, которого квесту не хватало. Квест раз в сутки важнее филлера,
         // поэтому в простое смотрим, не ждёт ли кто-то HP.
         const shtolniWaitsForHp = guideQuestWaitsForHp(idleFarmStats);
-        const questWaitsForReserve = guideQuestWaitsForReserve();
+        const questWaitsForReserve = guideQuestWaitsForReserve() || guideQuestInProgress();
         if (shtolniWaitsForHp) {
           console.log(`Простой: не фармлю - ${shtolniWaitsForHp} ждёт HP (${idleFarmStats.hpCurrent}/${idleFarmStats.hpMax}).`);
         } else if (questWaitsForReserve) {
