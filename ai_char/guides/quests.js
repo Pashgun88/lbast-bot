@@ -10,6 +10,13 @@ const { runGuide } = require('./guide_run');
 
 const STATE_FILE = path.join(__dirname, 'guides_state.json');
 
+// Порог резерва держим символическим (1 минута), и вот почему. 27.09.2026 я поставил длинным
+// маршрутам 20-40 минут резерва - и они не пошли вовсе: в шапке игры «AI__ (460/460) [10] (2)»
+// число в круглых скобках и есть резерв, и он весь день колеблется около нуля (12 -> 7 -> -2 -> 0
+// -> -5), потому что обычный цикл драйвера тратит примерно столько же, сколько набегает. Ждать
+// сорока минут - значит не делать квест никогда. Сам маршрут с пустым резервом не ломается:
+// guide_run пережидает «Вы устали и решили отдохнуть N мин» и «отдохнуть еще N мин», просто идёт
+// медленнее. Поэтому гейт нужен только чтобы не стартовать в глубоком минусе.
 const GUIDE_QUESTS = [
   {
     name: 'Смерть ростовщика',
@@ -26,7 +33,7 @@ const GUIDE_QUESTS = [
     files: ['neozhidannaya_vstrecha.steps'],
     periodDays: 15,
     inQMenu: false,
-    minReserveMinutes: 20,
+    minReserveMinutes: 1,
     allowedInSingleMode: true,
   },
   {
@@ -74,7 +81,7 @@ const GUIDE_QUESTS = [
     name: 'Вспышки прошлого',
     files: ['vspyshki.steps'],
     periodDays: 30,
-    minReserveMinutes: 40,
+    minReserveMinutes: 1,
   },
   {
     // Гайд kate2008 zhg_web.php?st_id=122661. Период в гайде не указан - решает меню Q.
@@ -83,7 +90,7 @@ const GUIDE_QUESTS = [
     name: 'Унесенные ветром',
     files: ['unesennye.steps'],
     periodDays: 1,
-    minReserveMinutes: 30,
+    minReserveMinutes: 1,
   },
   {
     // Паша, 27.09.2026: «Жертвоприношение [инфо] - у тебя же есть прохождение». Квест наш, пройден
@@ -94,7 +101,7 @@ const GUIDE_QUESTS = [
     files: ['zhertva1.steps', 'zhertva2.steps', 'zhertva3.steps'],
     periodDays: 1,
     dayGatedParts: true,
-    minReserveMinutes: 20,
+    minReserveMinutes: 1,
   },
 ];
 
@@ -185,7 +192,8 @@ async function runGuideQuestIfDue(page, q) {
       const { getReserveMinutesSafe } = require('../lib/hp');
       const reserve = await getReserveMinutesSafe(page).catch(() => null);
       if (typeof reserve === 'number' && reserve < q.minReserveMinutes) {
-        qs.suppressedUntil = now + 20 * 60000;
+        // 5 минут, не 20: резерв колеблется около нуля поминутно, ждать четверть часа незачем.
+        qs.suppressedUntil = now + 5 * 60000;
         // 27.09.2026: три квеста с гейтом по резерву весь час ждали впустую - драйвер в это время
         // уходил в часовую фарм-сессию, которая резерв и съедала, так что он не поднимался никогда.
         // Метка ниже говорит простою «квест доступен и ждёт ТОЛЬКО резерв» - фарм тогда не начинаем.
@@ -194,7 +202,7 @@ async function runGuideQuestIfDue(page, q) {
         qs.reserveHave = reserve;
         st[q.name] = qs;
         saveState(st);
-        console.log(`${q.name}: резерва ${reserve} мин, нужно ${q.minReserveMinutes} -> проверю через 20 мин.`);
+        console.log(`${q.name}: резерва ${reserve} мин, нужно ${q.minReserveMinutes} -> проверю через 5 мин.`);
         return false;
       }
       delete qs.reserveWaitAt;
