@@ -332,7 +332,13 @@ async function runGuideQuestsIfDue(page, { singleMode = false } = {}) {
   let did = false;
   for (const q of GUIDE_QUESTS) {
     if (singleMode && !q.allowedInSingleMode) continue; // цепочки боёв в режиме одиночных ботов не идут
-    if (await runGuideQuestIfDue(page, q)) did = true;
+    if (await runGuideQuestIfDue(page, q)) {
+      // ОДИН квест за цикл. 27.09.2026: три маршрута шли подряд, и первый же оставлял за собой
+      // незакрытую сцену - игра отвечала остальным «Вы выполняете другую миссию», и в лог валились
+      // ложные срывы (у «Унесенных» - прямо на втором шаге кузницы). Сцена живёт до своего конца,
+      // поэтому следующему квесту место освободится только в следующем цикле.
+      return true;
+    }
   }
   return did;
 }
