@@ -85,6 +85,17 @@ const GUIDE_QUESTS = [
     periodDays: 1,
     minReserveMinutes: 30,
   },
+  {
+    // Паша, 27.09.2026: «Жертвоприношение [инфо] - у тебя же есть прохождение». Квест наш, пройден
+    // 16.09.2026 (750 дин), маршрут записан в LESSONS_AI_CHAR.md и в памяти. Части = игровые ДНИ:
+    // игра сама закрывает день словами «расследование лучше начать завтра», отсюда dayGatedParts.
+    // День первый упирается в мини-игру «Сапёр» - маршрут там встаёт по @stop со снимком экрана.
+    name: 'Жертвоприношение',
+    files: ['zhertva1.steps', 'zhertva2.steps', 'zhertva3.steps'],
+    periodDays: 1,
+    dayGatedParts: true,
+    minReserveMinutes: 20,
+  },
 ];
 
 // Слот «ответственного задания» один на всех (Штольни, асассины, Ордо, демон, бунгало). Занят -
@@ -204,7 +215,15 @@ async function runGuideQuestIfDue(page, q) {
     console.log(`${q.name}: квест доступен, начинаю по записанному маршруту.`);
   }
 
+  const localDayKey = (t) => new Date(t).toLocaleDateString('sv-SE');
   for (let p = qs.part; p < q.files.length; p++) {
+    // dayGatedParts: части = игровые ДНИ, между ними игра сама говорит «расследование лучше начать
+    // завтра» («Жертвоприношение»). Вторую часть в тот же календарный день начинать бессмысленно -
+    // маршрут упрётся в отсутствующую реплику и спалит счётчик срывов.
+    if (q.dayGatedParts && p > 0 && qs.partDoneDay === localDayKey(Date.now())) {
+      console.log(`${q.name}: часть ${p + 1} - это следующий игровой день, сегодня часть ${p} уже пройдена. Жду завтра.`);
+      return false;
+    }
     const file = path.join(__dirname, q.files[p]);
     console.log(`${q.name}: часть ${p + 1}/${q.files.length} (${q.files[p]})`);
     const r = await runGuide(page, file, undefined, { quietDone: q.quietDone });
@@ -259,6 +278,7 @@ async function runGuideQuestIfDue(page, q) {
       return true;
     }
     qs.part = p + 1;
+    if (q.dayGatedParts) qs.partDoneDay = localDayKey(Date.now());
     st[q.name] = qs;
     saveState(st);
   }
@@ -269,6 +289,7 @@ async function runGuideQuestIfDue(page, q) {
   delete qs.failCount;
   delete qs.failIndex;
   delete qs.failPart;
+  delete qs.partDoneDay;
   st[q.name] = qs;
   saveState(st);
   clearProgress(q);
