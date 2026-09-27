@@ -197,13 +197,16 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   // юг» там, где его застали. Якорь - это @city, @url, @qinfo или «Конь»: после них место известно.
   let start = from;
   if (start > 0 && start < steps.length) {
-    const isAnchor = (x) => /^@(city|url|qinfo)/.test(x) || x === 'Конь';
-    for (let k = start; k >= 0; k--) {
-      if (isAnchor(steps[k])) {
-        if (k !== start) console.log(`Возобновление: откатываюсь с шага ${start} к якорю [${k}] ${steps[k]}`);
-        start = k;
-        break;
-      }
+    // Висящий бой откат отменяет: пока бой на экране, игра никуда не пустит, а @fight его разрулит.
+    const tp = await m.getBodyText(page).catch(() => '');
+    const lp = await links(page);
+    const pendingFight = /Ударить/.test(tp) || lp.some((x) => /^В бой!?$/i.test(x.t));
+    if (pendingFight) {
+      console.log('Возобновление: на экране висит бой - откат к якорю не делаю.');
+    } else {
+      const anchor = lastAnchorBefore(steps, start);
+      if (anchor !== start) console.log(`Возобновление: откатываюсь с шага ${start} к якорю [${anchor}] ${steps[anchor]}`);
+      start = anchor;
     }
   }
   let fights = 0;
