@@ -16,7 +16,7 @@
 // Внутрь можно ничего не писать (тогда снимется то, что висит) или написать кусок названия -
 // тогда отказ сработает только если строка анкеты с ним совпадает. Файл съедается после отказа.
 module.exports = {
-  readSlot, rememberSlotTaken, forgetSlotOwner, slotOwner,
+  readSlot, rememberSlotTaken, forgetSlotOwner, slotOwner, runDropOrderIfAny,
   dropAssignmentByOrder, ensureSlotFreeFor, get DROP_ORDER_FLAG() { return DROP_ORDER_FLAG; },
 };
 
@@ -147,4 +147,35 @@ function questInProgress(label) {
     }
   } catch { /* нет файла - значит ничего не в работе */ }
   return false;
+}
+
+// Приказ отказаться проверяем КАЖДЫЙ цикл, отдельным шагом драйвера, а не внутри проверки слота.
+// 27.09.2026: флаг пролежал без дела полчаса - его читал только гейт needsSlot, а до гейта ни один
+// квест не доходил (упирались в порог резерва). Приказ человека не должен зависеть от того, добрался
+// ли до него какой-то квест.
+async function runDropOrderIfAny(page) {
+  const order = readDropOrder();
+  if (!order.present) return false;
+  const slot = await readSlot(page);
+  if (slot.busy === null) {
+    console.log('Приказ на отказ: анкета не прочиталась, попробую в следующем цикле.');
+    return false;
+  }
+  if (!slot.busy) {
+    console.log('Приказ на отказ: слот и так пуст - убираю флаг.');
+    consumeDropOrder();
+    forgetSlotOwner();
+    return false;
+  }
+  const owner = slotOwner();
+  const matches = !order.match
+    || String(slot.line || '').toLowerCase().includes(order.match.toLowerCase())
+    || (owner && owner.label.toLowerCase().includes(order.match.toLowerCase()));
+  if (!matches) {
+    console.log(`Приказ на отказ про «${order.match}», а в анкете «${slot.line}»${owner ? ` (наша запись: ${owner.label})` : ''} - не трогаю.`);
+    return false;
+  }
+  const ok = await dropAssignmentByOrder(page, `приказ файлом drop_task.flag${order.match ? ` («${order.match}»)` : ''}`);
+  if (ok) consumeDropOrder();
+  return ok;
 }

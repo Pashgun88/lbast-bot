@@ -37,7 +37,7 @@ const GUIDE_QUESTS = [
     files: ['neozhidannaya_vstrecha.steps'],
     periodDays: 15,
     inQMenu: false,
-    minReserveMinutes: 10,
+    minReserveMinutes: 1,
     allowedInSingleMode: true,
   },
   {
@@ -89,7 +89,7 @@ const GUIDE_QUESTS = [
     periodDays: 30,
     // Паша 27.09 велел сделать эти квесты сейчас, поэтому порог символический: с пустым
     // резервом маршрут идёт медленно (пережидает «Вы устали»), но идёт.
-    minReserveMinutes: 8,
+    minReserveMinutes: 1,
   },
   {
     // Гайд kate2008 zhg_web.php?st_id=122661. Период в гайде не указан - решает меню Q.
@@ -102,7 +102,7 @@ const GUIDE_QUESTS = [
     periodDays: 1,
     // Паша 27.09 велел сделать эти квесты сейчас, поэтому порог символический: с пустым
     // резервом маршрут идёт медленно (пережидает «Вы устали»), но идёт.
-    minReserveMinutes: 8,
+    minReserveMinutes: 1,
   },
   {
     // Паша, 27.09.2026: «Жертвоприношение [инфо] - у тебя же есть прохождение». Квест наш, пройден

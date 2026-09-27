@@ -733,7 +733,14 @@ async function loginIfNeeded(page) {
       // которую driver.js для AI__ не вызывает - статуя ни разу не срабатывала. Требует
       // членства в клане (появилось только сегодня, "Боги войны") - сама функция сама решает,
       // подошёл ли интервал 12-14 часов, и сама планирует следующий запуск.
-      let r = await runCycleStep(page, 'Статуя славы', () => runStatueOfGloryIfDue(page));
+      // Приказ отказаться от задания (файл ai_char/drop_task.flag) исполняем в начале цикла: слот
+      // один на всё, и пока он занят, стоят Штольни и половина квестов. 27.09.2026 флаг полчаса
+      // пролежал без дела, потому что его читал только гейт внутри квестов с needsSlot.
+      let r = await runCycleStep(page, 'Отказ от задания по приказу', () => require('./lib/task_slot').runDropOrderIfAny(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+      
+      r = await runCycleStep(page, 'Статуя славы', () => runStatueOfGloryIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
