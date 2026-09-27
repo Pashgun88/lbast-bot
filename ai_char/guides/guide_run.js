@@ -172,6 +172,12 @@ function pickGridCell(rows) {
   const cands = pool.filter((x) => score(x) === best);
   return { pick: cands[Math.floor(Math.random() * cands.length)], safeCount: safe.length, thornCount: thorns.size };
 }
+// Якорь дороги: после него местоположение персонажа известно наверняка.
+function lastAnchorBefore(steps, i) {
+  const isAnchor = (x) => /^@(city|url|qinfo)/.test(x) || x === 'Конь';
+  for (let k = Math.min(i, steps.length - 1); k >= 0; k--) if (isAnchor(steps[k])) return k;
+  return 0;
+}
 function gridCellIndex(rows, r, c) {
   let k = 0;
   for (let rr = 0; rr < 6; rr++) for (let cc = 0; cc < 6; cc++) {
@@ -208,6 +214,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
     await backToScene(page);
     for (let i = start; i < steps.length; i++) {
       let step = steps[i];
+      let banRewound = false;
       console.log(`\n--- [${i}/${steps.length}] ${step}`);
       // «Вам нужно отдохнуть еще N мин» - кончился резерв (19.09 «Крыша» дважды): ждём и возвращаемся в сцену.
       for (let r = 0; r < 5; r++) {
@@ -229,7 +236,18 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         const cont = lb.find((x) => /Запрет на квесты/i.test(x.t));
         if (cont) await goto(page, cont.h);
         else await backToScene(page);
+        // 27.09.2026: запрет не просто ждёт - он ВЫКИДЫВАЕТ из сцены (из церкви Единого мы оказались
+        // снаружи, на клетке с «Зайти в церковь»). Поэтому после ожидания идём от якоря дороги.
+        const back = lastAnchorBefore(steps, i);
+        if (back < i) {
+          console.log(`запрет на квесты снят - возвращаюсь к якорю [${back}] ${steps[back]}`);
+          fs.writeFileSync(PROG, String(back));
+          i = back - 1;
+          banRewound = true;
+        }
+        break;
       }
+      if (banRewound) continue;
       if (step === '?@fight') {
         // optional extra fight: only if a fight is on screen right now
         const t0 = await m.getBodyText(page);
