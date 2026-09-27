@@ -100,6 +100,49 @@ function findLink(l, want) {
   return null;
 }
 
+// ===== Мини-игра «Сапёр» (Жертвоприношение, день 1) =====
+// Экран: «Достаньте это, не напоровшись на шип» и сетка 6x6. Клетки - ссылки с текстом «*»;
+// открытая клетка показывает ЦИФРУ - сколько шипов рядом (27.09.2026 первая же клетка дала «1»).
+// Две ловушки, на которых я уже споткнулся:
+//   * обычный сборщик ссылок клетки не видит - он срезает ведущую «*» и выбрасывает пустой текст;
+//   * выходить из цикла по слову «шип» нельзя: оно есть в самом тексте задания, всегда.
+// Ссылки идут в том же порядке, что клетки в тексте, поэтому k-я «*» в чтении = k-я ссылка-клетка.
+function parseGrid(text) {
+  const rows = [];
+  for (const line of String(text || '').split(new RegExp(String.raw`\r?\n`))) {
+    const cells = line.trim().split(new RegExp(String.raw`[\s\t]+`));
+    if (cells.length === 6 && cells.every((c) => c === '*' || /^[0-9]$/.test(c))) rows.push(cells);
+  }
+  return rows.length === 6 ? rows : null;
+}
+// наименьшей суммой соседних цифр - подальше от того, что уже пахнет шипами.
+function pickGridCell(rows) {
+  const at = (r, c) => (r >= 0 && r < 6 && c >= 0 && c < 6 ? rows[r][c] : null);
+  const around = (r, c) => {
+    const out = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (dr || dc) { const v = at(r + dr, c + dc); if (v !== null) out.push([r + dr, c + dc, v]); }
+    }
+    return out;
+  };
+  const unknown = [];
+  for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) if (rows[r][c] === '*') unknown.push([r, c]);
+  if (!unknown.length) return null;
+  const safe = unknown.filter(([r, c]) => around(r, c).some(([, , v]) => v === '0'));
+  const pool = safe.length ? safe : unknown;
+  const score = ([r, c]) => around(r, c).reduce((a, [, , v]) => a + (/^\d$/.test(v) ? Number(v) : 0), 0);
+  const best = Math.min(...pool.map(score));
+  const cands = pool.filter((x) => score(x) === best);
+  return cands[Math.floor(Math.random() * cands.length)];
+}
+function gridCellIndex(rows, r, c) {
+  let k = 0;
+  for (let rr = 0; rr < 6; rr++) for (let cc = 0; cc < 6; cc++) {
+    if (rows[rr][cc] === '*') { if (rr === r && cc === c) return k; k += 1; }
+  }
+  return -1;
+}
+
 async function runGuide(page, FILE, fromArg, opts = {}) {
   const PROG = FILE + '.progress';
   const steps = fs.readFileSync(FILE, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
@@ -134,19 +177,21 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         // ровно одна не-служебная ссылка, жмём её. Боевые ссылки, "Уйти" и "Отказаться" — никогда.
         autoLone = true;
       } else if (step.startsWith('@grid')) {
-        // Мини-игра «Сапёр» (Жертвоприношение, день 1): сетка 6x6 из ссылок, текст каждой - «*»
-        // («Достаньте это, не напоровшись на шип»). Обычный сборщик ссылок их НЕ видит: он срезает
-        // ведущую «*» и выбрасывает ссылку с пустым текстом - поэтому клетки читаем отдельно.
-        const tries = Number(step.split(/\s+/)[1] || 3);
+        // Тычем клетки по одной, пока сетка не исчезнет или не кончатся попытки.
+        const tries = Number(step.split(/\s+/)[1] || 10);
         for (let k = 0; k < tries; k++) {
+          const body = await m.getBodyText(page);
+          const rows = parseGrid(body);
+          if (!rows) { console.log('@grid: сетки на экране нет - выхожу.'); break; }
           const cells = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
             .filter((a) => (a.innerText || '').trim() === '*')
             .map((a) => a.getAttribute('href') || '')).catch(() => []);
-          console.log(`@grid: клеток на экране ${cells.length}`);
-          if (!cells.length) break;
-          await goto(page, cells[Math.floor(Math.random() * cells.length)]);
-          const tg = await m.getBodyText(page);
-          if (/шип|Далее/i.test(tg)) break;
+          const pick = pickGridCell(rows);
+          if (!pick || !cells.length) { console.log('@grid: открывать нечего.'); break; }
+          const idx = gridCellIndex(rows, pick[0], pick[1]);
+          console.log(`@grid: ${cells.length} закрытых, открываю (${pick[0] + 1},${pick[1] + 1}); сетка: ${rows.map((r) => r.join('')).join('/')}`);
+          if (idx < 0 || idx >= cells.length) { console.log('@grid: клетка и ссылка не сошлись - выхожу.'); break; }
+          await goto(page, cells[idx]);
         }
         await dump(page, 'AFTER GRID');
       } else if (step.startsWith('@url ')) {
