@@ -435,7 +435,14 @@ async function walkFishRestaurantScene(page, { label, branchName, branchTexts, s
 
 // Ветка «Холмы»: реплик после развилки мы ещё не видели. Проход идёт по экрану и при незнакомом
 // экране печатает его ссылки - по первому живому заходу список дополняется.
-const REWARD2_STEPS = [...PRE_FORK_STEPS, ...BRANCH_HILLS];
+// Реплики ветки «Холмы», снятые с живого прохода 27.09.2026 (до этого списка не было вовсе, и проход
+// останавливался на каждой из них с дампом экрана - именно так они и нашлись). Сравнение идёт по
+// ССЫЛКАМ экрана и по нормализованной подстроке, поэтому хватает опознаваемого куска фразы.
+const HILLS_SCENE_STEPS = [
+  'зачем теще Кумуса мрамара',      // «- Яшка, а зачем теще Кумуса мрамара?»
+  'В воду только не лезь',          // «- В воду только не лезь! - бежать за ним.»
+];
+const REWARD2_STEPS = [...PRE_FORK_STEPS, ...BRANCH_HILLS, ...HILLS_SCENE_STEPS];
 
 async function progressFishRestaurantHills(page) {
   return walkFishRestaurantScene(page, {
