@@ -185,13 +185,28 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   const steps = fs.readFileSync(FILE, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   const from = fromArg !== undefined && fromArg !== null ? Number(fromArg) : (fs.existsSync(PROG) ? Number(fs.readFileSync(PROG, 'utf8')) : 0);
   const name = FILE.split(/[\\/]/).pop();
+  // Возобновление ВСЕГДА начинаем с ближайшего якоря дороги перед сохранённым шагом. 27.09.2026 я
+  // трижды наступил на одно и то же: маршрут падал, следующие шаги цикла уводили персонажа (то к
+  // башне Ордо, то на южное побережье), и возобновлённый заход искал «Зайти в церковь» или «Идти на
+  // юг» там, где его застали. Якорь - это @city, @url, @qinfo или «Конь»: после них место известно.
+  let start = from;
+  if (start > 0 && start < steps.length) {
+    const isAnchor = (x) => /^@(city|url|qinfo)/.test(x) || x === 'Конь';
+    for (let k = start; k >= 0; k--) {
+      if (isAnchor(steps[k])) {
+        if (k !== start) console.log(`Возобновление: откатываюсь с шага ${start} к якорю [${k}] ${steps[k]}`);
+        start = k;
+        break;
+      }
+    }
+  }
   let fights = 0;
   let autoLone = false;
   let tiredWaits = 0;
   let result = { status: 'error', index: from };
   try {
     await backToScene(page);
-    for (let i = from; i < steps.length; i++) {
+    for (let i = start; i < steps.length; i++) {
       let step = steps[i];
       console.log(`\n--- [${i}/${steps.length}] ${step}`);
       // «Вам нужно отдохнуть еще N мин» - кончился резерв (19.09 «Крыша» дважды): ждём и возвращаемся в сцену.
