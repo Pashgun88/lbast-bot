@@ -524,9 +524,12 @@ async function loginIfNeeded(page) {
       await page.goto('http://lbast.ru/', { waitUntil: 'domcontentloaded', timeout: 60000 });
       break;
     } catch (e) {
-      if (attempt >= 3) throw e;
-      console.log(`Старт: переход на lbast.ru не удался (${e.message.split('\n')[0]}), попытка ${attempt}/3 - повторю через 10 с.`);
-      await new Promise((r) => setTimeout(r, 10_000));
+      // 27.09.2026: DNS не разрешил lbast.ru, три попытки по 10 секунд кончились - процесс вышел, и
+      // драйвер простоял десять минут. Проблема известная и всегда временная (через минуту curl
+      // отвечал 200), поэтому терпения теперь на четверть часа: 30 попыток по 30 секунд.
+      if (attempt >= 30) throw e;
+      console.log(`Старт: переход на lbast.ru не удался (${e.message.split('\n')[0]}), попытка ${attempt}/30 - повторю через 30 с.`);
+      await new Promise((r) => setTimeout(r, 30_000));
     }
   }
   const loginInput = page.locator('input[name="login"]');
