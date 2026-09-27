@@ -116,7 +116,13 @@ function parseGrid(text) {
   return rows.length === 6 ? rows : null;
 }
 // наименьшей суммой соседних цифр - подальше от того, что уже пахнет шипами.
-function pickGridCell(rows) {
+// Какую клетку открывать. Логика обычного сапёра, в два прохода:
+//   1) если открытой цифре d не хватает ровно столько шипов, сколько у неё незакрытых соседей -
+//      все они шипы, помечаем и больше не трогаем;
+//   2) если все шипы цифры уже найдены, её остальные соседи безопасны - их и открываем.
+// Безопасных нет - берём незакрытую клетку без метки шипа с наименьшей суммой соседних цифр.
+function solveGrid(rows) {
+  const key = (r, c) => r + ',' + c;
   const at = (r, c) => (r >= 0 && r < 6 && c >= 0 && c < 6 ? rows[r][c] : null);
   const around = (r, c) => {
     const out = [];
@@ -125,15 +131,46 @@ function pickGridCell(rows) {
     }
     return out;
   };
+  const digits = [];
   const unknown = [];
-  for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) if (rows[r][c] === '*') unknown.push([r, c]);
-  if (!unknown.length) return null;
-  const safe = unknown.filter(([r, c]) => around(r, c).some(([, , v]) => v === '0'));
-  const pool = safe.length ? safe : unknown;
-  const score = ([r, c]) => around(r, c).reduce((a, [, , v]) => a + (/^\d$/.test(v) ? Number(v) : 0), 0);
+  for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) {
+    if (rows[r][c] === '*') unknown.push([r, c]);
+    else digits.push([r, c, Number(rows[r][c])]);
+  }
+  const thorns = new Set();
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    for (const [r, c, d] of digits) {
+      const nb = around(r, c).filter(([, , v]) => v === '*');
+      const open = nb.filter(([rr, cc]) => !thorns.has(key(rr, cc)));
+      const known = nb.length - open.length;
+      if (open.length && d - known === open.length) {
+        for (const [rr, cc] of open) thorns.add(key(rr, cc));
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  const safe = [];
+  for (const [r, c, d] of digits) {
+    const nb = around(r, c).filter(([, , v]) => v === '*');
+    const known = nb.filter(([rr, cc]) => thorns.has(key(rr, cc))).length;
+    if (d - known === 0) {
+      for (const [rr, cc] of nb) {
+        if (!thorns.has(key(rr, cc)) && !safe.some(([sr, sc]) => sr === rr && sc === cc)) safe.push([rr, cc]);
+      }
+    }
+  }
+  const score = ([r, c]) => around(r, c).reduce((a, [, , v]) => a + (v === '*' ? 0 : Number(v)), 0);
+  return { safe, thorns, unknown, score, key };
+}
+function pickGridCell(rows) {
+  const { safe, thorns, unknown, score, key } = solveGrid(rows);
+  const free = unknown.filter(([r, c]) => !thorns.has(key(r, c)));
+  const pool = safe.length ? safe : (free.length ? free : unknown);
   const best = Math.min(...pool.map(score));
   const cands = pool.filter((x) => score(x) === best);
-  return cands[Math.floor(Math.random() * cands.length)];
+  return { pick: cands[Math.floor(Math.random() * cands.length)], safeCount: safe.length, thornCount: thorns.size };
 }
 function gridCellIndex(rows, r, c) {
   let k = 0;
@@ -186,10 +223,10 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           const cells = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
             .filter((a) => (a.innerText || '').trim() === '*')
             .map((a) => a.getAttribute('href') || '')).catch(() => []);
-          const pick = pickGridCell(rows);
+          const { pick, safeCount, thornCount } = pickGridCell(rows);
           if (!pick || !cells.length) { console.log('@grid: открывать нечего.'); break; }
           const idx = gridCellIndex(rows, pick[0], pick[1]);
-          console.log(`@grid: ${cells.length} закрытых, открываю (${pick[0] + 1},${pick[1] + 1}); сетка: ${rows.map((r) => r.join('')).join('/')}`);
+          console.log(`@grid: ${cells.length} закрытых, шипов найдено ${thornCount}, безопасных ${safeCount}, открываю (${pick[0] + 1},${pick[1] + 1}); сетка: ${rows.map((r) => r.join('')).join('/')}`);
           if (idx < 0 || idx >= cells.length) { console.log('@grid: клетка и ссылка не сошлись - выхожу.'); break; }
           await goto(page, cells[idx]);
         }
