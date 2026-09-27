@@ -9,8 +9,10 @@
 //
 // Механика (гайд + разведка вживую 26.09.2026):
 //   * журнал открывается отдельным мини-квестом («навык ведения дневника наград»), у Цунами он
-//     уже есть; ссылка [Журнал наград] видна только на экранах go=2/go=3 активного квеста, после
-//     сдачи Гретхис говорит «завтра приходи» и ссылка пропадает;
+//     уже есть; ссылка [Журнал наград] видна на экране NPC и после «Здравствуйте», но НЕ на go=3
+//     («Работа нужна значит?»), где задание уже выдано, и не после сдачи («завтра приходи»).
+//     Поэтому журнал читается ПО ХОДУ подхода, до клика «Я насчет работы» (27.09.2026: читали
+//     после диалога и всегда получали «задание не взято»);
 //   * каждый уникальный предмет выдаётся раз в 30 дней, иначе за ветку дают только дины — поэтому
 //     в журнале обычно висит два-три пункта, а не весь список;
 //   * диалог помнит шаг на сервере: повторный заход открывается с текущего места, а не с начала,
@@ -193,22 +195,30 @@ async function approachGretkhis(page, deps) {
   const rest = findLink(await linksOf(page), 'рыбный ресторан');
   if (!rest) {
     console.log('Ресторан: в локации нет «Рыбный ресторан» — маршрут сбился');
-    return false;
+    return { ok: false, journal: null };
   }
   await click(page, rest.h);
 
   const npc = findLink(await linksOf(page), 'кумуса');
   if (!npc) {
     console.log('Ресторан: в зале нет тёщи Кумуса');
-    return false;
+    return { ok: false, journal: null };
   }
   await click(page, npc.h);
 
+  // Журнал читаем ПО ХОДУ диалога, а не после него: ссылка [Журнал наград] видна на экране NPC и
+  // после "Здравствуйте", но на go=3 ("Работа нужна значит?"), где задание уже выдано, её уже нет.
+  // 27.09.2026 бот проходил диалог до конца и только потом искал журнал -- и каждый раз получал
+  // "задание не взято", хотя задание как раз было взято.
+  let journal = null;
   for (const step of ['здравствуйте', 'насчет работы']) {
+    if (!journal) journal = await readJournal(page);
     const l = findLink(await linksOf(page), step);
-    if (l) await click(page, l.h);
+    if (!l) break;
+    await click(page, l.h);
   }
-  return true;
+  if (!journal) journal = await readJournal(page);
+  return { ok: true, journal };
 }
 
 // Проходчик сцены: идёт по steps ветки, а промежуточные экраны (пересказ, «Далее», «Продолжить
@@ -281,7 +291,8 @@ async function runFishRestaurantQuest(page, deps = {}) {
   }
 
   if (throwIfPaused) throwIfPaused('Ресторан: старт');
-  if (!(await approachGretkhis(page, deps))) return false;
+  const approach = await approachGretkhis(page, deps);
+  if (!approach.ok) return false;
 
   // Слот "Текущее задание" занят другим квестом (Ордо, Харчевня, Штольни, школа преторианцев) --
   // Гретхис тогда задание не выдаёт, а без взятого задания нет и ссылки [Журнал наград].
@@ -293,17 +304,23 @@ async function runFishRestaurantQuest(page, deps = {}) {
     return false;
   }
 
-  const available = await readJournal(page);
-  if (!available) {
-    console.log(`Ресторан: нет ссылки [Журнал наград] — задание не взято. Экран: ${SHORT(screen).slice(0, 300)}`);
-    return false;
-  }
-  console.log(`Ресторан: в журнале доступно: ${available.join(', ') || '(пусто)'}`);
+  const available = approach.journal;
+  let branch = available ? pickBranch(available) : null;
 
-  const branch = pickBranch(available);
-  if (!branch) {
-    console.log('Ресторан: ни одна доступная награда не описана в таблице веток, пропускаю');
-    return false;
+  if (available) {
+    console.log(`Ресторан: в журнале доступно: ${available.join(', ') || '(пусто)'}`);
+    if (!branch) {
+      console.log('Ресторан: ни одна доступная награда не описана в таблице веток, пропускаю');
+      return false;
+    }
+  } else {
+    // Журнал прочитать не удалось -- обычно потому, что задание уже было взято раньше (диалог
+    // помнит место, и ссылка журнала на том экране уже не показывается). Бросать это нельзя:
+    // взятое задание держит слот "Текущее задание" и блокирует Штольни, Харчевню и сам ресторан
+    // (27.09.2026). Поэтому идём веткой по умолчанию -- первой из приоритета -- лишь бы закрыть.
+    branch = BRANCHES.find((b) => b.n === PRIORITY[0]);
+    console.log(`Ресторан: журнал недоступен (задание уже взято?). Экран: ${SHORT(screen).slice(0, 200)}`);
+    console.log(`Ресторан: иду веткой по умолчанию «${branch.reward}», чтобы не оставлять задание висеть`);
   }
   console.log(`Ресторан: иду за наградой «${branch.reward}» (ветка ${branch.n})`);
 
