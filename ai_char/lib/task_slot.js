@@ -32,6 +32,20 @@ const STUCK_MINUTES = Number(process.env.AI_TASK_STUCK_MINUTES || 40);
 // Чтобы не частить в Telegram про одно и то же.
 const REPORT_EVERY_MS = 6 * 60 * 60 * 1000;
 
+// Кто держит слот, если наша запись пуста: узнаём задание по его же тексту в анкете. Список
+// пополняется по живым строкам - 27.09.2026 после отказа слот тут же занял бунгало со строкой
+// «Вам нужно найти озеро в джунглях.», и владелец был «неизвестен».
+const KNOWN_TASKS = [
+  { re: /озеро в джунглях|бунгало/i, label: 'Задание в бунгало', droppable: true },
+  { re: /ответственное задание/i, label: null, droppable: false },
+];
+// Задания, которые не жалко снять ради квеста по гайду: короткие и повторяемые. Бунгало берётся
+// заново каждый день, а маршрут по гайду ждать сутки не может.
+function recognizeTask(line) {
+  for (const t of KNOWN_TASKS) if (t.re.test(String(line || ''))) return t;
+  return null;
+}
+
 async function readSlot(page) {
   const info = await readCurrentAssignment(page).catch(() => null);
   if (!info) return { busy: null, line: null };
@@ -106,7 +120,8 @@ async function ensureSlotFreeFor(page, questName) {
 
   const owner = slotOwner();
   const order = readDropOrder();
-  const ownerLine = `«${slot.line}»${owner ? `, по нашим записям это ${owner.label}` : ', владелец нам неизвестен'}`;
+  const recognized = recognizeTask(slot.line);
+  const ownerLine = `«${slot.line}»${owner ? `, по нашим записям это ${owner.label}` : (recognized && recognized.label ? `, по тексту это ${recognized.label}` : ', владелец нам неизвестен')}`;
 
   // 1) Прямой приказ файлом - снимаем что угодно, но если в файле написано название, оно должно совпасть.
   if (order.present) {
@@ -122,13 +137,20 @@ async function ensureSlotFreeFor(page, questName) {
     return false;
   }
 
-  // 2) Наше же задание, которое давно не двигается, - это и есть «застрявшее» из правила Паши.
+  // 2) Короткое повторяемое задание (бунгало) уступает квесту по гайду: оно берётся заново
+  // каждый день, а маршрут по гайду из-за него стоит сутки.
+  const known = recognizeTask(slot.line);
+  if (known && known.droppable) {
+    return dropAssignmentByOrder(page, `${known.label} держит слот, а он нужен «${questName}» - задание короткое и берётся заново`);
+  }
+
+  // 3) Наше же задание, которое давно не двигается, - это и есть «застрявшее» из правила Паши.
   const idleMin = owner ? Math.round((Date.now() - owner.at) / 60000) : null;
   if (owner && idleMin >= STUCK_MINUTES && !questInProgress(owner.label)) {
     return dropAssignmentByOrder(page, `${owner.label} держит слот ${idleMin} мин и не двигается, слот нужен «${questName}»`);
   }
 
-  // 3) Всё остальное - только доклад. Чужое и своё в работе не снимаем.
+  // 4) Всё остальное - только доклад. Чужое и своё в работе не снимаем.
   console.log(`Слот задания занят: ${ownerLine}${idleMin === null ? '' : `, висит ${idleMin} мин`} -> «${questName}» жду.`);
   if (Date.now() - (S.taskSlotReportedAt || 0) > REPORT_EVERY_MS) {
     S.taskSlotReportedAt = Date.now();
