@@ -18,6 +18,18 @@ const GUIDE_QUESTS = [
     periodDays: 15,
   },
   {
+    // Перенесено из репозитория Цунами 27.09.2026 (Паша: «процунами - не в жг а в репо на гитхабе»).
+    // Маршрут он прошёл вживую 25.09 и уже исправил под текущую игру; вариант V по гайду kate2008 -
+    // самый прибыльный (три выплаты, 472 дин + Эликсир регенерации за прогон), ценой двух боёв и
+    // нулевой кармы. В меню Q квест НЕ появляется вовсе, поэтому inQMenu: false.
+    name: 'Неожиданная встреча',
+    files: ['neozhidannaya_vstrecha.steps'],
+    periodDays: 15,
+    inQMenu: false,
+    minReserveMinutes: 20,
+    allowedInSingleMode: true,
+  },
+  {
     // Паша, 19.09.2026: «каждый день, проигрыш не страшен». Бой 2 впритык (39 HP с элем), поэтому
     // поражение = квест на сегодня закрыт, а не пауза и продолжение с того же шага (сцена сгорает).
     name: 'Штольни',
@@ -132,9 +144,25 @@ async function runGuideQuestIfDue(page, q) {
     if (q.resetAtMidnight) {
       if (qs.lastDone && localDay(qs.lastDone) === localDay(now)) return false;
     } else if (qs.lastDone && now - qs.lastDone < q.periodDays * 86400000) return false;
-    if (!(await m.resetToQuestMenu(page))) return false;
-    const qText = await m.getBodyText(page);
-    if (!qText.includes(q.name)) return false;
+    // inQMenu: false - квест есть в каталоге «Все квесты», но в меню Q не показывается (живой случай:
+    // «Неожиданная встреча»). Гейт по меню такой квест не пропустил бы никогда.
+    if (q.inQMenu !== false) {
+      if (!(await m.resetToQuestMenu(page))) return false;
+      const qText = await m.getBodyText(page);
+      if (!qText.includes(q.name)) return false;
+    }
+    // Длинным маршрутам нужен резерв: без него дорога встаёт на первом же переходе.
+    if (q.minReserveMinutes) {
+      const { getReserveMinutesSafe } = require('../lib/hp');
+      const reserve = await getReserveMinutesSafe(page).catch(() => null);
+      if (typeof reserve === 'number' && reserve < q.minReserveMinutes) {
+        qs.suppressedUntil = now + 20 * 60000;
+        st[q.name] = qs;
+        saveState(st);
+        console.log(`${q.name}: резерва ${reserve} мин, нужно ${q.minReserveMinutes} -> проверю через 20 мин.`);
+        return false;
+      }
+    }
     // Слот проверяем ДО эля: иначе эль выпивается, а задание не берётся.
     if (q.needsSlot && !(await taskSlotFree(page))) {
       qs.suppressedUntil = now + SLOT_RETRY_MIN * 60000;
