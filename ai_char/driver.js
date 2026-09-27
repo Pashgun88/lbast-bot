@@ -909,8 +909,16 @@ async function loginIfNeeded(page) {
       const hpOkForFarm = hasEnoughHpForOptionalFight(stats);
       const questsPending = hasPendingFightQuests();
       const noFight = getFightMode() === 'none';
-      const farmAllowed = hpOkForFarm && !questsPending; // бизон разрешён и в режиме без боёв
+      // 27.09.2026: HP фарм больше не крадёт, зато крадёт РЕЗЕРВ. «Вспышки прошлого» (40 мин),
+      // «Унесенные ветром» (30) и «Жертвоприношение» (20) стояли с отрицательным резервом, а раунды
+      // бизона и кабана в каждом цикле его тратили - набраться он не мог. Пока квест по гайду ждёт
+      // только резерв, раунды фарма пропускаем: это то же правило «квесты важнее фарма», но про резерв.
+      const questReserveWait = guideQuestWaitsForReserve();
+      const farmAllowed = hpOkForFarm && !questsPending && !questReserveWait; // бизон разрешён и в режиме без боёв
       const farmAllowedFull = farmAllowed && !noFight;   // кабан и гарпия - только в обычном режиме
+      if (questReserveWait) {
+        console.log(`Ферма пропущена: ${questReserveWait} - раунды фарма резерв только тратят.`);
+      }
       if (!hpOkForFarm) {
         console.log(`Ферма пропущена: HP ${stats.hpCurrent}/${stats.hpMax} < ${Math.round(fightHpFraction() * 100)}% - это HP нужно квестам.`);
       } else if (questsPending) {
