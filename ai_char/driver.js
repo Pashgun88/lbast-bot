@@ -388,8 +388,12 @@ function guideQuestWaitsForHp(stats) {
 // не старше 40 минут: за это время квест либо пошёл, либо гейт напишет метку заново.
 function guideQuestWaitsForReserve() {
   const st = readGuideState();
+  // Только если квест реально близко к старту: не дальше 10 минут от своего порога. Иначе фарм
+  // стоял бы весь день впустую - при резерве -3 и пороге 20 виноват не фарм, а общая нагрузка
+  // цикла, и часть этого резерва всё равно набежит только к утру.
   const fresh = Object.entries(st)
-    .filter(([, qs]) => qs && qs.reserveWaitAt && Date.now() - qs.reserveWaitAt < 40 * 60000)
+    .filter(([, qs]) => qs && qs.reserveWaitAt && Date.now() - qs.reserveWaitAt < 40 * 60000
+      && typeof qs.reserveHave === 'number' && (qs.reserveNeed - qs.reserveHave) <= 10)
     .sort((a, b) => (b[1].reserveNeed || 0) - (a[1].reserveNeed || 0));
   if (!fresh.length) return null;
   const [name, qs] = fresh[0];
