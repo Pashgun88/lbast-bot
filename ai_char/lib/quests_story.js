@@ -356,6 +356,7 @@ async function progressOrdoQuest(page, q) {
     // перезапускается, цикл идёт заново, и брошенное нами задание выглядит как «чужое, не трогать».
     S.ordoTaskTakenLabel = q.label;
     S.ordoTaskTakenAt = Date.now();
+    persistDailyQuestState(); // переживает перезапуск драйвера - иначе брошенное своё снова «чужое»
   }
   if (alreadyHasTask) {
     // 26.09.2026, живой тупик: в слоте висело недоделанное задание Ордо («Вы еще не выполнили
@@ -429,6 +430,7 @@ async function progressOrdoQuest(page, q) {
       await dropCurrentAssignment(page, `${q.label}: миссия не прошла, слот не держим`);
       S.ordoTaskTakenLabel = null;
       S.ordoTaskTakenAt = 0;
+      persistDailyQuestState();
     } else {
       console.log(`${q.label}: до боя не дошёл, задание в слоте не моё - не трогаю (решение Паши).`);
     }

@@ -355,6 +355,11 @@ function restoreDailyQuestState() {
 
   if (Number.isFinite(s.lastVinogradRunAt)) S.lastVinogradRunAt = s.lastVinogradRunAt;
   if (Number.isFinite(s.lastFishSaleAt)) S.lastFishSaleAt = s.lastFishSaleAt;
+  // Какое задание Ордо в слоте взяли МЫ. Держать это только в памяти процесса нельзя: 26-27.09
+  // драйвер перезапускался по десять раз за вечер, и после каждого перезапуска брошенное своё
+  // задание снова выглядело «чужим, не трогать» - и держало слот, блокируя Штольни.
+  if (typeof s.ordoTaskTakenLabel === 'string' || s.ordoTaskTakenLabel === null) S.ordoTaskTakenLabel = s.ordoTaskTakenLabel;
+  if (Number.isFinite(s.ordoTaskTakenAt)) S.ordoTaskTakenAt = s.ordoTaskTakenAt;
   if (Number.isFinite(s.fortressPowerUntil)) S.fortressPowerUntil = s.fortressPowerUntil;
 
   if (Number.isFinite(s.lastStatueRunAt)) S.lastStatueRunAt = s.lastStatueRunAt;
@@ -429,6 +434,7 @@ function persistDailyQuestState() {
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
+    ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,
     lastStatueRunAt: S.lastStatueRunAt, nextStatueDueAt: S.nextStatueDueAt,
     bestHpMaxSeen: S.bestHpMaxSeen,
     shepotMonthKey: S.shepotMonthKey, shepotDoneThisMonth: S.shepotDoneThisMonth, shepotStage: S.shepotStage, shepotGauntletFightsDone: S.shepotGauntletFightsDone,
