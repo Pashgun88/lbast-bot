@@ -1817,6 +1817,9 @@ async function runDailyQuests(page, stats) {
         throwIfPaused: throwIfPausedByManager,
         resetToQuestMenu: (p) => resetToQuestMenu(p, questCount),
         clickInfoForQuest,
+        // Нужен, когда задание ресторана висит с прошлого захода: журнал на том экране уже не
+        // виден, а ветку положено выбирать по журналу -- значит зависшее задание надо снять.
+        declineCurrentTask,
         hpCurrent: restHp,
         reserveMinutes,
         minHp: FISH_RESTAURANT_MIN_HP,

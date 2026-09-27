@@ -300,6 +300,7 @@ async function runFishRestaurantQuest(page, deps = {}) {
   const {
     fightLoop, throwIfPaused, hpCurrent = null, reserveMinutes = null,
     minHp = DEFAULT_MIN_HP, minReserveMinutes = DEFAULT_MIN_RESERVE,
+    declineCurrentTask,
   } = deps;
 
   if (typeof fightLoop !== 'function') {
@@ -329,23 +330,35 @@ async function runFishRestaurantQuest(page, deps = {}) {
     return false;
   }
 
-  const available = approach.journal;
-  let branch = available ? pickBranch(available) : null;
+  let available = approach.journal;
 
-  if (available) {
-    console.log(`Ресторан: в журнале доступно: ${available.join(', ') || '(пусто)'}`);
-    if (!branch) {
-      console.log('Ресторан: ни одна доступная награда не описана в таблице веток, пропускаю');
+  // Журнал не прочитался -- значит задание уже было взято раньше (диалог помнит место, и ссылки
+  // журнала на том экране больше нет). Ветку при этом выбирать НЕ по чему: идти "веткой по
+  // умолчанию" нельзя -- ветка должна определяться журналом (Паша, 27.09.2026). Поэтому снимаем
+  // зависшее задание в анкете и заходим заново, уже с начала диалога, где журнал виден.
+  // Снимать безопасно именно здесь: если бы слот держал ЧУЖОЙ квест (Харчевня/Штольни/Ордо),
+  // Гретхис не выдала бы своё задание, и мы вышли бы выше по тексту "откажитесь от текущего".
+  if (!available) {
+    if (typeof declineCurrentTask !== 'function') {
+      console.log(`Ресторан: журнал недоступен (задание уже взято), снять его нечем -- пропускаю. Экран: ${SHORT(screen).slice(0, 200)}`);
       return false;
     }
-  } else {
-    // Журнал прочитать не удалось -- обычно потому, что задание уже было взято раньше (диалог
-    // помнит место, и ссылка журнала на том экране уже не показывается). Бросать это нельзя:
-    // взятое задание держит слот "Текущее задание" и блокирует Штольни, Харчевню и сам ресторан
-    // (27.09.2026). Поэтому идём веткой по умолчанию -- первой из приоритета -- лишь бы закрыть.
-    branch = BRANCHES.find((b) => b.n === PRIORITY[0]);
-    console.log(`Ресторан: журнал недоступен (задание уже взято?). Экран: ${SHORT(screen).slice(0, 200)}`);
-    console.log(`Ресторан: иду веткой по умолчанию «${branch.reward}», чтобы не оставлять задание висеть`);
+    console.log('Ресторан: журнал недоступен -- задание уже взято; снимаю его в анкете и захожу заново, чтобы выбрать ветку по журналу');
+    await declineCurrentTask(page, 'Рыбный ресторан');
+    const retry = await approachGretkhis(page, deps);
+    if (!retry.ok) return false;
+    available = retry.journal;
+    if (!available) {
+      console.log('Ресторан: журнал не читается и после отказа -- пропускаю цикл, чтобы не ходить по кругу');
+      return false;
+    }
+  }
+
+  console.log(`Ресторан: в журнале доступно: ${available.join(', ') || '(пусто)'}`);
+  const branch = pickBranch(available);
+  if (!branch) {
+    console.log('Ресторан: ни одна доступная награда не описана в таблице веток, пропускаю');
+    return false;
   }
   console.log(`Ресторан: иду за наградой «${branch.reward}» (ветка ${branch.n})`);
 
