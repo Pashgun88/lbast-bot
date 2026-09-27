@@ -124,6 +124,12 @@ const norm = (s) => String(s || '')
   .replace(/ /g, ' ').replace(/ё/gi, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
 const SHORT = (t) => String(t || '').replace(/\s+/g, ' ').trim();
 
+// Служебная обвязка страницы -- всё, что не относится к сцене.
+const CHROME = ['Обновить', 'Чат', 'В игру', 'Письма', 'Инв', 'Поиск', 'Амулет', 'Конь', 'Форум',
+  'ЖГ', 'Карта', 'Кланы', 'Выход', 'Размер текста', 'Настройка', 'Кто здесь?', 'Бои', 'Tsunami',
+  'Турнир рыболовов', 'Рынок', 'Голд-Рынок', 'Нести караул', 'Игровой клуб Кумуса', 'Рыбалка',
+  'Цейхгауз', 'Памятник', 'Идти на юг'];
+
 async function linksOf(page) {
   return await page.evaluate(() => Array.from(document.querySelectorAll('a'))
     .map((a) => ({ t: (a.textContent || '').replace(/\s+/g, ' ').trim(), h: a.getAttribute('href') }))
@@ -226,6 +232,7 @@ async function approachGretkhis(page, deps) {
 async function walkBranch(page, branch, deps) {
   const { fightLoop, throwIfPaused } = deps;
   let i = 0;
+  let fillerStreak = 0;
 
   for (let screen = 0; screen < MAX_SCREENS; screen++) {
     if (throwIfPaused) throwIfPaused(`Ресторан: ${branch.reward} ${screen}`);
@@ -248,16 +255,34 @@ async function walkBranch(page, branch, deps) {
         console.log(`Ресторан[${branch.n}]: шаг ${i + 1}/${branch.steps.length} «${want.t}»`);
         await click(page, want.h);
         i += 1;
+        fillerStreak = 0;
         continue;
       }
     }
 
-    const filler = ['в бой', 'продолжить квест', 'далее', 'вернуться'];
+    // "Скоро вернусь" -- выход из диалога выдачи задания; после него надо снова зайти в ресторан
+    // и к Гретхис, там уже ждёт Яшка с выбором места (27.09.2026: маршрут вставал на go=3 с
+    // ссылками ["- Скоро вернусь.","Уйти"], потому что шаги ветки начинаются только с выбора).
+    const filler = ['в бой', 'продолжить квест', 'далее', 'вернуться',
+      // "теща", а не "кумуса": «Игровой клуб Кумуса» стоит на той же клетке форта, и филлер по
+      // "кумуса" уводил бы в игорный дом вместо Гретхис.
+      'скоро вернусь', 'рыбный ресторан', 'теща'];
     const next = filler.map((f) => findLink(links, f)).find(Boolean);
-    if (next) { await click(page, next.h); continue; }
+    if (next) {
+      fillerStreak += 1;
+      if (fillerStreak > 8) {
+        console.log(`Ресторан[${branch.n}]: хожу по кругу, не доходя до шага «${branch.steps[i]}»`);
+        return false;
+      }
+      await click(page, next.h);
+      continue;
+    }
 
     // Единственная сюжетная ссылка на экране -- это пересказ, а не выбор: идём по ней.
-    const scene = links.filter((x) => /loc\.php/.test(x.h) && !/журнал наград|^уйти$/i.test(norm(x.t)));
+    // Отбираем по ТЕКСТУ, а не по адресу: часть ссылок сцены ведёт на location.php, и прежний
+    // фильтр по "loc.php" их просто не видел.
+    const scene = links.filter((x) => !CHROME.some((c) => norm(x.t).startsWith(norm(c)))
+      && !/журнал наград/i.test(x.t) && norm(x.t) !== 'уйти');
     if (scene.length === 1) { await click(page, scene[0].h); continue; }
 
     if (i >= branch.steps.length) {
