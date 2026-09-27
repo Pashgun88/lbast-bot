@@ -212,6 +212,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   let fights = 0;
   let autoLone = false;
   let tiredWaits = 0;
+  let restWaits = 0;
   let result = { status: 'error', index: from };
   try {
     await backToScene(page);
@@ -371,6 +372,18 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
             ({ t, l } = await dump(page, 'FIGHT SCREEN'));
           }
           const b =l.find((x) => /^В бой!?$/i.test(x.t)) || l.find((x) => /^Принять бой!?$/i.test(x.t)) || l.find((x) => /^Напасть/i.test(x.t));
+          // «Вам нужно отдохнуть еще N мин» - кончился резерв, и СЦЕНА НЕ ОТКРЫВАЕТСЯ (27.09.2026,
+          // Болота Агнессы: чулан отвечал именно так, а шаг рапортовал «кнопки боя нет»). Ждём и
+          // повторяем тот же шаг - обычная проверка в начале шага сюда не попадала.
+          const restM = t.match(/отдохнуть еще (\d+) мин/i);
+          if (!b && restM && restWaits < 4) {
+            restWaits += 1;
+            console.log(`бой не открылся: нужно отдохнуть ${restM[1]} мин - жду и повторяю шаг ${i}.`);
+            await sleep((Number(restM[1]) * 60 + 25) * 1000);
+            await backToScene(page);
+            i -= 1;
+            continue;
+          }
           if (!b && !/Ударить/.test(t)) { await dump(page, 'NO FIGHT LINK'); await notify(page, `${name}: шаг ${i} ждал бой, но кнопки боя нет. Стою.`); fs.writeFileSync(PROG, String(i)); result = { status: 'nofight', index: i }; break; }
           if (b) { await goto(page, b.h); }
           t = await m.getBodyText(page);
