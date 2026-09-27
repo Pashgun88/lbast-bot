@@ -131,6 +131,12 @@ async function ensureSlotFreeFor(page, questName) {
   if (!slot.busy) return true;
 
   const owner = slotOwner();
+  // Задание держит САМ этот квест - значит он его и взял, продолжаем. 27.09.2026: «Вспышки прошлого»
+  // взяли задание, записались владельцем слота, и их же гейт следующим циклом их не пустил.
+  if (owner && owner.label === questName) {
+    console.log(`Слот задания держит сам «${questName}» - это его задание, продолжаю.`);
+    return true;
+  }
   const order = readDropOrder();
   const recognized = recognizeTask(slot.line);
   const ownerLine = `«${slot.line}»${owner ? `, по нашим записям это ${owner.label}` : (recognized && recognized.label ? `, по тексту это ${recognized.label}` : ', владелец нам неизвестен')}`;
