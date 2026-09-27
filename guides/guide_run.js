@@ -13,6 +13,7 @@
 //   текст        нажать ссылку, чей текст начинается с этого (регистр/ё/кавычки/маркеры не важны)
 //   ?текст       то же, но необязательно (нет ссылки -- шаг пропускается)
 //   *текст       жать, пока ссылка есть на экране (длинные цепочки "Далее")
+//   @konj N      конём по шорткату lway=N (7 -- Рыбацкая деревня)
 //   @until М | Л  жать ссылку Л, пока на экране не появится маркер М (дорога неизвестной длины)
 //   @city N      амулетом в город: 1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак Хаоса,
 //                8 Девтаун, 9 Дорожный крест
@@ -227,6 +228,17 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           result = { status: 'mismatch', index: i };
           break;
         }
+      } else if (step.startsWith('@konj')) {
+        // @konj N -- конь-шорткат location.php?mod=konj&lway=N. Дешевле и короче пешей дороги, и
+        // не зависит от числа клеток (Паша, 27.09.2026 про Рыбацкую деревню: "вместо этого пути
+        // используй конь - рыбацкая деревня"). lway=7 -- Рыбацкая деревня (тот же адрес, что в
+        // guides/gallery.js).
+        canRetryAfterBlock = true;
+        const n = step.split(/\s+/)[1];
+        await goto(page, `location.php?mod=konj&lway=${n}`);
+        await sleep(6000);
+        await goto(page, 'location.php');
+        await travelWait(page);
       } else if (step.startsWith('@city')) {
         canRetryAfterBlock = true;
         const n = step.split(/\s+/)[1];
