@@ -214,23 +214,36 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         // ровно одна не-служебная ссылка, жмём её. Боевые ссылки, "Уйти" и "Отказаться" — никогда.
         autoLone = true;
       } else if (step.startsWith('@grid')) {
-        // Тычем клетки по одной, пока сетка не исчезнет или не кончатся попытки.
-        const tries = Number(step.split(/\s+/)[1] || 10);
-        for (let k = 0; k < tries; k++) {
-          const body = await m.getBodyText(page);
-          const rows = parseGrid(body);
+        // ЦЕНА ОШИБКИ (замер 27.09.2026): укол шипом снял 355 HP - персонаж ушёл в минус с 351.
+        // Поэтому политика простая: открываем только те клетки, которые ВЫВЕДЕНЫ безопасными,
+        // а наугад тычем не больше, чем разрешено параметром (первый клик иначе невозможен -
+        // на пустом поле выводить нечего). Кончились безопасные и догадки - уходим из игры целыми.
+        const maxGuesses = Number(step.split(/\s+/)[1] || 1);
+        let guesses = 0;
+        for (let k = 0; k < 36; k++) {
+          const hp = await readHp(page);
+          if (hp && hp.max > 0 && hp.hp < hp.max * 0.5) { console.log(`@grid: HP ${hp.hp}/${hp.max} - меньше половины, в сетку не лезу.`); break; }
+          const rows = parseGrid(await m.getBodyText(page));
           if (!rows) { console.log('@grid: сетки на экране нет - выхожу.'); break; }
           const cells = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
             .filter((a) => (a.innerText || '').trim() === '*')
             .map((a) => a.getAttribute('href') || '')).catch(() => []);
+          if (!cells.length) { console.log('@grid: закрытых клеток нет.'); break; }
           const { pick, safeCount, thornCount } = pickGridCell(rows);
-          if (!pick || !cells.length) { console.log('@grid: открывать нечего.'); break; }
+          if (!pick) { console.log('@grid: открывать нечего.'); break; }
+          if (!safeCount) {
+            if (guesses >= maxGuesses) { console.log(`@grid: безопасных клеток не вывести, догадки (${maxGuesses}) кончились - выхожу целым.`); break; }
+            guesses += 1;
+          }
           const idx = gridCellIndex(rows, pick[0], pick[1]);
-          console.log(`@grid: ${cells.length} закрытых, шипов найдено ${thornCount}, безопасных ${safeCount}, открываю (${pick[0] + 1},${pick[1] + 1}); сетка: ${rows.map((r) => r.join('')).join('/')}`);
+          console.log(`@grid: ${cells.length} закрытых, шипов найдено ${thornCount}, безопасных ${safeCount}, ${safeCount ? 'открываю' : `догадка ${guesses}/${maxGuesses}:`} (${pick[0] + 1},${pick[1] + 1}); сетка: ${rows.map((r) => r.join('')).join('/')}`);
           if (idx < 0 || idx >= cells.length) { console.log('@grid: клетка и ссылка не сошлись - выхожу.'); break; }
           await goto(page, cells[idx]);
+          const after = await m.getBodyText(page);
+          if (/укололи руку/i.test(after)) { console.log('@grid: напоролся на шип - дальше не лезу.'); break; }
         }
         await dump(page, 'AFTER GRID');
+
       } else if (step.startsWith('@url ')) {
         // Прямой переход по адресу игры (поездка конём в город: location.php?mod=konj&lway=7 -
         // Рыбацкая деревня). Добавлено 21.09.2026 для Галереи искусств.
