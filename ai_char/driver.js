@@ -976,7 +976,10 @@ async function loginIfNeeded(page) {
 
 
       // Боевые квесты на сегодня закрыты -> длинная фарм-сессия вместо одного боя за цикл.
-      if (!hasPendingFightQuests() && process.env.AI_DISABLE_PODVALY !== '1' && getFightMode() === 'all') {
+      // 27.09.2026: гейт по резерву я поставил только на раунды и на простой, а часовая сессия
+      // висит отдельным вызовом - и стартовала как ни в чём не бывало, снова съедая резерв, которого
+      // ждали три квеста. Третье место с тем же условием.
+      if (!hasPendingFightQuests() && !questReserveWait && process.env.AI_DISABLE_PODVALY !== '1' && getFightMode() === 'all') {
         const farmed = await runFarmSession(page).catch((e) => {
           console.log('Фарм-сессия упала:', e.message);
           return false;
