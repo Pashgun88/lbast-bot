@@ -165,6 +165,11 @@ S.lastClanEmblemCheckAt = 0;
 S.ordoTaskTakenLabel = null;
 S.ordoTaskTakenAt = 0;
 S.ordoDeadRideUntil = 0;
+// Слот «ответственного задания»: кто его занял и когда. Нужно, чтобы отличать своё
+// брошенное задание (его можно снять) от чужого и от того, что мы прямо сейчас проходим.
+S.taskSlotOwner = null;
+S.taskSlotTakenAt = 0;
+S.taskSlotReportedAt = 0;
 // До какого времени действует «Сила крепости» Грандина (суточный клановый бонус, 23.09.2026).
 S.fortressPowerUntil = 0;
 
@@ -360,6 +365,8 @@ function restoreDailyQuestState() {
   // задание снова выглядело «чужим, не трогать» - и держало слот, блокируя Штольни.
   if (typeof s.ordoTaskTakenLabel === 'string' || s.ordoTaskTakenLabel === null) S.ordoTaskTakenLabel = s.ordoTaskTakenLabel;
   if (Number.isFinite(s.ordoTaskTakenAt)) S.ordoTaskTakenAt = s.ordoTaskTakenAt;
+  if (typeof s.taskSlotOwner === 'string' || s.taskSlotOwner === null) S.taskSlotOwner = s.taskSlotOwner;
+  if (Number.isFinite(s.taskSlotTakenAt)) S.taskSlotTakenAt = s.taskSlotTakenAt;
   if (Number.isFinite(s.fortressPowerUntil)) S.fortressPowerUntil = s.fortressPowerUntil;
 
   if (Number.isFinite(s.lastStatueRunAt)) S.lastStatueRunAt = s.lastStatueRunAt;
@@ -435,6 +442,7 @@ function persistDailyQuestState() {
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,
+    taskSlotOwner: S.taskSlotOwner, taskSlotTakenAt: S.taskSlotTakenAt,
     lastStatueRunAt: S.lastStatueRunAt, nextStatueDueAt: S.nextStatueDueAt,
     bestHpMaxSeen: S.bestHpMaxSeen,
     shepotMonthKey: S.shepotMonthKey, shepotDoneThisMonth: S.shepotDoneThisMonth, shepotStage: S.shepotStage, shepotGauntletFightsDone: S.shepotGauntletFightsDone,

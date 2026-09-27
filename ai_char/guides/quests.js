@@ -110,6 +110,9 @@ const GUIDE_QUESTS = [
     // игра сама закрывает день словами «расследование лучше начать завтра», отсюда dayGatedParts.
     // День первый упирается в мини-игру «Сапёр» - маршрут там встаёт по @stop со снимком экрана.
     name: 'Жертвоприношение',
+    // Берёт слот ответственного задания и держит его все три дня - из-за этого стоят
+    // Штольни и «Неожиданная встреча». Отсюда takesSlot: владельца слота помним по имени.
+    takesSlot: true,
     files: ['zhertva1.steps', 'zhertva2.steps', 'zhertva3.steps'],
     periodDays: 1,
     dayGatedParts: true,
@@ -133,20 +136,11 @@ const SLOT_LINE_RE = new RegExp(String.raw`Текущее задание:[^
 // весь вечер ушёл на то, чтобы выяснить, КТО его занял (оказалось - брошенное задание Ордо).
 // Теперь строка анкеты уходит в лог вместе с отказом: причина видна сразу.
 let lastSlotBusyText = '';
-async function taskSlotFree(page) {
-  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  const t = await m.getBodyText(page);
-  const busy = SLOT_TAKEN_RE.test(t);
-  if (busy) {
-    const line = (t.match(SLOT_LINE_RE) || [''])[0].replace(/\s+/g, ' ').trim();
-    if (line !== lastSlotBusyText) {
-      lastSlotBusyText = line;
-      console.log(`Слот задания занят, анкета говорит: «${line}»`);
-    }
-  } else {
-    lastSlotBusyText = '';
-  }
-  return !busy;
+async function taskSlotFree(page, questName = 'квест по гайду') {
+  // Вся политика отказа - в lib/task_slot.js: чьё задание висит, можно ли его снять само (своё
+  // брошенное - можно, своё в работе и чужое - нет) и приказ файлом ai_char/drop_task.flag.
+  const { ensureSlotFreeFor } = require('../lib/task_slot');
+  return ensureSlotFreeFor(page, questName);
 }
 
 // Эль перед Штольнями. true - можно начинать. 25.09.2026, Паша: «а зачем скрипт выпил эль?» -
@@ -226,7 +220,7 @@ async function runGuideQuestIfDue(page, q) {
       delete qs.reserveHave;
     }
     // Слот проверяем ДО эля: иначе эль выпивается, а задание не берётся.
-    if (q.needsSlot && !(await taskSlotFree(page))) {
+    if (q.needsSlot && !(await taskSlotFree(page, q.name))) {
       qs.suppressedUntil = now + SLOT_RETRY_MIN * 60000;
       st[q.name] = qs;
       saveState(st);
@@ -245,6 +239,7 @@ async function runGuideQuestIfDue(page, q) {
     qs.startedAt = now;
     st[q.name] = qs;
     saveState(st);
+    if (q.takesSlot || q.needsSlot) require('../lib/task_slot').rememberSlotTaken(q.name);
     console.log(`${q.name}: квест доступен, начинаю по записанному маршруту.`);
   }
 
@@ -326,6 +321,7 @@ async function runGuideQuestIfDue(page, q) {
   st[q.name] = qs;
   saveState(st);
   clearProgress(q);
+  if (q.takesSlot || q.needsSlot) require('../lib/task_slot').forgetSlotOwner();
   console.log(`${q.name}: квест пройден по маршруту, следующий раз ${q.resetAtMidnight ? 'после полуночи' : `через ${q.periodDays} дн.`}.`);
   return true;
 }
