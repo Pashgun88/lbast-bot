@@ -80,10 +80,35 @@ async function goToFishRestaurant(page) {
     console.log(`Рыбный ресторан: внутри ссылки: ${inside.join(' | ').slice(0, 300)}`);
     console.log(`Рыбный ресторан: внутри текст: ${insideText.slice(0, 400)}`);
   }
-  await performStep(page, { stepName: 'Тёща Кумуса', currentTexts: ['Тёща Кумуса', 'тёща кумуса'], retries: 3 });
+  // 27.09.2026: живой затык. Клик по «Рыбный ресторан» сработал, но экран внутри ещё не отрисовался
+  // (дамп «внутри ссылки:» вышел ПУСТЫМ), «Тёща Кумуса» не нашлась, и performStep в попытке
+  // восстановиться перезагрузил location.php - то есть ВЫШЕЛ из ресторана обратно в форт, где этой
+  // ссылки нет по определению. Поэтому: ждём отрисовки, при неудаче заходим в ресторан ещё раз, и
+  // только потом сдаёмся - мягко, без исключения на весь квест.
+  let insideOk = await tryPerformStepOptional(page, {
+    stepName: 'Тёща Кумуса',
+    currentTexts: ['Тёща Кумуса', 'тёща кумуса'],
+    waitForCurrentMs: 6000,
+  }).catch(() => false);
+  if (!insideOk) {
+    console.log('Рыбный ресторан: «Тёща Кумуса» сразу не появилась - захожу в ресторан ещё раз.');
+    await clickByTexts(page, ['Рыбный ресторан'], 'Рыбный ресторан (повторный вход)').catch(() => {});
+    await pause(page, 1500, 2500);
+    insideOk = await tryPerformStepOptional(page, {
+      stepName: 'Тёща Кумуса',
+      currentTexts: ['Тёща Кумуса', 'тёща кумуса'],
+      waitForCurrentMs: 6000,
+    }).catch(() => false);
+  }
+  if (!insideOk) {
+    const t = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+    console.log(`Рыбный ресторан: «Тёща Кумуса» так и нет, дальше не иду. Экран: ${t.slice(0, 300)}`);
+    return false;
+  }
   await tryPerformStepOptional(page, { stepName: 'Я насчет работы.', currentTexts: ['Я насчет работы.'] });
   await tryPerformStepOptional(page, { stepName: 'Скоро вернусь.', currentTexts: ['Скоро вернусь.'] });
   await tryPerformStepOptional(page, { stepName: 'Ну рассказывай где искать мрамару?', currentTexts: ['Ну рассказывай где искать мрамару?'] });
+  return true;
 }
 
 // Одноразовый мини-квест: открывает "Журнал наград" у Тёщи Кумуса. Без него награды за
@@ -144,11 +169,24 @@ async function progressFishRestaurantJournal(page) {
 // прерывалась раньше (recovery), "Продолжить квест" может вернуть на середину маршрута
 // ПОСЛЕ развилки - тогда текста ветки уже не будет, и это нормально, а не ошибка.
 async function goToFishRestaurantBranch(page, branchStepName, branchTexts) {
-  await goToFishRestaurant(page);
-  await tryPerformStepOptional(page, {
-    stepName: branchStepName,
-    currentTexts: branchTexts,
-  });
+  if ((await goToFishRestaurant(page)) === false) return false;
+  // Развилка может быть уже пройдена (сцена живёт между заходами) - промах по ней не повод падать.
+  try {
+    await tryPerformStepOptional(page, { stepName: branchStepName, currentTexts: branchTexts });
+  } catch (e) {
+    console.log(`Рыбный ресторан: развилку «${branchStepName}» нажать не удалось (${e.message.slice(0, 120)}) - иду по экрану.`);
+  }
+  return true;
+}
+
+// Сцена эскорта живёт между заходами: после обрыва персонаж остаётся ВНУТРИ неё. Начинать маршрут
+// с нуля в этом случае бессмысленно - «К месту выполнения» и реплики входа на экране сцены нет,
+// и проход падает (живьём 27.09.2026: экран «ХОЛМЫ ... Яшка», а код требовал шаг «Холмы»).
+async function fishRestaurantSceneLooksOpen(page, steps) {
+  const text = await getBodyText(page).catch(() => '');
+  // Яшка - тролль-спутник, он есть только внутри сцены эскорта.
+  if (/Яшка/i.test(text)) return true;
+  return existsAnyText(page, [...steps, ...REWARD1_FIGHT_LINKS, 'Продолжить квест']).catch(() => false);
 }
 
 // 15.09.2026, обнаружено на "Рыбном ресторане" (несколько живых прогонов подряд): между
@@ -255,14 +293,24 @@ const REWARD1_MAX_SCREENS = 40;
 // «эту ветку больше вообще не проходить» - Болота закрыты навсегда (там второй бой убивает даже с
 // тремя Большими эликсирами), следующая - Холмы.
 const BRANCH_SWAMP = ['Веди-ка ты меня на болота'];
-const BRANCH_HILLS = ['Веди-ка ты меня на холмы', 'холмы'];
-const BRANCH_EDGE = ['Веди-ка ты меня на опушку', 'опушк'];
+// 27.09.2026, Паша: «почему затык на рыбном ресторане?». Причина - обрезки «холмы» и «опушк» в этих
+// списках. Внутри самой сцены текст пестрит словом «Холм» («ХОЛМЫ ... Следущий Холм сменял собой
+// предыдущий»), поэтому existsAnyText находил его, tryPerformStepOptional считал шаг доступным,
+// а performStep не мог кликнуть НЕсуществующую ссылку и бросал ошибку - проход падал на входе и
+// каждые полчаса начинался заново. Оставляем только настоящие реплики развилки.
+const BRANCH_HILLS = ['Веди-ка ты меня на холмы'];
+const BRANCH_EDGE = ['Веди-ка ты меня на опушку'];
 // Реплики диалога ДО развилки - общие для любой ветки.
 const PRE_FORK_STEPS = ['Я насчет работы.', 'Скоро вернусь.', 'Ну рассказывай где искать мрамару?'];
 
 async function walkFishRestaurantScene(page, { label, branchName, branchTexts, steps, maxFights = 3 }) {
   const FR = label;
-  await goToFishRestaurantBranch(page, branchName, branchTexts);
+  if (await fishRestaurantSceneLooksOpen(page, steps)) {
+    console.log(`${FR}: сцена уже открыта - продолжаю с этого экрана, маршрут с нуля не начинаю.`);
+  } else if ((await goToFishRestaurantBranch(page, branchName, branchTexts)) === false) {
+    console.log(`${FR}: до Тёщи Кумуса не добрался - в сцену не лезу, попробую в следующем круге.`);
+    return false;
+  }
 
   let fights = 0;
   let idle = 0;
