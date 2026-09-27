@@ -202,6 +202,19 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         await sleep((Number(rm[1]) * 60 + 20) * 1000);
         await backToScene(page);
       }
+      // «Запрет на квесты N мин.» - после квестового боя игра закрывает сцену на несколько минут
+      // (27.09.2026, «Вспышки прошлого» в церкви Единого). Экран отдаёт один линк с этим же текстом:
+      // пережидаем и жмём его, сцена продолжается с того же места.
+      for (let r = 0; r < 4; r++) {
+        const bm = (await m.getBodyText(page)).match(/Запрет на квесты\s+(\d+)\s*мин/i);
+        if (!bm) break;
+        console.log(`запрет на квесты: ${bm[1]} мин - жду и возвращаюсь в сцену.`);
+        await sleep((Number(bm[1]) * 60 + 25) * 1000);
+        const lb = await links(page);
+        const cont = lb.find((x) => /Запрет на квесты/i.test(x.t));
+        if (cont) await goto(page, cont.h);
+        else await backToScene(page);
+      }
       if (step === '?@fight') {
         // optional extra fight: only if a fight is on screen right now
         const t0 = await m.getBodyText(page);
