@@ -5971,6 +5971,7 @@ async function runLastHouseRecovery(page) {
   // ли HP. Если подряд не помогла ни одна станция -- значит все на кулдауне, надо ждать.
   let uselessInARow = 0;
   let lastHp = null;
+  let lostHouseInARow = 0;
 
   for (let i = 0; i < LAST_HOUSE_MAX_ITERATIONS; i++) {
     // Восстановление длится часами -- без этой проверки пауза, нажатая посреди него, замечалась
@@ -6019,16 +6020,37 @@ async function runLastHouseRecovery(page) {
     const used = await clickByTexts(page, [stationText, stationText.toLowerCase()], stationText);
 
     if (!used) {
-      console.log(`Последний дом: не удалось использовать "${stationText}", жду и пробую снова`);
-      await pause(page, 2000, 4000);
+      // Ссылки станции нет -- значит мы уже НЕ в Последнем доме (после крюка за рыбалкой, боя или
+      // случайного перехода). Раньше цикл просто ждал и жал снова по той же пустой странице, пока
+      // не срабатывала защита (27.09.2026: "Ссылка "Лечение" не найдена", HP n/a/n/a и в конце
+      // Cycle error: ui_stuck:Исп. кухню). Возвращаемся в дом тем же путём, что и после рыбалки.
+      lostHouseInARow += 1;
+      console.log(`Последний дом: нет ссылки "${stationText}" -- похоже, мы не в доме (попытка ${lostHouseInARow}/3), возвращаюсь`);
+      if (lostHouseInARow > 3) {
+        console.log('Последний дом: вернуться не удалось, прекращаю восстановление');
+        break;
+      }
+      await pause(page, 1500, 2500);
+      try {
+        await goToChaosByAmulet(page);
+        await enterLastHouse();
+      } catch (e) {
+        if (isScenarioPausedError(e)) throw e;
+        console.log(`Последний дом: не удалось вернуться в дом (${e.message})`);
+      }
       continue;
     }
+    lostHouseInARow = 0;
 
     stationIndex += 1;
     await pause(page, 800, 1600);
 
-    await clickByTexts(page, ['Назад', 'назад'], 'Назад');
-    await pause(page, 800, 1600);
+    // "Назад" есть не на каждом экране станции: когда её нет, это не ошибка, а другой экран.
+    // Раньше каждая такая итерация печатала 'Не найдено для шага "Назад"' и выглядела как сбой.
+    if (await existsAnyClickable(page, ['Назад', 'назад'])) {
+      await clickByTexts(page, ['Назад', 'назад'], 'Назад');
+      await pause(page, 800, 1600);
+    }
     // Результат станции проверяет начало следующей итерации (выросло ли HP) -- отдельный опрос
     // статов здесь только удваивал загрузки страницы и строки в логе.
   }
