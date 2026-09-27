@@ -133,6 +133,22 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         // Для квестов со случайными экранами-виньетками (Рыбный ресторан): если шага нет, а на экране
         // ровно одна не-служебная ссылка, жмём её. Боевые ссылки, "Уйти" и "Отказаться" — никогда.
         autoLone = true;
+      } else if (step.startsWith('@grid')) {
+        // Мини-игра «Сапёр» (Жертвоприношение, день 1): сетка 6x6 из ссылок, текст каждой - «*»
+        // («Достаньте это, не напоровшись на шип»). Обычный сборщик ссылок их НЕ видит: он срезает
+        // ведущую «*» и выбрасывает ссылку с пустым текстом - поэтому клетки читаем отдельно.
+        const tries = Number(step.split(/\s+/)[1] || 3);
+        for (let k = 0; k < tries; k++) {
+          const cells = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+            .filter((a) => (a.innerText || '').trim() === '*')
+            .map((a) => a.getAttribute('href') || '')).catch(() => []);
+          console.log(`@grid: клеток на экране ${cells.length}`);
+          if (!cells.length) break;
+          await goto(page, cells[Math.floor(Math.random() * cells.length)]);
+          const tg = await m.getBodyText(page);
+          if (/шип|Далее/i.test(tg)) break;
+        }
+        await dump(page, 'AFTER GRID');
       } else if (step.startsWith('@url ')) {
         // Прямой переход по адресу игры (поездка конём в город: location.php?mod=konj&lway=7 -
         // Рыбацкая деревня). Добавлено 21.09.2026 для Галереи искусств.
