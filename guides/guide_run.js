@@ -13,6 +13,7 @@
 //   текст        нажать ссылку, чей текст начинается с этого (регистр/ё/кавычки/маркеры не важны)
 //   ?текст       то же, но необязательно (нет ссылки -- шаг пропускается)
 //   *текст       жать, пока ссылка есть на экране (длинные цепочки "Далее")
+//   @until М | Л  жать ссылку Л, пока на экране не появится маркер М (дорога неизвестной длины)
 //   @city N      амулетом в город: 1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак Хаоса,
 //                8 Девтаун, 9 Дорожный крест
 //   @heal 0.8    лечиться НА МЕСТЕ до доли от максимума HP (при висящем бое пропускается -- HP
@@ -198,6 +199,34 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         await sleep(6500);
         await goto(page, 'location.php');
         await travelWait(page);
+      } else if (step.startsWith('@until')) {
+        // @until Маркер | Ссылка -- жать «Ссылка», пока на экране не появится «Маркер».
+        // Нужно там, где длину дороги считать нельзя: 27.09.2026 «Рыбацкая деревня» по гайду шла
+        // «Идти на юг (4 раза)», но четырёх клеток не хватило (после таверны идут ещё тайлы
+        // Южного тракта), а лишние клики по направлению уводят мимо цели -- ссылка направления
+        // видна на каждой клетке, и перебором тут не отделаешься.
+        canRetryAfterBlock = true;
+        const [markerRaw, linkRaw] = step.slice(6).split('|');
+        const marker = norm(String(markerRaw || '').trim());
+        const linkText = String(linkRaw || '').trim();
+        let arrived = norm(await getBodyText(page)).includes(marker);
+        for (let hop = 0; hop < 12 && !arrived; hop++) {
+          const lu = await links(page);
+          const go = lu.find((x) => norm(x.t).startsWith(norm(linkText)));
+          if (!go) break;
+          await goto(page, go.h);
+          await sleep(1200);
+          await restIfBlocked(page);
+          arrived = norm(await getBodyText(page)).includes(marker);
+          console.log(`guide: @until «${markerRaw.trim()}» -- шаг ${hop + 1}, ${arrived ? 'на месте' : 'идём дальше'}`);
+        }
+        if (!arrived) {
+          await dump(page, 'UNTIL FAILED');
+          console.log(`guide ${name}: @until не довёл до «${String(markerRaw).trim()}» -> остановка`);
+          fs.writeFileSync(PROG, String(i));
+          result = { status: 'mismatch', index: i };
+          break;
+        }
       } else if (step.startsWith('@city')) {
         canRetryAfterBlock = true;
         const n = step.split(/\s+/)[1];
