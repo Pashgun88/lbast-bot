@@ -6909,7 +6909,7 @@ async function progressOrdoQuest(page, q) {
   if (!taken) {
     console.log(`${q.label}: в башне нет ссылки "${q.take}"`);
     delayOrdoQuest(q.key, 60, 'нет ссылки на задание в башне');
-    return false;
+    return 'skip';
   }
   await pause(page, 800, 1500);
 
@@ -6919,6 +6919,26 @@ async function progressOrdoQuest(page, q) {
     console.log(`${q.label}: кончился резерв прямо в башне (отдохнуть ещё ${restAtTower} мин)`);
     delayOrdoQuest(q.key, restAtTower + 2, 'кончился резерв');
     return false;
+  }
+
+  // "У вас уже есть задание" НЕ значит, что есть именно ЭТО задание: слот мог занять другое
+  // задание Ордо, взятое раньше. 27.09.2026 так и вышло -- висела "банда", клик по главарю ничего
+  // не изменил, а конь увёз "выполнять главаря" в Рыбацкую деревню, где никакой миссии, конечно,
+  // не было (экран: обычная деревня без "Идти за скальную гряду"). Поэтому сверяем строку
+  // "Текущее задание" с тем, что мы собирались взять.
+  if (/у\s*вас\s*уже\s*есть\s*задание/i.test(takeText)) {
+    const at = takeText.search(/Текущее задание/i);
+    const current = at >= 0 ? takeText.slice(at, at + 120) : '';
+    if (current && !current.toLowerCase().includes(q.take.toLowerCase())) {
+      console.log(`${q.label}: слот занят другим заданием -- ${snapshotText(current, 120)}; в этот раз не еду`);
+      delayOrdoQuest(q.key, 10, 'слот занят другим заданием Ордо');
+      // 'skip' -- мы ничего не потратили и никуда не поехали, поэтому цикл может сразу взяться за
+      // второе задание Ордо (скорее всего именно оно и висит).
+      return 'skip';
+    }
+    if (!current) {
+      console.log(`${q.label}: игра ответила "уже есть задание", но строку "Текущее задание" не нашёл: ${snapshotText(takeText, 300)}`);
+    }
   }
 
   if (!/Задание принято/i.test(takeText) && !/у\s*вас\s*уже\s*есть\s*задание/i.test(takeText)) {
@@ -7005,12 +7025,15 @@ async function runOrdoQuestsIfAvailable(page, opts = {}) {
   }
 
   for (const q of due) {
-    const ok = await runNonQQuestSafe(page, q.label, () => progressOrdoQuest(page, q));
+    const r = await runNonQQuestSafe(page, q.label, () => progressOrdoQuest(page, q));
     // Маршрут к башне и обратно + миссия съедают почти весь резерв, поэтому за цикл делаем не
     // больше одного задания Ордо; второе подхватится следующим циклом, оно никуда не денется.
-    if (ok) return true;
-    // И после НЕУДАЧИ тоже выходим: первая попытка уже заняла слот "Текущее задание", поэтому
-    // второе задание в этом же цикле не выдадут -- будет ещё одна бесполезная поездка в башню.
+    if (r === true) return true;
+    // 'skip' -- задание даже не начали (его не выдали или слот держит другое задание Ордо).
+    // Ничего не потрачено, поэтому сразу пробуем следующее: как раз оно обычно и висит.
+    if (r === 'skip') continue;
+    // Съездили и не дошли до боя: слот уже занят нашей же попыткой, второе задание в этом цикле
+    // не выдадут -- будет ещё одна бесполезная поездка в башню.
     return false;
   }
   return false;
