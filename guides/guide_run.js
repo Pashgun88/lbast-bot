@@ -15,6 +15,8 @@
 //   *текст       жать, пока ссылка есть на экране (длинные цепочки "Далее")
 //   @konj N      конём по шорткату lway=N (7 -- Рыбацкая деревня)
 //   @sapper      мини-игра "Сапёр" 6x6 (решатель приходит из основного бота через deps)
+//   @road        начало дороги до сцены; @arrived -- её конец. Дорогу раннер проходит ЗАНОВО при
+//   @arrived     каждом входе в маршрут, а реплики и бои после неё -- по сохранённому шагу.
 //   @until М | Л  жать ссылку Л, пока на экране не появится маркер М (дорога неизвестной длины)
 //   @city N      амулетом в город: 1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак Хаоса,
 //                8 Девтаун, 9 Дорожный крест
@@ -144,6 +146,38 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   const name = FILE.split(/[\\/]/).pop();
 
   let fights = 0;
+
+  // Дорога до сцены (@road ... @arrived) проходится ЗАНОВО при каждом входе в маршрут. Между
+  // проходами цикл уводит персонажа с места (рыбалка, ферма, другие квесты), а сохранённый номер
+  // шага молча предполагает, что мы всё ещё в сцене. 28.09.2026 из-за этого «Жертвоприношение» и
+  // «Рыбацкая деревня» встали намертво: в .progress лежало 2 (дорога пройдена), персонаж стоял в
+  // Кулаке Хаоса, и шаг 2 («Крестьянин» / «Осмотреться») не находился ни в одном проходе -- бот
+  // каждые четыре минуты упирался в один и тот же экран. Реплики и бои переигрывать нельзя,
+  // поэтому дорогу размечает сам .steps, а не догадка раннера.
+  const lastMarkBefore = (mark, upto) => {
+    let k = -1;
+    for (let j = 0; j < upto && j < steps.length; j++) if (steps[j] === mark) k = j;
+    return k;
+  };
+  let start = from;
+  let replayRoad = false;
+  if (from > 0) {
+    const arrived = lastMarkBefore('@arrived', from);
+    const road = lastMarkBefore('@road', from);
+    if (road > arrived) {
+      // Прервались посреди дороги -- идём её с начала, середина дороги сама по себе бессмысленна.
+      start = road;
+    } else if (arrived >= 0) {
+      const roadOfArrived = lastMarkBefore('@road', arrived);
+      if (roadOfArrived >= 0) { start = roadOfArrived; replayRoad = true; }
+    }
+  }
+  if (start !== from) {
+    console.log(`guide ${name}: сохранён шаг ${from}, но сначала прохожу дорогу заново с шага ${start}.`);
+  }
+  // Пока переигрывается дорога, сохранённый шаг не трогаем: иначе сбой на дороге затёр бы место
+  // в цепочке, и следующий проход начал бы квест с чужого экрана.
+  const saveProg = (v) => { if (!replayRoad) fs.writeFileSync(PROG, String(v)); };
   let autoLone = false;
   let result = { status: 'error', index: from };
 
@@ -152,7 +186,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
 
     let restRetries = 0;
 
-    for (let i = from; i < steps.length; i++) {
+    for (let i = start; i < steps.length; i++) {
       if (throwIfPaused) throwIfPaused(`${name} [${i}/${steps.length}]`);
 
       let step = steps[i];
@@ -172,18 +206,27 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           step = '@fight';
         } else {
           console.log('guide: дополнительного боя нет');
-          fs.writeFileSync(PROG, String(i + 1));
+          saveProg(i + 1);
           continue;
         }
       }
 
-      if (step === '@autolone') {
+      if (step === '@road') {
+        // Разметка: ниже дорога до сцены, её можно проходить заново сколько угодно раз.
+      } else if (step === '@arrived') {
+        if (replayRoad) {
+          replayRoad = false;
+          console.log(`guide ${name}: дорога пройдена заново, возвращаюсь к шагу ${from}.`);
+          i = from - 1;
+          continue;
+        }
+      } else if (step === '@autolone') {
         autoLone = true;
       } else if (step.startsWith('@qinfo')) {
         const qn = step.slice(6).trim();
         if (!resetToQuestMenu || !clickInfoForQuest) {
           console.log('guide: @qinfo недоступен (не переданы resetToQuestMenu/clickInfoForQuest)');
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -193,7 +236,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         const go = l0.find((x) => /^К месту выполнения$/i.test(x.t));
         if (!infoOk || !go) {
           await dump(page, 'QINFO FAILED');
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -225,7 +268,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         if (!arrived) {
           await dump(page, 'UNTIL FAILED');
           console.log(`guide ${name}: @until не довёл до «${String(markerRaw).trim()}» -> остановка`);
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -234,7 +277,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         // боте (solveSapperUntilDone) и приходит через deps -- в раннере своего нет.
         if (typeof solveSapper !== 'function') {
           console.log('guide: @sapper недоступен (не передан solveSapper)');
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -242,7 +285,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         if (!solved) {
           await dump(page, 'SAPPER FAILED');
           console.log(`guide ${name}: сапёр не решён -> остановка`);
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -277,13 +320,13 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       } else if (step.startsWith('@stop')) {
         await dump(page, 'STOP');
         console.log(`guide ${name}: остановка по плану на шаге ${i}: ${step.slice(5).trim()}`);
-        fs.writeFileSync(PROG, String(i + 1));
+        saveProg(i + 1);
         result = { status: 'stop', index: i + 1 };
         break;
       } else if (step === '@fight') {
         if (typeof fightLoop !== 'function') {
           console.log('guide: @fight недоступен (не передан fightLoop)');
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -316,7 +359,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           if (!b && !/Ударить/.test(t)) {
             await dump(page, 'NO FIGHT LINK');
             console.log(`guide ${name}: шаг ${i} ждал бой, но кнопки боя нет.`);
-            fs.writeFileSync(PROG, String(i));
+            saveProg(i);
             result = { status: 'nofight', index: i };
             break;
           }
@@ -335,7 +378,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         console.log(`guide >>> бой ${fights} result=${won} HP ${s && s.hp}/${s && s.max}`);
         if (s && s.hp <= 0) {
           console.log(`guide ${name}: бой на шаге ${i} ПРОИГРАН (HP ${s.hp}/${s.max}).`);
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'lost', index: i };
           break;
         }
@@ -375,12 +418,12 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         if (!hit) {
           if (optional) {
             console.log('guide: необязательный шаг, пропускаю');
-            fs.writeFileSync(PROG, String(i + 1));
+            saveProg(i + 1);
             continue;
           }
           console.log(`guide ${name}: ШАГ ${i} «${want}» НЕ НАЙДЕН -> остановка. На экране: `
             + sceneLinks(l).map((x) => x.t).slice(0, 12).join(' / '));
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -395,7 +438,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         restRetries += 1;
         if (restRetries > 6) {
           console.log(`guide ${name}: шаг ${i} снова и снова упирается в резерв -> остановка.`);
-          fs.writeFileSync(PROG, String(i));
+          saveProg(i);
           result = { status: 'mismatch', index: i };
           break;
         }
@@ -404,7 +447,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       }
       restRetries = 0;
 
-      fs.writeFileSync(PROG, String(i + 1));
+      saveProg(i + 1);
       if (i === steps.length - 1) {
         result = { status: 'done', index: steps.length };
         await dump(page, 'END');
