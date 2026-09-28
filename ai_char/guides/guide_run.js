@@ -16,7 +16,10 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const m = require('../module');
 const HP_GATE = Number(process.env.HP_GATE || 0.7);
-const LETTERS = process.env.LETTERS !== '0';
+// Паша, 28.09.2026: «и не надо мне такие письма спамить». Маршруты больше НЕ пишут писем ни о
+// срывах, ни об успехах - всё это есть в логе драйвера. Включить обратно можно только явно:
+// LETTERS=1 в окружении (по умолчанию выключено).
+const LETTERS = process.env.LETTERS === '1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) => String(s || '').replace(/^[\s\-–—*•]+/, '').replace(/[«»"'.,!?…:;()]/g, '').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
 

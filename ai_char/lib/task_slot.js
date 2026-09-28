@@ -178,10 +178,9 @@ async function ensureSlotFreeFor(page, questName) {
 
   // 4) Всё остальное - только доклад. Чужое и своё в работе не снимаем.
   console.log(`Слот задания занят: ${ownerLine}${idleMin === null ? '' : `, висит ${idleMin} мин`} -> «${questName}» жду.`);
-  if (Date.now() - (S.taskSlotReportedAt || 0) > REPORT_EVERY_MS) {
-    S.taskSlotReportedAt = Date.now();
-    await sendTelegram(`Слот задания занят: ${slot.line}. Из-за этого стоит «${questName}». Отказаться - создать файл ai_char/drop_task.flag.`).catch(() => {});
-  }
+  // Телеграм про занятый слот убран 28.09.2026 («не надо мне такие письма спамить»): это рабочая
+  // ситуация, а не поломка, и она видна в логе. В Telegram остаётся только сам факт отказа.
+  S.taskSlotReportedAt = Date.now();
   return false;
 }
 
