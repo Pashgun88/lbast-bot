@@ -2,7 +2,7 @@
 // Портировано из ai_char/guides/quests.js (маршруты обкатаны там вживую), но без зависимости от
 // ai_char/module.js: всё нужное от основного бота приходит через deps.
 //
-// Состояние (какая часть цепочки, когда пройден, пауза после сбоя) — в guides_state.json,
+// Состояние (какая часть цепочки, когда пройден) — в guides_state.json,
 // прогресс внутри одного файла — в <file>.progress. Оба в .gitignore.
 const fs = require('fs');
 const path = require('path');
@@ -102,8 +102,6 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
   const qs = st[q.name] || {};
   const now = Date.now();
 
-  if (qs.suppressedUntil && now < qs.suppressedUntil) return false;
-
   // Часть пройдена в эти же сутки -- следующая будет только завтра, ходить незачем.
   if (q.partsOnSeparateDays && qs.part !== undefined && qs.partDoneAt) {
     const sameDay = new Date(qs.partDoneAt).toDateString() === new Date(now).toDateString();
@@ -164,13 +162,14 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
     const r = await runGuide(page, file, undefined, deps);
 
     if (r.status !== 'done') {
-      // Не долбим: после поражения ждём лечения, после расхождения с маршрутом — человека.
-      const pauseMin = r.status === 'lost' ? 30 : 180;
+      // Паузы после сбоя нет (Паша, 28.09.2026: «эти паузы вообще не нужны, убери везде»). Сцена
+      // квеста живёт на сервере и помнит текущий экран, поэтому следующий проход продолжит маршрут
+      // с того же места, а не начнёт заново -- ждать часами было незачем. Чаще одного раза за
+      // проход цикла повтор всё равно не случится, а место в цепочке хранит qs.part.
       qs.part = p;
-      qs.suppressedUntil = Date.now() + pauseMin * 60000;
       st[q.name] = qs;
       saveState(st);
-      console.log(`${q.name}: маршрут остановился (${r.status}) в части ${p + 1} на шаге ${r.index}; пауза ${pauseMin} мин.`);
+      console.log(`${q.name}: маршрут остановился (${r.status}) в части ${p + 1} на шаге ${r.index}; повторю в следующем проходе.`);
       return true;
     }
 
@@ -190,7 +189,6 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
 
   qs.lastDone = Date.now();
   delete qs.part;
-  delete qs.suppressedUntil;
   st[q.name] = qs;
   saveState(st);
   clearProgress(q);
