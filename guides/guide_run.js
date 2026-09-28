@@ -14,6 +14,7 @@
 //   ?текст       то же, но необязательно (нет ссылки -- шаг пропускается)
 //   *текст       жать, пока ссылка есть на экране (длинные цепочки "Далее")
 //   @konj N      конём по шорткату lway=N (7 -- Рыбацкая деревня)
+//   @sapper      мини-игра "Сапёр" 6x6 (решатель приходит из основного бота через deps)
 //   @until М | Л  жать ссылку Л, пока на экране не появится маркер М (дорога неизвестной длины)
 //   @city N      амулетом в город: 1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак Хаоса,
 //                8 Девтаун, 9 Дорожный крест
@@ -130,7 +131,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   // Telegram, а раннер про неё нет. Проверяем между шагами, чтобы длинная цепочка не доигрывалась
   // ещё десяток экранов после того, как пользователь забрал браузер себе. Прогресс (.progress)
   // к этому моменту уже записан, так что после "Продолжить" маршрут пойдёт с того же места.
-  const { fightLoop, resetToQuestMenu, clickInfoForQuest, throwIfPaused } = opts;
+  const { fightLoop, resetToQuestMenu, clickInfoForQuest, throwIfPaused, solveSapper } = opts;
   const HP_GATE = Number(opts.hpGate || DEFAULT_HP_GATE);
   const PROG = FILE + '.progress';
   const steps = fs.readFileSync(FILE, 'utf8')
@@ -224,6 +225,23 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         if (!arrived) {
           await dump(page, 'UNTIL FAILED');
           console.log(`guide ${name}: @until не довёл до «${String(markerRaw).trim()}» -> остановка`);
+          fs.writeFileSync(PROG, String(i));
+          result = { status: 'mismatch', index: i };
+          break;
+        }
+      } else if (step === '@sapper') {
+        // Мини-игра "Сапёр" 6x6 ("Достаньте это, не напоровшись на ..."). Решатель живёт в основном
+        // боте (solveSapperUntilDone) и приходит через deps -- в раннере своего нет.
+        if (typeof solveSapper !== 'function') {
+          console.log('guide: @sapper недоступен (не передан solveSapper)');
+          fs.writeFileSync(PROG, String(i));
+          result = { status: 'mismatch', index: i };
+          break;
+        }
+        const solved = await solveSapper(page, { label: `${name}: сапёр` });
+        if (!solved) {
+          await dump(page, 'SAPPER FAILED');
+          console.log(`guide ${name}: сапёр не решён -> остановка`);
           fs.writeFileSync(PROG, String(i));
           result = { status: 'mismatch', index: i };
           break;

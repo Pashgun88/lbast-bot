@@ -1871,6 +1871,9 @@ async function runDailyQuests(page, stats) {
           hpCurrent: typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null,
           isInMenu: (name) => isQuestInMenu(listedQuests, name),
           throwIfPaused: throwIfPausedByManager,
+          // Нужен шагу @sapper в «Жертвоприношении»: мини-игра 6x6 решается здесь, в раннере
+          // своего решателя нет.
+          solveSapper: (p, o) => solveSapperUntilDone(p, o),
         });
         if (didGuide) didAnything = true;
       } catch (e) {
@@ -2475,88 +2478,11 @@ async function solveSapperUntilDone(page, { maxAttempts = 6, label = 'Сапёр
   return false;
 }
 
-// Квест "Жертвоприношение": особый, длится 3 дня, появляется в Q-меню от случая к случаю (как
-// Варьете). Маршрут продиктован пользователем по дням; здесь только день 1 -- дни 2 и 3 будут
-// дописаны позже. Клики форсированные (без nextTexts), как и в Варьете, т.к. большинство экранов
-// не имеют предсказуемого "следующего шага". Реплики выбора матчатся по короткой уникальной
-// подстроке без начального тире-маркера и без опечаток пользователя там, где они могли быть
-// (напр. "дщбвинили" -> матчим по "в колдовстве", а не по всей фразе).
-async function runSacrificeQuestDay1(page) {
-  async function click(text, label) {
-    await performStep(page, {
-      stepName: label || text,
-      currentTexts: [text, text.toLowerCase()],
-      retries: 3,
-    });
-  }
-
-
-  async function stepMany(text, count) {
-    for (let i = 0; i < count; i++) {
-      const ok = await tryPerformStepOptional(page, {
-        stepName: `${text} (${i + 1}/${count})`,
-        currentTexts: [text, text.toLowerCase()],
-      });
-      if (!ok) break;
-    }
-  }
-
-  console.log('Жертвоприношение (день 1): начинаю маршрут');
-
-  await click('Амулет', 'Амулет');
-  await performStep(page, {
-    stepName: 'Таверна «Три поросенка»',
-    currentTexts: ['Таверна «Три поросенка»', 'таверна «три поросенка»', 'Таверна'],
-    retries: 3,
-  });
-  await click('Крестьянин', 'Крестьянин');
-
-  await click('стряслось', '"Что стряслось?"');
-  await click('в колдовстве', '"Почему ее обвинили в колдовстве?"');
-  await click('давай карту', '"Хорошо, давай карту."');
-
-  if (await existsAnyText(page, ['В игру', 'в игру'])) {
-    await clickByTexts(page, ['В игру', 'в игру'], 'В игру').catch(() => {});
-    await pause(page, 800, 1600);
-  }
-
-  await click('Юг', 'Юг');
-  await stepMany('Восток', 2);
-
-  await click('Помощь Ахмату', 'Помощь Ахмату');
-  await click('охраняете, хлопцы', '"Кого охраняете, хлопцы?"');
-  await click('Подожди. Они', '"Подожди. Они?"');
-  await click('Скатор и где его найти', '"Кто такой Скатор и где его найти?"');
-  await click('где содержатся', '"А две другие ведьмы где содержатся?"');
-  await click('можно поговорить', '"А с ведьмой можно поговорить?"');
-  await click('к дому Скатора', '"Что ж, идти к дому Скатора"');
-  await click('по поводу ведьм', '"по поводу ведьм хочу поговорить"');
-  await click('вичхантеров', '"А в гильдию вичхантеров вы обращались?"');
-  await click('почему вообще решили', '"А кто две остальные ведьмы..."');
-  await click('единственная вина', '"Черные волосы это ее единственная вина?"');
-  await click('продлится расследование', '"Сколько продлится расследование?..."');
-
-  await click('Выйти на улицу', 'Выйти на улицу');
-  await click('Идти к знахарке Раке', 'Идти к знахарке Раке');
-  await click('не боитесь', '"Рака, вы не боитесь?"');
-  await click('есть враги', '"У вас есть враги?"');
-  await click('этим Киркиным', '"Спасибо. Я поговорю с этим Киркиным."');
-
-  await click('Идти к месту ритуала', 'Идти к месту ритуала');
-  await click('Осмотреться', 'Осмотреться');
-
-  const sapperSolved = await solveSapperUntilDone(page, { label: 'Жертвоприношение (сапёр)' });
-  if (!sapperSolved) {
-    console.log('Жертвоприношение (день 1): не удалось решить сапёр, прекращаю на сегодня');
-    return false;
-  }
-
-  await stepMany('Далее', 1);
-  await click('Уйти', 'Уйти');
-
-  console.log('Жертвоприношение (день 1): маршрут завершён');
-  return true;
-}
+// Квест "Жертвоприношение" живёт в guides/zhertvoprinoshenie{1,2,3}.steps и запускается общим
+// раннером маршрутов (реестр guides/quests.js, флаг partsOnSeparateDays -- три календарных дня).
+// Здесь раньше была функция runSacrificeQuestDay1 с маршрутом первого дня, которую никто не
+// вызывал: она перенесена в .steps шаг в шаг, чтобы не держать две реализации одного маршрута.
+// Решатель сапёра (solveSapperUntilDone выше) отдаётся раннеру шагом @sapper.
 
 // В меню квестов травы перечислены обычным форматом "• Травы: <название> [инфо]", как и
 // остальные Q-квесты (Харчевня, Дерево жизни и т.д.) -- открываются через [инфо] рядом со строкой.

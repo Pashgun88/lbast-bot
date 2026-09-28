@@ -64,6 +64,23 @@ const GUIDE_QUESTS = [
     minReserveMinutes: 15,
     minHp: 1600,
   },
+  {
+    // Гайд kate2008 (zhg_web.php?st_id=200954) плюс разбор по дням из ветки АИ-персонажа
+    // (LESSONS_AI_CHAR.md, 15.09.2026): там реплики всех трёх дней выписаны дословно, день 2
+    // пройден вживую, день 3 -- нет.
+    name: 'Жертвоприношение',
+    files: ['zhertvoprinoshenie1.steps', 'zhertvoprinoshenie2.steps', 'zhertvoprinoshenie3.steps'],
+    // Каждый день -- отдельные календарные сутки, за один сеанс цепочку не пройти.
+    partsOnSeparateDays: true,
+    // Период точно неизвестен: 17.09.2026 квест стоял в каталоге без кулдауна, 23.09 -- «через
+    // 5 дн.». Отсюда примерно 10 суток. Если ошибся, это видно в логе: попытка упрётся в то, что
+    // квест не выдают, и уйдёт в бэкофф.
+    periodDays: 10,
+    // Показывается в меню Q от случая к случаю (как Варьете) -- гейт по меню не ставим.
+    inQMenu: false,
+    // Дни 1-2 без боёв, но ходьбы много; бой только в третий день, и перед ним в маршруте @heal.
+    minReserveMinutes: 15,
+  },
 ];
 
 function loadState() {
@@ -88,6 +105,12 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
   const now = Date.now();
 
   if (qs.suppressedUntil && now < qs.suppressedUntil) return false;
+
+  // Часть пройдена в эти же сутки -- следующая будет только завтра, ходить незачем.
+  if (q.partsOnSeparateDays && qs.part !== undefined && qs.partDoneAt) {
+    const sameDay = new Date(qs.partDoneAt).toDateString() === new Date(now).toDateString();
+    if (sameDay) return false;
+  }
 
   // qs.part !== undefined -> цепочка уже начата, доводим до конца независимо от меню Q:
   // взятый квест из меню пропадает, а сцена остаётся.
@@ -134,8 +157,17 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
     }
 
     qs.part = p + 1;
+    qs.partDoneAt = Date.now();
     st[q.name] = qs;
     saveState(st);
+
+    // Цепочка на календарных сутках: следующая часть станет доступна только завтра, поэтому
+    // останавливаемся здесь. Без этого раннер тут же пошёл бы в часть p+2, не нашёл её экранов и
+    // ушёл в трёхчасовой бэкофф -- то есть наказал бы нас за нормальный ход квеста.
+    if (q.partsOnSeparateDays && qs.part < q.files.length) {
+      console.log(`${q.name}: часть ${p + 1} пройдена, следующая -- на следующие сутки.`);
+      return true;
+    }
   }
 
   qs.lastDone = Date.now();
