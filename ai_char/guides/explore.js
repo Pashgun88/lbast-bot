@@ -164,7 +164,16 @@ function parseArgs() {
 
     if (!scene.length) { console.log('СТОП: сюжетных ссылок нет.'); break; }
 
+    // НА КАРТЕ УГАДЫВАТЬ НЕЛЬЗЯ. Страница локации всегда содержит «Кто здесь?» - и там первая ссылка
+    // это просто соседняя клетка, а не выбор в сцене (28.09.2026 первый прогон так ушёл гулять по
+    // Стоунгарду). В сцене же служебных ссылок нет вовсе. Поэтому на карте идём только по подсказке.
+    const onMap = /Кто здесь\?/i.test(body);
     const hinted = hints.find((h) => scene.some((x) => norm(x.t).startsWith(norm(h))));
+    if (onMap && !hinted) {
+      console.log('СТОП: я на карте (' + (body.split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean)[1] || '') + '), а подсказки на этот экран нет.');
+      console.log('Добавь в --hints нужную ссылку из вариантов выше и запусти снова.');
+      break;
+    }
     let pick = hinted ? scene.find((x) => norm(x.t).startsWith(norm(hinted))) : null;
     let branch = null;
     if (!pick) {
