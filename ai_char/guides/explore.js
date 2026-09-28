@@ -29,16 +29,20 @@ const m = require('../module');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) => String(s || '').replace(/^[\s\u00BB*\u2022-]+/, '').replace(/[\u00AB\u00BB"'.,!?\u2026:;()]/g, '').replace(/\u0451/g, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
 const SERVICE_RE = /^(обновить|чат|в игру|кто здесь\?|выход|размер текста|амулет|aмулет|конь|карта|форум|кланы|жг|галерея|настройка)$|^бои|^ai__|^q\d+$|^d\d+$|^памятник|^стела|^мемориал$/i;
-const NEVER_RE = /^(уйти|отказаться|повернуть обратно|вернуться|назад)$/i;
+// «Назвать» - форма имени бунгало: жать её бессмысленно, экран не меняется (петля 28.09.2026).
+const NEVER_RE = /^(уйти|отказаться|повернуть обратно|вернуться|назад|назвать)$/i;
 const FIGHT_RE = /^(в бой!?|принять бой!?|напасть)/i;
 
 function parseArgs() {
   const a = process.argv.slice(2);
-  const out = { name: a[0], max: 60, hints: null, noFight: false };
+  const out = { name: a[0], max: 60, hints: null, noFight: false, keepTask: false };
   for (let i = 1; i < a.length; i += 1) {
     if (a[i] === '--max') out.max = Number(a[i + 1] || 60), i += 1;
     else if (a[i] === '--hints') out.hints = a[i + 1], i += 1;
     else if (a[i] === '--no-fight') out.noFight = true;
+    // --keep-task: НЕ снимать висящее задание. Нужно, когда квест уже взят и мы продолжаем проход
+    // (28.09.2026 бунгало: задание взяли, а следующий прогон исследователя его же и снял бы).
+    else if (a[i] === '--keep-task') out.keepTask = true;
   }
   return out;
 }
@@ -84,7 +88,7 @@ function parseArgs() {
 
   // 1) Слот задания: пока он занят, чужая сцена отвечает «Вы выполняете другую миссию».
   await go('pers.php');
-  const dropHref = await page.evaluate(() => {
+  const dropHref = opt.keepTask ? null : await page.evaluate(() => {
     const a = Array.from(document.querySelectorAll('a')).find((x) => (x.getAttribute('href') || '').includes('mod=dropquest'));
     return a ? a.getAttribute('href') : null;
   });
@@ -92,7 +96,7 @@ function parseArgs() {
     await go(dropHref);
     console.log('Слот задания: висевшее задание снято.');
   } else {
-    console.log('Слот задания: свободен.');
+    console.log(opt.keepTask ? 'Слот задания: не трогаю (--keep-task).' : 'Слот задания: свободен.');
   }
 
   // 2) Берём квест: Q -> [инфо] -> «К месту выполнения» (игра сама приводит в нужную точку).
@@ -114,6 +118,9 @@ function parseArgs() {
   }
 
   let fights = 0;
+  // Защита от петли: 28.09.2026 на экране «Бунгало "Назвать"» исследователь двадцать раз нажал
+  // «Назвать» - экран не менялся. Считаем отпечаток экрана; три повтора подряд - стоп.
+  const seen = new Map();
   for (let step = 1; step <= opt.max; step += 1) {
     let body = await m.getBodyText(page);
     // Пережидаем игровые паузы.
