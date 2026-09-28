@@ -116,6 +116,14 @@ const GUIDE_QUESTS = [
     minReserveMinutes: 0,
   },
   {
+    // Зонд 28.09.2026: прохождения нет ни у Кейт, ни у нас. Раз в сутки, «древний свиток мага».
+    // Маршрут доходит до башни и останавливается со снимком экрана - по нему допишу шаги.
+    name: 'Магическая башня',
+    needsSlot: true,
+    files: ['bashnya.steps'],
+    periodDays: 1,
+  },
+  {
     // Паша 28.09.2026 показал список: «смотри сколько квестов есть». Гайд kate2008 st_id=119350.
     // Раз в 14 дней, награда уровень*25 дин и ДВЕ бутылки праздничного эля - им мы открываем Штольни,
     // так что квест кормит сам себя. Три боя, два парные, поэтому не в режиме одиночных ботов.
@@ -188,6 +196,21 @@ async function aleReadyForShtolni(page) {
   return false;
 }
 
+// Предмет в сумке. Страницы инвентаря - два разных семейства: обычная inv.php и вкладки
+// inv.php?invMod=2/3 (21.09.2026 «Жертвенный кинжал» искали только во вкладках и объявили
+// пропавшим, а он лежал на первой). Смотрим оба.
+async function hasItemInBag(page, name) {
+  const want = String(name).toLowerCase();
+  for (const url of ['http://lbast.ru/inv.php', 'http://lbast.ru/inv.php?invMod=2', 'http://lbast.ru/inv.php?invMod=3']) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      const t = (await m.getBodyText(page)).toLowerCase();
+      if (t.includes(want)) return true;
+    } catch { /* следующая страница */ }
+  }
+  return false;
+}
+
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return {}; }
 }
@@ -248,6 +271,15 @@ async function runGuideQuestIfDue(page, q) {
       st[q.name] = qs;
       saveState(st);
       console.log(`${q.name}: слот задания занят другим квестом -> проверю через ${SLOT_RETRY_MIN} мин.`);
+      return false;
+    }
+    // Паша, 28.09.2026: «колодец страха делать только при наличии браги». В гайде у деда есть
+    // ветка «угостить брагой», и без браги в сумке игра обнуляет жизни - проверяем ДО выхода.
+    if (q.needsItem && !(await hasItemInBag(page, q.needsItem))) {
+      qs.suppressedUntil = now + 6 * 60 * 60000;
+      st[q.name] = qs;
+      saveState(st);
+      console.log(`${q.name}: в сумке нет «${q.needsItem}» - не начинаю (проверю через 6 ч).`);
       return false;
     }
     if (q.needsAle && !(await aleReadyForShtolni(page))) {
