@@ -438,6 +438,16 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         if (/fastway|konj/.test(hit.h)) await travelWait(page);
         // 22.09.2026: резерв ниже нуля - «Вы устали и решили отдохнуть 3 мин. Далее» вместо перехода
         // (дубление/кухня тратят резерв). Ждём и повторяем тот же шаг с экрана, где он был.
+        // «Вам нужно отдохнуть еще N мин» КАК ОТВЕТ на клик: действие не выполнилось вовсе (28.09.2026,
+        // «Положить свитки» в Мёртвом лесу - шаг считался сделанным, а стадия квеста не закрылась).
+        const mustRest = (await m.getBodyText(page)).match(/нужно отдохнуть еще\s+(\d+)\s*мин/i);
+        if (mustRest && (tiredWaits += 1) <= 5) {
+          console.log(`шаг ${i} не выполнился: нужно отдохнуть ${mustRest[1]} мин - жду и повторяю.`);
+          await sleep((Number(mustRest[1]) * 60 + 25) * 1000);
+          await backToScene(page);
+          i -= 1;
+          continue;
+        }
         const tired = (await m.getBodyText(page)).match(/устали и решили отдохнуть\s+(\d+)\s*мин/i);
         if (tired && (tiredWaits += 1) <= 5) {
           const min = Number(tired[1]) + 0.3;
