@@ -170,6 +170,9 @@ S.ordoDeadRideUntil = 0;
 S.taskSlotOwner = null;
 S.taskSlotTakenAt = 0;
 S.taskSlotReportedAt = 0;
+// Последний непустой список квестов из меню Q: по нему видно, может ли квест вообще начаться.
+S.lastQMenuNames = [];
+S.lastQMenuAt = 0;
 // До какого времени действует «Сила крепости» Грандина (суточный клановый бонус, 23.09.2026).
 S.fortressPowerUntil = 0;
 

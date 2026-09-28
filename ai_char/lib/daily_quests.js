@@ -125,6 +125,13 @@ async function runDailyQuests(page, stats) {
   const menuText = await getBodyText(page);
   let listedQuests = parseQuestNamesFromQMenuText(menuText);
   console.log('Q menu quest names:', JSON.stringify(listedQuests));
+  // Запоминаем последний НЕПУСТОЙ список: драйвер по нему решает, может ли квест по гайду вообще
+  // начаться. 28.09.2026 без этого фарм стоял из-за «Галереи искусств», которой в меню нет вовсе:
+  // по календарю она «созрела», а запуститься не могла - и обычный фарм не начинался никогда.
+  if (listedQuests.length) {
+    S.lastQMenuNames = listedQuests;
+    S.lastQMenuAt = Date.now();
+  }
   if (listedQuests.length === 0) {
     appendDebugSnapshot('Q menu parse returned empty list', { label: 'q_menu_empty_parse', url: page.url(), text: menuText });
     // 24.09.2026: разбор меню иногда возвращает пустой список, хотя в шапке Q больше нуля. Раньше

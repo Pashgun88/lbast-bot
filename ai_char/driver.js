@@ -412,6 +412,13 @@ function guideQuestDueNow() {
     const qs = st[q.name] || {};
     if (qs.suppressedUntil && now < qs.suppressedUntil) continue;
     if (dayPartDoneToday(qs)) continue;
+    // Квест, которого НЕТ в меню Q, начаться не может - и держать из-за него фарм нельзя. 28.09.2026
+    // фарм встал из-за «Галереи искусств»: по календарю она созрела, а в меню её нет вовсе.
+    // Список меню берём последний непустой и не старше двух часов; квестам с inQMenu:false меню не нужно.
+    if (q.inQMenu !== false && qs.part === undefined) {
+      const fresh = S.lastQMenuAt && now - S.lastQMenuAt < 2 * 60 * 60000;
+      if (fresh && !(S.lastQMenuNames || []).some((n) => n === q.name)) continue;
+    }
     if (qs.part !== undefined) return q.name;
     if (!qs.lastDone) return q.name;
     if (q.resetAtMidnight) {
