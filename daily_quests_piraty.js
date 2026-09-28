@@ -1803,33 +1803,6 @@ async function runDailyQuests(page, stats) {
     listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
   }
 
-  // Рыбный ресторан: ежедневный квест форта «Жженый лист». Ветка выбирается не здесь, а внутри
-  // прохождения -- по [Журнал наград], который виден только у взятого задания (см. комментарий в
-  // guides/fish_restaurant.js). Поэтому гейт тут обычный: квест в меню, есть резерв и HP.
-  if (isQQuestAllowed('Рыбный ресторан') && isQuestInMenu(listedQuests, 'Рыбный ресторан')) {
-    const restMisttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
-    const restHp = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
-    if (restMisttownSoon) {
-      console.log(`Ресторан: пропускаю, скоро мисттаунское событие (${restMisttownSoon}).`);
-    } else {
-      await runQuestStepSafe(page, 'Рыбный ресторан', () => runFishRestaurantQuest(page, {
-        fightLoop,
-        throwIfPaused: throwIfPausedByManager,
-        resetToQuestMenu: (p) => resetToQuestMenu(p, questCount),
-        clickInfoForQuest,
-        // Нужен, когда задание ресторана висит с прошлого захода: журнал на том экране уже не
-        // виден, а ветку положено выбирать по журналу -- значит зависшее задание надо снять.
-        declineCurrentTask,
-        hpCurrent: restHp,
-        reserveMinutes,
-        minHp: FISH_RESTAURANT_MIN_HP,
-        minReserveMinutes: FISH_RESTAURANT_MIN_RESERVE_MINUTES,
-      })) && (didAnything = true);
-    }
-    await resetToQuestMenu(page, questCount);
-    listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
-  }
-
   // Ордо Экзекуторс: задания берутся не из меню Q, а в самой башне -- меню только объявляет, что
   // они доступны. Занимают слот "Текущее задание", поэтому только когда эксклюзивного квеста нет.
   // Маршрут длинный (башня -> миссия -> башня), так что перед мисттаунским событием не начинаем.
@@ -1907,6 +1880,37 @@ async function runDailyQuests(page, stats) {
       await resetToQuestMenu(page, questCount);
       listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
     }
+  }
+
+  // Рыбный ресторан идёт ПОСЛЕДНИМ (Паша, 28.09.2026: «переставь ресторан в последнюю очередь
+  // выполнения»). Раньше он стоял сразу после Варьете и, взяв задание, занимал слот «Текущее
+  // задание» -- из-за этого Штольни и Ордо получали «откажитесь от текущего в анкете». Теперь он
+  // берётся, когда всё остальное за цикл уже сделано.
+  // Рыбный ресторан: ежедневный квест форта «Жженый лист». Ветка выбирается не здесь, а внутри
+  // прохождения -- по [Журнал наград], который виден только у взятого задания (см. комментарий в
+  // guides/fish_restaurant.js). Поэтому гейт тут обычный: квест в меню, есть резерв и HP.
+  if (isQQuestAllowed('Рыбный ресторан') && isQuestInMenu(listedQuests, 'Рыбный ресторан')) {
+    const restMisttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
+    const restHp = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
+    if (restMisttownSoon) {
+      console.log(`Ресторан: пропускаю, скоро мисттаунское событие (${restMisttownSoon}).`);
+    } else {
+      await runQuestStepSafe(page, 'Рыбный ресторан', () => runFishRestaurantQuest(page, {
+        fightLoop,
+        throwIfPaused: throwIfPausedByManager,
+        resetToQuestMenu: (p) => resetToQuestMenu(p, questCount),
+        clickInfoForQuest,
+        // Нужен, когда задание ресторана висит с прошлого захода: журнал на том экране уже не
+        // виден, а ветку положено выбирать по журналу -- значит зависшее задание надо снять.
+        declineCurrentTask,
+        hpCurrent: restHp,
+        reserveMinutes,
+        minHp: FISH_RESTAURANT_MIN_HP,
+        minReserveMinutes: FISH_RESTAURANT_MIN_RESERVE_MINUTES,
+      })) && (didAnything = true);
+    }
+    await resetToQuestMenu(page, questCount);
+    listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));
   }
 
   try {
@@ -2986,8 +2990,13 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     '?задание завершено',
   ];
 
+  // Пунктуацию выбрасываем: в игре она расходится с записанным шагом, и сравнение по подстроке
+  // ломается на одной запятой (27.09.2026 так встал «Рыбный ресторан» на «погоди не ешь второй»,
+  // когда в игре было «Погоди, не ешь второй»). Здесь та же опасность на каждой реплике.
   const normV = (t) => String(t || '')
-    .replace(/ /g, ' ').replace(/ё/gi, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
+    .replace(/ /g, ' ').replace(/ё/gi, 'е')
+    .replace(/[.,!?;:«»"'()\[\]\-–—]/g, ' ')
+    .replace(/\s+/g, ' ').trim().toLowerCase();
 
   let si = 0;
   let fillerStreak = 0;
@@ -3002,8 +3011,11 @@ async function progressVarieteQuest(page, { questCount } = {}) {
       continue;
     }
 
-    const linkTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
-      .map((a) => (a.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean));
+    // Берём и href: клик по тексту (clickByTexts) снова упёрся бы в пунктуацию, а href точный.
+    const sceneLinksV = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .map((a) => ({ t: (a.textContent || '').replace(/\s+/g, ' ').trim(), h: a.getAttribute('href') }))
+      .filter((x) => x.t && x.h));
+    const linkTexts = sceneLinksV.map((x) => x.t);
 
     const bare = (x) => (x.startsWith('?') ? x.slice(1) : x);
 
@@ -3017,7 +3029,10 @@ async function progressVarieteQuest(page, { questCount } = {}) {
         console.log(`Варьете: сцена уже была пройдена до шага "${bare(VARIETE_STEPS[hit])}", пропускаю ${hit - si}.`);
       }
       const stepText = bare(VARIETE_STEPS[hit]);
-      await clickByTexts(page, [stepText, stepText.toLowerCase()], `Варьете: ${stepText}`);
+      const target = sceneLinksV.find((x) => normV(x.t).includes(normV(stepText)));
+      console.log(`OK: Варьете: ${stepText} -> ${target.t}`);
+      await page.goto(target.h.startsWith('http') ? target.h : `http://lbast.ru/${target.h.replace(/^\//, '')}`,
+        { waitUntil: 'domcontentloaded', timeout: 60000 });
       si = hit + 1;
       fillerStreak = 0;
       await pause(page, 800, 1600);
@@ -3031,10 +3046,13 @@ async function progressVarieteQuest(page, { questCount } = {}) {
     // Сравнение ТОЧНОЕ, а не по подстроке: "вернуться" входит и в реплику "- Работаю над этим, -
     // вернуться в театральный зал.", и филлер по подстроке увёл бы сцену назад вместо финала.
     const filler = ['далее', 'продолжить квест', 'вернуться', 'пройти в зал варьете'];
-    const fillerHit = filler.find((f) => linkTexts.some((t) => normV(t).replace(/^[-–—\s]+/, '').replace(/[.!]+$/, '') === f));
+    const fillerHit = filler.find((f) => linkTexts.some((t) => normV(t).replace(/^[-\s]+/, '') === f));
     if (fillerHit && fillerStreak < 4) {
       fillerStreak += 1;
-      await clickByTexts(page, [fillerHit, fillerHit.toUpperCase()], `Варьете: ${fillerHit}`);
+      const ft = sceneLinksV.find((x) => normV(x.t).replace(/^[-\s]+/, '') === fillerHit);
+      console.log(`OK: Варьете: ${fillerHit} -> ${ft.t}`);
+      await page.goto(ft.h.startsWith('http') ? ft.h : `http://lbast.ru/${ft.h.replace(/^\//, '')}`,
+        { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 600, 1200);
       continue;
     }
