@@ -68,13 +68,34 @@ async function sellFriedFishIfDue(page) {
   // резерва, выделанная стоит 60 против 2 за сырую). Если дубление важнее продажи - вернуть «кожа дикого».
   const PROTECTED_RE = /(медальон бандита|костяная цепь|кольцо|ордо|руна|эликсир|амулет|эль\b|грамота|свиток|карась|камень|камни|кинжал|тесак|меч|щит|шлем|доспех|сапоги|броня|пояс|подсумок|набор|четки|чётки|картина|часы)/i;
   const ITEM_RE = /([^\n\[]{3,60}?)\s*\[(\d+)\]\s*-\s*(\d+)\s*дин/g;
-  const list = await getBodyText(page);
-  ITEM_RE.lastIndex = 0;
+  // Паша, 28.09.2026: «выделаные кожи не забывай тоже продавать». Они и не продавались: список лавки
+  // РАЗБИТ НА СТРАНИЦЫ (shop.php?mod=prodat&cpage=N), а читалась только первая - всё, что не попало
+  // на неё, лежало в сумке мёртвым грузом. Теперь обходим страницы, пока находятся новые позиции.
+  const saleUrl = page.url();
   const offered = [];
-  let mm;
-  while ((mm = ITEM_RE.exec(list)) !== null) {
-    offered.push({ name: mm[1].trim(), qty: Number(mm[2]), price: Number(mm[3]) });
+  const seenNames = new Set();
+  for (let cpage = 1; cpage <= 8; cpage += 1) {
+    if (cpage > 1) {
+      const u = new URL(saleUrl);
+      u.searchParams.set('cpage', String(cpage));
+      await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await pause(page, 500, 900);
+    }
+    const pageText = await getBodyText(page);
+    ITEM_RE.lastIndex = 0;
+    let found = 0;
+    let mm2;
+    while ((mm2 = ITEM_RE.exec(pageText)) !== null) {
+      const nm = mm2[1].trim();
+      if (seenNames.has(nm)) continue;
+      seenNames.add(nm);
+      offered.push({ name: nm, qty: Number(mm2[2]), price: Number(mm2[3]) });
+      found += 1;
+    }
+    if (!found) break;
+    console.log('Продажа в лавке: страница ' + cpage + ' - позиций ' + found + '.');
   }
+  const list = await getBodyText(page);
   if (!offered.length) {
     // «Пусто» бывает двух видов: продавать действительно нечего - и разбор строк не подошёл к
     // формату страницы. Второе молчит точно так же, как первое, и способно тихо выключить продажу
