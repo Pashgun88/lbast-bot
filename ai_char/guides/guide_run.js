@@ -50,6 +50,23 @@ async function travelWait(page) {
     await goto(page, 'location.php');
   }
 }
+// Прочитать HP, не сбивая текущий экран: сцены квестов живут на своей странице, и переход на
+// анкету их закрывает. Поэтому для проверок внутри сцены - отдельная вкладка.
+async function readHpInNewTab(page) {
+  let temp = null;
+  try {
+    temp = await page.context().newPage();
+    await temp.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const t = await temp.locator('body').innerText().catch(() => '');
+    const mm = t.match(new RegExp(String.raw`\((-?\d+)\s*/\s*(\d+)\)`));
+    return mm ? { hp: Number(mm[1]), max: Number(mm[2]) } : null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (temp) await temp.close().catch(() => {});
+  }
+}
+
 async function readHp(page) {
   await goto(page, 'pers.php');
   const text = await m.getBodyText(page);
@@ -274,7 +291,10 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         const maxGuesses = Number(step.split(/\s+/)[1] || 1);
         let guesses = 0;
         for (let k = 0; k < 36; k++) {
-          const hp = await readHp(page);
+          // HP читаем ОТДЕЛЬНОЙ ВКЛАДКОЙ. 28.09.2026: здесь стоял обычный readHp, а он уходит на
+          // анкету - сетка со экрана пропадала, и следующая строка честно говорила «сетки нет».
+          // Из-за этого «Жертвоприношение» встало перед сапёром, и Паша это заметил.
+          const hp = await readHpInNewTab(page);
           if (hp && hp.max > 0 && hp.hp < hp.max * 0.5) { console.log(`@grid: HP ${hp.hp}/${hp.max} - меньше половины, в сетку не лезу.`); break; }
           const rows = parseGrid(await m.getBodyText(page));
           if (!rows) { console.log('@grid: сетки на экране нет - выхожу.'); break; }
