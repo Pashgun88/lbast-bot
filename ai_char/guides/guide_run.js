@@ -463,6 +463,11 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       }
       fs.writeFileSync(PROG, String(i + 1));
       if (i === steps.length - 1) { result = { status: 'done', index: steps.length }; await dump(page, 'END'); if (!opts.quietDone) await notify(page, `${name}: все шаги пройдены (${steps.length}), боёв ${fights}.`); }
+      // 28.09.2026: отметка «пройдено» ставилась ТОЛЬКО если последний шаг выполнился по-настоящему.
+      // У «Вспышек прошлого» последним стоял необязательный шаг, он пропустился через continue - и
+      // квест, реально сданный («Задание завершено, 367 дин, Руна истории»), остался незачтённым.
+      // Теперь победу фиксируем и по факту дохода до конца списка.
+      if (i >= steps.length - 1 && result.status !== 'done') result = { status: 'done', index: steps.length };
     }
   } catch (e) {
     console.log('FAILED', e.message);
