@@ -297,6 +297,30 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         }
         await dump(page, 'AFTER GRID');
 
+      } else if (step.startsWith('@jump ')) {
+        // Рандомный прыжок (Магическая башня, 28.09.2026, объяснил Паша): «сначала нужно перепрыгнуть,
+        // там рандом, при неудаче = -1 хп, через минуту можно попробовать еще раз». То есть это НЕ бой:
+        // неудача просто обнуляет HP и ссылка остаётся на экране. Жмём, пока не получится.
+        const want = step.slice(6).trim();
+        let jumped = false;
+        for (let k = 1; k <= 25; k++) {
+          const lj = await links(page);
+          const hit = findLink(lj, want);
+          if (!hit) { console.log(`@jump: ссылки «${want}» на экране нет - считаю участок пройденным.`); jumped = true; break; }
+          await goto(page, hit.h);
+          const after = await links(page);
+          if (!findLink(after, want)) { console.log(`@jump: перепрыгнул с попытки ${k}.`); jumped = true; break; }
+          const hp = await readHp(page);
+          console.log(`@jump: попытка ${k} не удалась (HP ${hp ? hp.hp + '/' + hp.max : '?'}) - жду минуту и пробую снова.`);
+          await sleep(65000);
+          await backToScene(page);
+        }
+        if (!jumped) {
+          await dump(page, 'JUMP FAILED');
+          fs.writeFileSync(PROG, String(i));
+          result = { status: 'mismatch', index: i };
+          break;
+        }
       } else if (step.startsWith('@url ')) {
         // Прямой переход по адресу игры (поездка конём в город: location.php?mod=konj&lway=7 -
         // Рыбацкая деревня). Добавлено 21.09.2026 для Галереи искусств.
