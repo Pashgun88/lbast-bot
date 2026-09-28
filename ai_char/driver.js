@@ -332,7 +332,7 @@ async function runFarmSession(page) {
 // Мирное продолжает работать: рыбалка, травы, довольствие, дерево жизни, статуя, кухня, письма, чат.
 const { getFightMode, fightHpFraction, S, SHTOLNI_MIN_HP_FRACTION } = require('./lib/state');
 const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
-const { sellFriedFishIfDue } = require('./lib/fish_sale');
+const { sellFriedFishIfDue, sellHidesInGeneralShop } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
 const { checkLevelUpIfDue } = require('./lib/levelup');
@@ -801,6 +801,12 @@ async function loginIfNeeded(page) {
 
       // 21.09.2026, Паша: раз в 3 дня продавать всю жареную рыбу в Лавке боевых ресурсов Стоунгарда.
       r = await runCycleStep(page, 'Продажа в лавке ресурсов', () => sellFriedFishIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Паша, 28.09.2026: «кожи продаются в обычном магазине». Лавка боевых ресурсов их не берёт -
+      // при 46 выделанных кожах в сумке она отвечала «На продажу ничего».
+      r = await runCycleStep(page, 'Продажа кож в магазине', () => sellHidesInGeneralShop(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
       // 23.09.2026, Паша: «будут писать письма о продаже - не забывай принимать в инвентаре.

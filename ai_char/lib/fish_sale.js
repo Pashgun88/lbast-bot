@@ -3,7 +3,7 @@
 // делай, пока не пропадёт кнопка Еще». Лавка платит 32 дин за штуку (21.09.2026).
 // Прежний план - магазин в своём доме по 65-79 - Паша переиграл.
 
-module.exports = { sellFriedFishIfDue };
+module.exports = { sellFriedFishIfDue, sellHidesInGeneralShop };
 
 const { S, persistDailyQuestState } = require('./state');
 const { getBodyText, pause } = require('./core');
@@ -155,4 +155,85 @@ async function sellFriedFishIfDue(page) {
   console.log(`Продажа в лавке: итого ${sold} шт. примерно на ${earned} дин${money ? `, денег теперь ${money[1]}` : ''}.`);
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return sold > 0;
+}
+
+
+// ПРОДАЖА КОЖ В ОБЫЧНОМ МАГАЗИНЕ. Паша, 28.09.2026: «выделаные кожи не забывай тоже продавать» и
+// «кожи продаются в обычном магазине». Лавка боевых ресурсов их не берёт вовсе - на её странице
+// продажи было «На продажу ничего», пока в сумке лежали 23 выделанных кожи кабана и 23 бизона
+// (по ~60 дин штука, то есть почти три тысячи мёртвым грузом).
+//
+// Сырые кожи НЕ продаём: они сырьё дубления, где цена вырастает с 2 до 60 за штуку. Если понадобится
+// продавать и их - добавить сюда же «кожа дикого».
+const TANNED_HIDE_RE = /выделанн[аоы][яе]\s+кожа/i;
+const HIDE_SALE_INTERVAL_MS = 60 * 60 * 1000;
+let lastHideSaleAt = 0;
+
+async function sellHidesInGeneralShop(page) {
+  if (Date.now() - lastHideSaleAt < HIDE_SALE_INTERVAL_MS) return false;
+  lastHideSaleAt = Date.now();
+  await page.goto(STONEGUARD_FASTWAY, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(6000);
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  for (const [re, label] of [[/^Магазин$/, 'Магазин'], [/^Продать$/, 'Продать']]) {
+    if (!(await clickLinkText(page, re))) {
+      console.log(`Продажа кож: нет ссылки «${label}» в обычном магазине - выхожу.`);
+      return false;
+    }
+  }
+  const ITEM_RE = new RegExp(String.raw`([^
+\[]{3,60}?)\s*\[(\d+)\]\s*-\s*(\d+)\s*дин`, 'g');
+  const saleUrl = page.url();
+  let soldTotal = 0;
+  let earned = 0;
+  for (let cpage = 1; cpage <= 8; cpage += 1) {
+    if (cpage > 1) {
+      const u = new URL(saleUrl);
+      u.searchParams.set('cpage', String(cpage));
+      await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await pause(page, 500, 900);
+    }
+    const text = await getBodyText(page);
+    ITEM_RE.lastIndex = 0;
+    const hides = [];
+    let mm;
+    let any = 0;
+    while ((mm = ITEM_RE.exec(text)) !== null) {
+      any += 1;
+      const name = mm[1].trim();
+      if (TANNED_HIDE_RE.test(name)) hides.push({ name, qty: Number(mm[2]), price: Number(mm[3]) });
+    }
+    if (!any) break;
+    for (const it of hides) {
+      console.log(`Продажа кож: «${it.name}» x${it.qty} по ${it.price} дин - продаю всё.`);
+      if (!(await clickByLinkPrefix(page, it.name.slice(0, 24)))) {
+        console.log(`Продажа кож: ссылка «${it.name}» не нажалась.`);
+        continue;
+      }
+      let n = 0;
+      for (let k = 0; k < 120; k += 1) {
+        const t = await getBodyText(page);
+        if (/товар отсутствует/i.test(t)) break;
+        if (!/Продажа успешна/i.test(t)) {
+          console.log(`Продажа кож: незнакомый ответ: ${t.replace(/\s+/g, ' ').slice(0, 160)}`);
+          break;
+        }
+        n += 1;
+        if (!(await clickLinkText(page, /^Е[щш]е$|^Ещё$/))) break;
+      }
+      soldTotal += n;
+      earned += n * it.price;
+      console.log(`Продажа кож: ${it.name} - продано ${n} шт.`);
+      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      for (const re of [/^Магазин$/, /^Продать$/]) await clickLinkText(page, re);
+    }
+  }
+  if (soldTotal) {
+    const money = (await getBodyText(page)).match(/Деньги:\s*(\d+)/);
+    console.log(`Продажа кож: итого ${soldTotal} шт. примерно на ${earned} дин${money ? `, денег теперь ${money[1]}` : ''}.`);
+  } else {
+    console.log('Продажа кож: выделанных кож в списке магазина нет.');
+  }
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  return soldTotal > 0;
 }
