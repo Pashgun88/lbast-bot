@@ -2192,133 +2192,193 @@ async function progressLifeTreeQuest(page, { questCount } = {}) {
 // "мираж" ("То было наваждение. Рвите снова." + ссылка "Далее") -- поле просто перегенерируется
 // без потери попытки. Доступность конкретной травы отражается прямо в списке квестов (Q), так что
 // отдельный кулдаун-таймер в состоянии бота не нужен -- as-is: пробуем, если трава видна в меню.
-const HERB_BOARD_COLS = 4;
-const HERB_BOARD_ROWS = 4;
-// Диапазон общего числа шипов на поле, по факту 3 и 4 уже наблюдались на разных досках -- используется
-// решателем как мягкое ограничение (наравне с открытыми цифрами), чтобы правильно оценивать
-// клетки, ещё не соседствующие ни с одной открытой цифрой.
+// Диапазон общего числа шипов на поле трав, по факту 3 и 4 уже наблюдались на разных досках --
+// решатель применяет его как мягкое ограничение (наравне с открытыми цифрами), чтобы правильно
+// оценивать клетки, ещё не соседствующие ни с одной открытой цифрой. Для сапёра 6x6 в
+// «Жертвоприношении» общее число шипов неизвестно, и там ограничение НЕ применяется -- 28.09.2026
+// именно оно рубило все комбинации: трёх-четырёх шипов на 36 клетках быть не может.
 const HERB_MINE_COUNT_RANGE = [3, 4];
-const HERB_QUEST_NAMES = [
-  'Дикий пустолист',
-  'Трава арайя',
-  'Кустарник травии',
-  'Семя винограда',
-];
+// Перебор всех комбинаций (2^n) годится только для маленькой доски: n -- это число НЕОТКРЫТЫХ
+// клеток, а 1 << 36 в JS равно 16 (сдвиг считается по модулю 32), то есть на доске 6x6 «полный»
+// перебор проверял 16 вариантов из 69 миллиардов и выдавал мусор. Больше порога идём по границе.
+const MINER_FULL_ENUM_MAX_CELLS = 20;
+const MINER_MAX_SOLUTIONS = 300000;
 
-function herbCellRowCol(gamekl) {
-  const idx = gamekl - 1;
-  return { row: Math.floor(idx / HERB_BOARD_COLS), col: idx % HERB_BOARD_COLS };
-}
-
-function herbCellNeighbors(gamekl) {
-  const { row, col } = herbCellRowCol(gamekl);
-  const result = [];
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      if (dr === 0 && dc === 0) continue;
-      const r = row + dr;
-      const c = col + dc;
-      if (r >= 0 && r < HERB_BOARD_ROWS && c >= 0 && c < HERB_BOARD_COLS) {
-        result.push(r * HERB_BOARD_COLS + c + 1);
-      }
-    }
-  }
-  return result;
-}
-
-// Перебирает все комбинации шипов среди ещё не открытых клеток, отсекает несовместимые с уже
-// открытыми цифрами и с ожидаемым общим числом шипов (HERB_MINE_COUNT_RANGE), затем выбирает
-// клетку с наименьшей долей "плохих" комбинаций. Поле маленькое (максимум 15 неоткрытых клеток
-// после первого хода), так что полный перебор (2^15 = 32768) занимает миллисекунды.
-function solveHerbBoard(openedNumbers, unopenedCells) {
-  const n = unopenedCells.length;
-  if (n === 0) return null;
-
-  const indexOf = new Map(unopenedCells.map((v, i) => [v, i]));
-  const constraints = [];
-  for (const [cellStr, digit] of Object.entries(openedNumbers)) {
-    const cell = Number(cellStr);
-    const relevant = herbCellNeighbors(cell)
-      .filter((nb) => indexOf.has(nb))
-      .map((nb) => indexOf.get(nb));
-    constraints.push({ relevant, digit });
-  }
-
-  const mineCounts = new Array(n).fill(0);
-  let validCombos = 0;
-  const totalCombos = 1 << n;
-
-  for (let mask = 0; mask < totalCombos; mask++) {
-    let ok = true;
-    for (const c of constraints) {
-      let cnt = 0;
-      for (const idx of c.relevant) {
-        if (mask & (1 << idx)) cnt++;
-      }
-      if (cnt !== c.digit) { ok = false; break; }
-    }
-    if (!ok) continue;
-
-    let popcount = 0;
-    for (let i = 0; i < n; i++) if (mask & (1 << i)) popcount++;
-    if (popcount < HERB_MINE_COUNT_RANGE[0] || popcount > HERB_MINE_COUNT_RANGE[1]) continue;
-
-    validCombos++;
-    for (let i = 0; i < n; i++) if (mask & (1 << i)) mineCounts[i]++;
-  }
-
-  if (validCombos === 0) {
-    console.log('Искать травы: решатель не нашёл согласованных комбинаций (диапазон шипов не подошёл), кликаю наугад');
-    return unopenedCells[Math.floor(Math.random() * unopenedCells.length)];
-  }
-
-  let bestCell = unopenedCells[0];
-  let bestProb = Infinity;
-  for (let i = 0; i < n; i++) {
-    const prob = mineCounts[i] / validCombos;
-    if (prob < bestProb) {
-      bestProb = prob;
-      bestCell = unopenedCells[i];
-    }
-  }
-
-  console.log(`Искать травы: решатель выбрал клетку ${bestCell} (P(шип)~${Math.round(bestProb * 100)}%, вариантов=${validCombos}, осталось клеток=${n})`);
-  return bestCell;
-}
-
-async function parseHerbBoard(page) {
+// Разбор минёрской доски. Один и тот же виджет: травы 4x4 («Заросли») и сапёр 6x6 в
+// «Жертвоприношении» («Достаньте это, не напоровшись на шип»). Геометрия читается из таблицы, а
+// номер клетки -- из самой ссылки (gamekl=N), а не из её позиции среди td: на доске 6x6 позиция и
+// номер разошлись, и бот полез в «клетку 35», ссылки для которой на странице не было.
+async function parseMinerBoard(page) {
   return await page.evaluate(() => {
-    const table = document.querySelector('table');
-    if (!table) {
-      return { hasGrid: false, unopenedCells: [], openedNumbers: {} };
-    }
+    const withCells = Array.from(document.querySelectorAll('table'))
+      .filter((t) => t.querySelector('a[href*="gamekl="]'));
+    // Берём САМУЮ ВНУТРЕННЮЮ такую таблицу: страница целиком свёрстана таблицами, и внешняя
+    // тоже «содержит» ссылки доски, но её строки -- это разметка страницы, а не поле.
+    const table = withCells.find((t) => !Array.from(t.querySelectorAll('table'))
+      .some((inner) => inner.querySelector('a[href*="gamekl="]'))) || withCells[0];
+    if (!table) return { hasGrid: false, rows: 0, cols: 0, cells: [] };
 
-    const cells = Array.from(table.querySelectorAll('td'));
-    const unopenedCells = [];
-    const openedNumbers = {};
-
-    cells.forEach((td, i) => {
-      const gamekl = i + 1;
-      const link = td.querySelector('a[href*="gamekl="]');
-      if (link) {
-        unopenedCells.push(gamekl);
-        return;
-      }
-      const txt = (td.textContent || '').replace(/ /g, ' ').trim();
-      if (/^\d+$/.test(txt)) {
-        openedNumbers[gamekl] = Number(txt);
-      }
+    const cells = [];
+    let cols = 0;
+    Array.from(table.rows).forEach((tr, row) => {
+      const tds = Array.from(tr.cells);
+      if (!tds.length) return;
+      cols = Math.max(cols, tds.length);
+      tds.forEach((td, col) => {
+        const link = td.querySelector('a[href*="gamekl="]');
+        const href = link ? link.getAttribute('href') : null;
+        const m = href ? href.match(/gamekl=(\d+)/) : null;
+        const txt = (td.textContent || '').replace(/ /g, ' ').trim();
+        cells.push({ row, col, kl: m ? Number(m[1]) : null, href, digit: !link && /^\d+$/.test(txt) ? Number(txt) : null });
+      });
     });
 
-    return { hasGrid: cells.length > 0, unopenedCells, openedNumbers };
-  }).catch(() => ({ hasGrid: false, unopenedCells: [], openedNumbers: {} }));
+    const rows = new Set(cells.map((c) => c.row)).size;
+    return { hasGrid: cells.length > 0, rows, cols, cells };
+  }).catch(() => ({ hasGrid: false, rows: 0, cols: 0, cells: [] }));
 }
 
-async function clickHerbCell(page, gamekl) {
-  const locator = page.locator(`a[href$="gamekl=${gamekl}"]`).first();
+// Выбирает клетку с наименьшей вероятностью шипа. Ограничения -- открытые цифры (число шипов среди
+// 8 соседей) и, если оно известно, общее число шипов на доске. На маленькой доске перебираем все
+// комбинации; на большой -- только клетки, граничащие с открытыми цифрами (остальные оцениваем по
+// средней плотности шипов), иначе перебор не помещается ни в разрядность, ни во время.
+function solveMinerBoard(board, { mineRange = null, label = 'Сапёр' } = {}) {
+  const unopened = board.cells.filter((c) => c.kl !== null);
+  const opened = board.cells.filter((c) => c.digit !== null);
+  if (!unopened.length) return null;
+
+  const key = (r, c) => `${r}:${c}`;
+  const posOf = new Map(unopened.map((c, i) => [key(c.row, c.col), i]));
+  const neighborsOf = (cell) => {
+    const out = [];
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const p = posOf.get(key(cell.row + dr, cell.col + dc));
+        if (p !== undefined) out.push(p);
+      }
+    }
+    return out;
+  };
+
+  const constraints = opened
+    .map((o) => ({ cells: neighborsOf(o), digit: o.digit }))
+    .filter((c) => c.cells.length);
+
+  if (!constraints.length) {
+    const pick = unopened[Math.floor(Math.random() * unopened.length)];
+    console.log(`${label}: подсказок ещё нет, первый клик наугад (клетка ${pick.kl} из ${unopened.length})`);
+    return pick;
+  }
+
+  const n = unopened.length;
+  const full = n <= MINER_FULL_ENUM_MAX_CELLS;
+  // На маленькой доске «границей» считаем все клетки -- тогда работает и ограничение по общему
+  // числу шипов, и оценка клеток, не соседствующих ни с одной цифрой.
+  const frontier = full
+    ? unopened.map((_, i) => i)
+    : [...new Set(constraints.flatMap((c) => c.cells))].sort((a, b) => a - b);
+  const fpos = new Map(frontier.map((v, i) => [v, i]));
+  const cons = constraints.map((c) => ({
+    idx: c.cells.map((v) => fpos.get(v)).filter((v) => v !== undefined).sort((a, b) => a - b),
+    outside: c.cells.filter((v) => !fpos.has(v)).length,
+    digit: c.digit,
+  }));
+  const consOf = frontier.map(() => []);
+  cons.forEach((c, ci) => c.idx.forEach((p) => consOf[p].push(ci)));
+
+  const cur = new Array(frontier.length).fill(0);
+  const mineCount = new Array(frontier.length).fill(0);
+  let solutions = 0;
+  let mines = 0;
+  const restCount = n - frontier.length;
+
+  const dfs = (p) => {
+    if (solutions >= MINER_MAX_SOLUTIONS) return;
+    if (p === frontier.length) {
+      if (mineRange) {
+        if (mines > mineRange[1]) return;
+        if (mines + restCount < mineRange[0]) return;
+      }
+      solutions++;
+      for (let i = 0; i < frontier.length; i++) if (cur[i]) mineCount[i]++;
+      return;
+    }
+    for (const v of [0, 1]) {
+      if (v && mineRange && mines + 1 > mineRange[1]) continue;
+      cur[p] = v;
+      if (v) mines++;
+      let ok = true;
+      for (const ci of consOf[p]) {
+        const c = cons[ci];
+        let have = 0;
+        let left = c.outside;
+        for (const i of c.idx) {
+          if (i <= p) { if (cur[i]) have++; } else left++;
+        }
+        if (have > c.digit || have + left < c.digit) { ok = false; break; }
+      }
+      if (ok) dfs(p + 1);
+      if (v) mines--;
+      cur[p] = 0;
+    }
+  };
+  dfs(0);
+
+  if (!solutions) {
+    const pick = unopened[Math.floor(Math.random() * unopened.length)];
+    console.log(`${label}: согласованных комбинаций нет (доска ${board.rows}x${board.cols}), кликаю наугад: ${pick.kl}`);
+    return pick;
+  }
+
+  let best = null;
+  for (let i = 0; i < frontier.length; i++) {
+    const p = mineCount[i] / solutions;
+    if (!best || p < best.p) best = { p, cell: unopened[frontier[i]] };
+  }
+
+  // Клетки вне границы ни с одной цифрой не соседствуют, поэтому про них комбинации молчат.
+  // Оцениваем их средней плотностью шипов по уже открытым цифрам: сумма цифр к числу соседей,
+  // которых эти цифры описывают. Без открытых цифр сюда не попадаем (выход по constraints выше).
+  if (restCount > 0) {
+    let digits = 0;
+    let slots = 0;
+    for (const o of opened) {
+      digits += o.digit;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (!dr && !dc) continue;
+          const r = o.row + dr;
+          const c = o.col + dc;
+          if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) slots++;
+        }
+      }
+    }
+    const pRest = slots ? digits / slots : 0.25;
+    if (pRest < best.p) {
+      const rest = unopened.filter((_, i) => !fpos.has(i));
+      const pick = rest[Math.floor(Math.random() * rest.length)];
+      console.log(`${label}: у границы лучшее P(шип)~${Math.round(best.p * 100)}%, `
+        + `в глубине по плотности ~${Math.round(pRest * 100)}% -> беру клетку ${pick.kl} вне границы`);
+      return pick;
+    }
+  }
+
+  console.log(`${label}: клетка ${best.cell.kl} (P(шип)~${Math.round(best.p * 100)}%, `
+    + `вариантов=${solutions}${solutions >= MINER_MAX_SOLUTIONS ? '+' : ''}, `
+    + `доска ${board.rows}x${board.cols}, неоткрытых=${n}, граница=${frontier.length})`);
+  return best.cell;
+}
+
+async function clickMinerCell(page, cell, label = 'Сапёр') {
+  // Клик по ТОЧНОМУ href разобранной ссылки: селектор «href оканчивается на gamekl=N» промахивался,
+  // когда после номера в адресе идут ещё параметры.
+  const locator = cell.href
+    ? page.locator(`a[href="${cell.href}"]`).first()
+    : page.locator(`a[href*="gamekl=${cell.kl}"]`).first();
   const count = await locator.count().catch(() => 0);
   if (count === 0) {
-    console.log(`Искать травы: не нашёл ссылку для клетки ${gamekl}`);
+    console.log(`${label}: не нашёл ссылку для клетки ${cell.kl} (${cell.href || 'без href'})`);
     return false;
   }
 
@@ -2327,7 +2387,7 @@ async function clickHerbCell(page, gamekl) {
     await pause(page, 800, 1600);
     return true;
   } catch (e) {
-    console.log(`Искать травы: не смог кликнуть клетку ${gamekl}: ${e.message}`);
+    console.log(`${label}: не смог кликнуть клетку ${cell.kl}: ${e.message}`);
     return false;
   }
 }
@@ -2371,7 +2431,7 @@ async function playHerbBoard(page) {
       return { outcome: 'thorn' };
     }
 
-    const board = await parseHerbBoard(page);
+    const board = await parseMinerBoard(page);
 
     if (!board.hasGrid) {
       // Сетки нет -- скорее всего терминальное сообщение, которое мы не распознали текстом выше
@@ -2380,7 +2440,7 @@ async function playHerbBoard(page) {
       return { outcome: 'done', text };
     }
 
-    if (board.unopenedCells.length === 0) {
+    if (!board.cells.some((c) => c.kl !== null)) {
       // Ни "укололись", ни "наваждение" не совпали, но свободных клеток не осталось -- скорее всего
       // это и есть успешный сбор травы (в т.ч. через цепную реакцию открытия пустых клеток, которая
       // задевает и саму траву). Текст здесь ещё точно не подтверждён -- логируем целиком для проверки.
@@ -2388,13 +2448,13 @@ async function playHerbBoard(page) {
       return { outcome: 'done', text };
     }
 
-    const pick = solveHerbBoard(board.openedNumbers, board.unopenedCells);
+    const pick = solveMinerBoard(board, { mineRange: HERB_MINE_COUNT_RANGE, label: 'Искать травы' });
     if (pick === null) {
       console.log('Искать травы: решатель не смог выбрать клетку');
       return { outcome: 'error' };
     }
 
-    const clicked = await clickHerbCell(page, pick);
+    const clicked = await clickMinerCell(page, pick, 'Искать травы');
     if (!clicked) {
       return { outcome: 'error' };
     }
@@ -2418,19 +2478,21 @@ async function playSapperBoardOnce(page) {
       return { outcome: 'thorn' };
     }
 
-    const board = await parseHerbBoard(page);
+    const board = await parseMinerBoard(page);
 
-    if (!board.hasGrid || board.unopenedCells.length === 0) {
+    if (!board.hasGrid || !board.cells.some((c) => c.kl !== null)) {
       return { outcome: 'done', text };
     }
 
-    const pick = solveHerbBoard(board.openedNumbers, board.unopenedCells);
+    // mineRange не передаём: сколько шипов на доске 6x6 -- неизвестно, а чужой диапазон трав
+    // рубил все комбинации подряд (28.09.2026).
+    const pick = solveMinerBoard(board, { label: 'Сапёр' });
     if (pick === null) {
       console.log('Сапёр: решатель не смог выбрать клетку');
       return { outcome: 'error' };
     }
 
-    const clicked = await clickHerbCell(page, pick);
+    const clicked = await clickMinerCell(page, pick, 'Сапёр');
     if (!clicked) {
       return { outcome: 'error' };
     }
