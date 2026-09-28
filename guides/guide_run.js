@@ -179,6 +179,11 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   // в цепочке, и следующий проход начал бы квест с чужого экрана.
   const saveProg = (v) => { if (!replayRoad) fs.writeFileSync(PROG, String(v)); };
   let autoLone = false;
+  // Вышел ли маршрут ЗА дорогу, то есть открылась ли вообще сцена квеста. Дорога сама по себе
+  // ничего не доказывает: доехать на место можно и когда квест на кулдауне. Вызывающий (quests.js)
+  // по этому признаку решает, считать ли цепочку начатой.
+  let inRoad = false;
+  let pastRoad = false;
   let result = { status: 'error', index: from };
 
   try {
@@ -213,7 +218,9 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
 
       if (step === '@road') {
         // Разметка: ниже дорога до сцены, её можно проходить заново сколько угодно раз.
+        inRoad = true;
       } else if (step === '@arrived') {
+        inRoad = false;
         if (replayRoad) {
           replayRoad = false;
           console.log(`guide ${name}: дорога пройдена заново, возвращаюсь к шагу ${from}.`);
@@ -448,6 +455,8 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       restRetries = 0;
 
       saveProg(i + 1);
+      // Шаг вне дороги реально выполнен -- значит экран сцены был, квест на месте.
+      if (!inRoad && step !== '@road' && step !== '@arrived') pastRoad = true;
       if (i === steps.length - 1) {
         result = { status: 'done', index: steps.length };
         await dump(page, 'END');
@@ -462,7 +471,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   }
 
   if (from >= steps.length) result = { status: 'done', index: steps.length };
-  return result;
+  return { ...result, pastRoad };
 }
 
 module.exports = { runGuide, travelWait, restIfBlocked };
