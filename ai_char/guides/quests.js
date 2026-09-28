@@ -362,6 +362,8 @@ async function runGuideQuestIfDue(page, q) {
       // сразу: маршрут всё равно начнётся заново, а слот нужен другим.
       if (q.needsSlot || q.takesSlot) {
         const { dropAssignmentByOrder, forgetSlotOwner } = require('../lib/task_slot');
+        // Сюжетную миссию отказ не тронет (проверка внутри dropAssignmentByOrder) - иначе теряется
+        // весь пройденный квест, как чуть не вышло с «Вспышками прошлого» 28.09.2026.
         await dropAssignmentByOrder(page, `${q.name}: маршрут встал на шаге ${r.index}, слот не держим`).catch(() => false);
         forgetSlotOwner();
       }
