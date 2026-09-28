@@ -29,8 +29,24 @@
 // Пройдено вживую 26.09.2026: ветка 27 (холмы -> вперед -> бой Пятнистый аллигатор [21] 2980 HP
 // -> «Ты аллигаторов свежевать умеешь?») -> Плащ Гретхис (ледяной шторм), Ур. 21. Дин за эту
 // ветку не дают вовсе: «цветов я не вижу».
+const fs = require('fs');
+const path = require('path');
 const { sleep, getBodyText, goto } = require('./lib');
 const { restIfBlocked } = require('./guide_run');
+
+// Какая ветка начата и не доиграна. Нужно, чтобы НЕ сшить две ветки: сцена живёт на сервере, и
+// докат по ней допустим только для той же ветки, что её начала. Ветка же выбирается по журналу
+// каждый прогон, а журнал меняется -- значит без этой памяти докат мог бы дожать сцену ветки №2
+// шагами ветки №15 (Паша, 28.09.2026: «шаг в сторону -- другая награда»).
+const RUN_STATE = path.join(__dirname, 'fish_restaurant_run.json');
+
+function loadRun() {
+  try { return JSON.parse(fs.readFileSync(RUN_STATE, 'utf8')); } catch { return {}; }
+}
+
+function saveRun(v) {
+  try { fs.writeFileSync(RUN_STATE, JSON.stringify(v, null, 2)); } catch { /* не критично */ }
+}
 
 const MAX_SCREENS = 60;
 // Сцена длиннее и дороже галереи: два-три боя в худших ветках плюс два десятка переходов.
@@ -394,9 +410,22 @@ async function runFishRestaurantQuest(page, deps = {}) {
     console.log('Ресторан: ни одна доступная награда не описана в таблице веток, пропускаю');
     return false;
   }
+  // Незаконченная сцена от ДРУГОЙ ветки: дожимать её своими шагами нельзя -- получится сшивка и
+  // конец без награды. Лучше честно не ходить и сказать об этом, чем испортить прохождение.
+  const run = loadRun();
+  if (typeof run.branch === 'number' && run.branch !== branch.n) {
+    console.log(`Ресторан: сцена осталась незаконченной от ветки ${run.branch}, а журнал требует ветку ${branch.n} -- сшивать их нельзя, пропускаю`);
+    console.log('Ресторан: чтобы расчистить, задание нужно доиграть или снять вручную в анкете');
+    return false;
+  }
+
   console.log(`Ресторан: иду за наградой «${branch.reward}» (ветка ${branch.n})`);
+  saveRun({ branch: branch.n, startedAt: Date.now() });
 
   const ok = await walkBranch(page, branch, deps);
+  // Ветка доиграна -- сцены больше нет, память о ней не нужна. Если нет, оставляем: следующий
+  // прогон продолжит ЭТУ ветку, а чужую не начнёт.
+  if (ok) saveRun({});
   await goto(page, 'location.php');
   return ok;
 }

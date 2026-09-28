@@ -34,3 +34,4 @@ test-clone/
 
 # Временные выгрузки чужих веток при сверке
 qs_tmp.js
+guides/fish_restaurant_run.json
