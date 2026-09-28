@@ -397,12 +397,21 @@ function guideQuestWaitsForHp(stats) {
 // Квест по гайду, которому пора: период вышел (или его ещё не проходили) и пауза после срыва
 // кончилась. 28.09.2026: фарм-сессия прерывалась только на квест ПОСРЕДИ маршрута, а «созрел по
 // времени» не считала - и «Унесенные», «Колодец» и «Башня» ждали час, пока сессия докрутится.
+
+// Квест с частями-днями, у которого сегодняшняя часть уже пройдена, СЧИТАЕТСЯ ЗАКОНЧЕННЫМ на сегодня:
+// следующая часть - это завтра. 28.09.2026 без этой проверки фарм стоял весь вечер из-за
+// «Жертвоприношения», у которого день первый был закрыт в 20:44.
+function dayPartDoneToday(qs) {
+  return !!(qs && qs.partDoneDay && qs.partDoneDay === new Date().toLocaleDateString('sv-SE'));
+}
+
 function guideQuestDueNow() {
   const st = readGuideState();
   const now = Date.now();
   for (const q of GUIDE_QUESTS) {
     const qs = st[q.name] || {};
     if (qs.suppressedUntil && now < qs.suppressedUntil) continue;
+    if (dayPartDoneToday(qs)) continue;
     if (qs.part !== undefined) return q.name;
     if (!qs.lastDone) return q.name;
     if (q.resetAtMidnight) {
@@ -412,10 +421,10 @@ function guideQuestDueNow() {
   }
   return null;
 }
-
 function guideQuestInProgress() {
   const st = readGuideState();
   for (const [name, qs] of Object.entries(st)) {
+    if (dayPartDoneToday(qs)) continue;
     if (qs && qs.part !== undefined && !(qs.suppressedUntil && Date.now() < qs.suppressedUntil)) return name;
   }
   return null;
