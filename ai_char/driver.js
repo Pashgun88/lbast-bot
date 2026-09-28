@@ -242,8 +242,8 @@ async function runFarmSession(page) {
       // 27.09.2026: квест может стать готовым ПОСРЕДИ сессии - у «Неожиданной встречи» кончилась
       // трёхчасовая пауза, пока драйвер час фармил, и до боя с Алеорой дело так и не дошло.
       // Поэтому проверяем незакрытый маршрут на каждом круге сессии, а не только на входе в неё.
-      const midRoute = guideQuestInProgress();
-      if (midRoute) due.push(`маршрут «${midRoute}» не закрыт`);
+      const midRoute = guideQuestInProgress() || guideQuestDueNow();
+      if (midRoute) due.push(`квесту «${midRoute}» пора`);
       if (due.length) {
         console.log(`Фарм-сессия: подошёл срок - ${due.join(', ')}. Прерываю фарм, вернусь после.`);
         break;
@@ -394,6 +394,25 @@ function guideQuestWaitsForHp(stats) {
 // Незакрытый маршрут по гайду: у квеста в guides_state.json начата часть. Такой квест держит
 // живую сцену, и фарм его только оттягивает - 27.09.2026 «Неожиданная встреча» стояла перед
 // Алеорой, а драйвер ушёл в часовую фарм-сессию и вернулся бы к квесту только через час.
+// Квест по гайду, которому пора: период вышел (или его ещё не проходили) и пауза после срыва
+// кончилась. 28.09.2026: фарм-сессия прерывалась только на квест ПОСРЕДИ маршрута, а «созрел по
+// времени» не считала - и «Унесенные», «Колодец» и «Башня» ждали час, пока сессия докрутится.
+function guideQuestDueNow() {
+  const st = readGuideState();
+  const now = Date.now();
+  for (const q of GUIDE_QUESTS) {
+    const qs = st[q.name] || {};
+    if (qs.suppressedUntil && now < qs.suppressedUntil) continue;
+    if (qs.part !== undefined) return q.name;
+    if (!qs.lastDone) return q.name;
+    if (q.resetAtMidnight) {
+      const day = (t) => new Date(t).toLocaleDateString('ru-RU');
+      if (day(qs.lastDone) !== day(now)) return q.name;
+    } else if (now - qs.lastDone >= q.periodDays * 86400000) return q.name;
+  }
+  return null;
+}
+
 function guideQuestInProgress() {
   const st = readGuideState();
   for (const [name, qs] of Object.entries(st)) {
@@ -952,8 +971,8 @@ async function loginIfNeeded(page) {
       // бизона и кабана в каждом цикле его тратили - набраться он не мог. Пока квест по гайду ждёт
       // только резерв, раунды фарма пропускаем: это то же правило «квесты важнее фарма», но про резерв.
       const questReserveWait = guideQuestWaitsForReserve();
-      const questMidRoute = guideQuestInProgress();
-      if (questMidRoute) console.log(`Ферма пропущена: «${questMidRoute}» стоит посреди маршрута - сначала доводим квест.`);
+      const questMidRoute = guideQuestInProgress() || guideQuestDueNow();
+      if (questMidRoute) console.log(`Ферма пропущена: «${questMidRoute}» - квест ждёт, сначала он.`);
       const farmAllowed = hpOkForFarm && !questsPending && !questReserveWait && !questMidRoute; // бизон разрешён и в режиме без боёв
       const farmAllowedFull = farmAllowed && !noFight;   // кабан и гарпия - только в обычном режиме
       if (questReserveWait) {
@@ -1104,7 +1123,7 @@ async function loginIfNeeded(page) {
         // бизон стачивал ровно то HP, которого квесту не хватало. Квест раз в сутки важнее филлера,
         // поэтому в простое смотрим, не ждёт ли кто-то HP.
         const shtolniWaitsForHp = guideQuestWaitsForHp(idleFarmStats);
-        const questWaitsForReserve = guideQuestWaitsForReserve() || guideQuestInProgress();
+        const questWaitsForReserve = guideQuestWaitsForReserve() || guideQuestInProgress() || guideQuestDueNow();
         if (shtolniWaitsForHp) {
           console.log(`Простой: не фармлю - ${shtolniWaitsForHp} ждёт HP (${idleFarmStats.hpCurrent}/${idleFarmStats.hpMax}).`);
         } else if (questWaitsForReserve) {
