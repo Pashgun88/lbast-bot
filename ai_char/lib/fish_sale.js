@@ -177,60 +177,74 @@ async function sellHidesInGeneralShop(page) {
   await page.goto(STONEGUARD_FASTWAY, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(6000);
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  // Паша, 28.09.2026: «стоун - магазин - продать вещи. Там кожи продаются». Ссылка называется
-  // «Продать вещи», а не «Продать» - у меня это уже было записано в уроках, и я всё равно ошибся.
+  // Паша, 28.09.2026: «стоун - магазин - продать вещи. Там кожи продаются». Именно «Продать вещи»:
+  // «Продать» есть только внутри лавки боевых ресурсов, а она кожи не берёт.
   for (const [re, label] of [[/^Магазин$/, 'Магазин'], [/^Продать вещи$/, 'Продать вещи']]) {
     if (!(await clickLinkText(page, re))) {
       console.log(`Продажа кож: нет ссылки «${label}» в обычном магазине - выхожу.`);
       return false;
     }
   }
-  const ITEM_RE = new RegExp(String.raw`([^
-\[]{3,60}?)\s*\[(\d+)\]\s*-\s*(\d+)\s*дин`, 'g');
-  const saleUrl = page.url();
+  // Формат страницы (снят живьём 28.09.2026): «Инвентарь: 1-20 из 266», позиции строками
+  // «Выделанная Кожа кабана - 23 дин [i]», внизу номера страниц «1 2 3 … 14». Количества в строке
+  // НЕТ - каждая вещь отдельной строкой, поэтому просто жмём по названию и потом «Ещё», как в лавке.
+  const baseUrl = page.url();
   let soldTotal = 0;
   let earned = 0;
-  for (let cpage = 1; cpage <= 8; cpage += 1) {
-    if (cpage > 1) {
-      const u = new URL(saleUrl);
-      u.searchParams.set('cpage', String(cpage));
-      await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      await pause(page, 500, 900);
-    }
-    const text = await getBodyText(page);
-    ITEM_RE.lastIndex = 0;
-    const hides = [];
-    let mm;
-    let any = 0;
-    while ((mm = ITEM_RE.exec(text)) !== null) {
-      any += 1;
-      const name = mm[1].trim();
-      if (TANNED_HIDE_RE.test(name)) hides.push({ name, qty: Number(mm[2]), price: Number(mm[3]) });
-    }
-    if (!any) break;
-    for (const it of hides) {
-      console.log(`Продажа кож: «${it.name}» x${it.qty} по ${it.price} дин - продаю всё.`);
-      if (!(await clickByLinkPrefix(page, it.name.slice(0, 24)))) {
-        console.log(`Продажа кож: ссылка «${it.name}» не нажалась.`);
-        continue;
+  // 46 выделанных кож в сумке 28.09.2026, продаются по одной с подтверждением - проходов нужно много.
+  for (let pass = 1; pass <= 150; pass += 1) {
+    let found = null;
+    for (let cpage = 1; cpage <= 14; cpage += 1) {
+      if (cpage > 1) {
+        const u = new URL(baseUrl);
+        u.searchParams.set('cpage', String(cpage));
+        await page.goto(u.href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        await pause(page, 400, 800);
+      } else if (pass > 1) {
+        await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        await pause(page, 400, 800);
       }
-      let n = 0;
-      for (let k = 0; k < 120; k += 1) {
-        const t = await getBodyText(page);
-        if (/товар отсутствует/i.test(t)) break;
-        if (!/Продажа успешна/i.test(t)) {
-          console.log(`Продажа кож: незнакомый ответ: ${t.replace(/\s+/g, ' ').slice(0, 160)}`);
+      const text = await getBodyText(page);
+      if (!/Инвентарь:/i.test(text)) break;
+      const rows = text.split(String.fromCharCode(10)).map((x) => x.trim());
+      const line = rows.find((x) => TANNED_HIDE_RE.test(x) && new RegExp(String.raw`-\s*\d+\s*дин`).test(x));
+      if (line) {
+        const mm = line.match(new RegExp(String.raw`^(.*?)\s*-\s*(\d+)\s*дин`));
+        found = { name: (mm ? mm[1] : line).trim(), price: mm ? Number(mm[2]) : 0, cpage };
+        break;
+      }
+    }
+    if (!found) break;
+    if (!(await clickByLinkPrefix(page, found.name.slice(0, 24)))) {
+      console.log(`Продажа кож: ссылка «${found.name}» не нажалась - выхожу.`);
+      break;
+    }
+    let n = 0;
+    for (let k = 0; k < 60; k += 1) {
+      let t = await getBodyText(page);
+      // Обычный магазин переспрашивает: «Вы точно хотите продать 1 шт. …? - Да - Нет» (снято живьём
+      // 28.09.2026). Лавка боевых ресурсов такого не делает, поэтому подтверждения в коде не было.
+      if (/Вы точно хотите продать/i.test(t)) {
+        if (!(await clickLinkText(page, /^-?\s*Да$/))) {
+          console.log('Продажа кож: не нашёл «Да» в подтверждении.');
           break;
         }
-        n += 1;
-        if (!(await clickLinkText(page, /^Е[щш]е$|^Ещё$/))) break;
+        t = await getBodyText(page);
       }
-      soldTotal += n;
-      earned += n * it.price;
-      console.log(`Продажа кож: ${it.name} - продано ${n} шт.`);
-      await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      for (const re of [/^Магазин$/, /^Продать вещи$/]) await clickLinkText(page, re);
+      if (/товар отсутствует|не найдено/i.test(t)) break;
+      if (!/Продажа успешна|Вы продали/i.test(t)) {
+        if (k === 0) console.log(`Продажа кож: незнакомый ответ на «${found.name}»: ${t.replace(/\s+/g, ' ').slice(0, 160)}`);
+        break;
+      }
+      n += 1;
+      if (!(await clickLinkText(page, /^Е[щш]е$|^Ещё$/))) break;
     }
+    soldTotal += n;
+    earned += n * found.price;
+    console.log(`Продажа кож: «${found.name}» по ${found.price} дин - продано ${n} шт. (страница ${found.cpage}).`);
+    if (!n) break;
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    for (const re of [/^Магазин$/, /^Продать вещи$/]) await clickLinkText(page, re);
   }
   if (soldTotal) {
     const money = (await getBodyText(page)).match(/Деньги:\s*(\d+)/);
