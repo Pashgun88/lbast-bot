@@ -1084,6 +1084,29 @@ async function resetToQuestMenu(page, questCount) {
   }
 }
 
+// Читает строку квеста из каталога «Все квесты» (меню Q -> «Все квесты»). В каталоге у квеста с
+// кулдауном стоит «через N дн.», и это ЕДИНСТВЕННЫЙ способ узнать про такой квест заранее: в
+// «Доступные задания» он не показывается вообще, а на месте просто нет нужной ссылки. 28.09.2026
+// «Рыбацкая деревня» из-за этого ездила конём в деревню каждый проход и вставала на «Осмотреться».
+// Возвращает { found, line, daysLeft } либо null, если каталог не открылся.
+async function readQuestCatalogEntry(page, questName, questCount) {
+  const menuOk = await resetToQuestMenu(page, questCount);
+  if (!menuOk) return null;
+  const allOk = await clickByTexts(page, ['Все квесты', 'все квесты'], 'Все квесты');
+  if (!allOk) {
+    console.log('Каталог квестов: не нашёл ссылку «Все квесты»');
+    return null;
+  }
+  await pause(page, 600, 1200);
+
+  const text = await getBodyText(page);
+  const line = text.split('\n').map((l) => l.trim()).find((l) => l.includes(questName));
+  if (!line) return { found: false, line: null, daysLeft: null };
+
+  const m = line.match(/через\s+(\d+)\s*дн/i);
+  return { found: true, line, daysLeft: m ? Number(m[1]) : 0 };
+}
+
 async function clickInfoForQuest(page, questName) {
   // IMPORTANT: click the [инфо] link that is on the same line as the quest name.
   // Some pages / encodings may display it as mojibake ("èíôî"), so we support both.
@@ -1870,6 +1893,9 @@ async function runDailyQuests(page, stats) {
           reserveMinutes,
           hpCurrent: typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null,
           isInMenu: (name) => isQuestInMenu(listedQuests, name),
+          // Каталожный гейт (`catalogGate` в реестре): для квеста, которого нет в «Доступные
+          // задания», кулдаун виден только строкой «через N дн.» в каталоге «Все квесты».
+          catalogEntry: (name) => readQuestCatalogEntry(page, name, questCount),
           throwIfPaused: throwIfPausedByManager,
           // Нужен шагу @sapper в «Жертвоприношении»: мини-игра 6x6 решается здесь, в раннере
           // своего решателя нет.

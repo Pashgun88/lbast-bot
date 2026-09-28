@@ -61,6 +61,11 @@ const GUIDE_QUESTS = [
     // каталоге «Все квесты», и всегда с кулдауном. Гейт по меню поставил бы его в зависимость от
     // непроверенного факта и мог закрыть путь навсегда, поэтому пока единственный гейт -- период.
     inQMenu: false,
+    // Единственный внешний признак готовности -- строка в каталоге «Все квесты» («через N дн.»):
+    // в «Доступные задания» квеста нет, а на месте просто не появляется ссылка «Осмотреться»,
+    // и отличить кулдаун от неверного маршрута по экрану нельзя (28.09.2026 конь привозил в
+    // деревню, а шага не было).
+    catalogGate: true,
     minReserveMinutes: 15,
     minHp: 1600,
   },
@@ -97,7 +102,7 @@ function clearProgress(q) {
 
 // Возвращает true, если что-то делали (начали/продолжили квест).
 async function runGuideQuestIfDue(page, q, deps = {}) {
-  const { isInMenu, reserveMinutes, hpCurrent } = deps;
+  const { isInMenu, reserveMinutes, hpCurrent, catalogEntry } = deps;
   const st = loadState();
   const qs = st[q.name] || {};
   const now = Date.now();
@@ -126,6 +131,31 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
     if (q.minHp && (typeof hpCurrent !== 'number' || hpCurrent < q.minHp)) {
       console.log(`${q.name}: пропускаю (нужно >=${q.minHp} HP, есть=${hpCurrent ?? 'n/a'})`);
       return false;
+    }
+
+    // Каталожный гейт: спрашиваем игру, а не свой счётчик. Открыть каталог -- две загрузки
+    // страницы, поэтому делаем это после дешёвых проверок и запоминаем срок, чтобы не лазить
+    // туда каждый проход.
+    if (q.catalogGate) {
+      if (qs.catalogDueAt && now < qs.catalogDueAt) {
+        console.log(`${q.name}: по каталогу ждём до ${new Date(qs.catalogDueAt).toLocaleString('ru-RU')}`);
+        return false;
+      }
+      if (typeof catalogEntry === 'function') {
+        const entry = await catalogEntry(q.name);
+        if (entry && entry.found && entry.daysLeft > 0) {
+          qs.catalogDueAt = now + entry.daysLeft * 86400000;
+          st[q.name] = qs;
+          saveState(st);
+          console.log(`${q.name}: в каталоге «${entry.line}» -> ещё ${entry.daysLeft} дн., не иду.`);
+          return false;
+        }
+        if (entry && entry.found) {
+          console.log(`${q.name}: в каталоге без кулдауна («${entry.line}») -> иду по маршруту.`);
+        }
+        if (entry && !entry.found) console.log(`${q.name}: строки в каталоге нет -- гейт не применяю.`);
+        if (!entry) console.log(`${q.name}: каталог не открылся -- гейт не применяю.`);
+      }
     }
 
     clearProgress(q);
@@ -189,6 +219,7 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
 
   qs.lastDone = Date.now();
   delete qs.part;
+  delete qs.catalogDueAt;
   st[q.name] = qs;
   saveState(st);
   clearProgress(q);
