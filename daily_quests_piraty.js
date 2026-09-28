@@ -6776,7 +6776,26 @@ async function runSchoolTempleQuest(page) {
 // удалось: взятое задание держит слот и блокирует Штольни, Харчевню и Рыбный ресторан.
 // ВАЖНО: кликаем "отказаться" ТОЛЬКО в строке "Текущее задание" -- на странице персонажа есть
 // другие похожие ссылки, и отказ не в той строке отменит не то, что нужно.
-async function declineCurrentTask(page, label) {
+// Что висит в слоте. Башня Ордо этого не показывает: на попытку взять второе задание она отвечает
+// одной строкой «У вас уже есть задание» (28.09.2026), а имя задания видно только в анкете.
+async function readCurrentTaskLine(page) {
+  try {
+    await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 600, 1200);
+    const t = String(await getBodyText(page)).replace(/\s+/g, ' ');
+    const at = t.search(/Текущее задание/i);
+    return at >= 0 ? t.slice(at, at + 140) : null;
+  } catch (e) {
+    console.log(`Не удалось прочитать "Текущее задание" в анкете: ${e.message}`);
+    return null;
+  }
+}
+
+// expect -- подстрока имени СВОЕГО задания. Без неё снимается то, что висит, каким бы оно ни было:
+// так и нужно школе преторианцев (её задание не завершается само). Ордо обязано передавать expect:
+// 28.09.2026 оно снимало задание РЕСТОРАНА, потому что слот держал ресторан, а Ордо этого не
+// проверяло -- в итоге ресторан оставался с недоигранной сценой, а Ордо всё равно не выполнялось.
+async function declineCurrentTask(page, label, expect = null) {
   try {
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await pause(page, 800, 1600);
@@ -6791,6 +6810,16 @@ async function declineCurrentTask(page, label) {
   }).catch((e) => {
     console.log(`${label}: не удалось открыть анкету (${e.message})`);
   });
+
+  if (expect) {
+    const line = String(await getBodyText(page)).replace(/\s+/g, ' ');
+    const at = line.search(/Текущее задание/i);
+    const current = at >= 0 ? line.slice(at, at + 140) : '';
+    if (!current.toLowerCase().includes(String(expect).toLowerCase())) {
+      console.log(`${label}: в анкете висит не наше задание -- ${snapshotText(current || line, 140)}; не отказываюсь`);
+      return false;
+    }
+  }
 
   const declined = await clickLinkNextToQuest(
     page,
@@ -6945,17 +6974,25 @@ async function progressOrdoQuest(page, q) {
   // не было (экран: обычная деревня без "Идти за скальную гряду"). Поэтому сверяем строку
   // "Текущее задание" с тем, что мы собирались взять.
   if (/у\s*вас\s*уже\s*есть\s*задание/i.test(takeText)) {
+    // Экран башни -- это одна строка «У вас уже есть задание», имени в нём нет (28.09.2026),
+    // поэтому идём смотреть анкету. Пока не убедились, что висит именно НАШЕ задание, никуда не
+    // едем: иначе конь увозит "выполнять" то, чего нам не выдали, миссии на месте нет, и всё
+    // кончается отказом от чужого задания.
     const at = takeText.search(/Текущее задание/i);
-    const current = at >= 0 ? takeText.slice(at, at + 120) : '';
-    if (current && !current.toLowerCase().includes(q.take.toLowerCase())) {
-      console.log(`${q.label}: слот занят другим заданием -- ${snapshotText(current, 120)}; в этот раз не еду`);
-      delayOrdoQuest(q.key, 10, 'слот занят другим заданием Ордо');
-      // 'skip' -- мы ничего не потратили и никуда не поехали, поэтому цикл может сразу взяться за
-      // второе задание Ордо (скорее всего именно оно и висит).
+    let current = at >= 0 ? takeText.slice(at, at + 120) : '';
+    if (!current) current = (await readCurrentTaskLine(page)) || '';
+
+    if (!current) {
+      console.log(`${q.label}: висит какое-то задание, а какое -- не видно ни в башне, ни в анкете; в этот раз не еду`);
+      delayOrdoQuest(q.key, 10, 'не удалось определить текущее задание');
       return 'skip';
     }
-    if (!current) {
-      console.log(`${q.label}: игра ответила "уже есть задание", но строку "Текущее задание" не нашёл: ${snapshotText(takeText, 300)}`);
+    if (!current.toLowerCase().includes(q.take.toLowerCase())) {
+      console.log(`${q.label}: слот занят другим заданием -- ${snapshotText(current, 140)}; в этот раз не еду`);
+      delayOrdoQuest(q.key, 10, 'слот занят другим заданием');
+      // 'skip' -- мы ничего не потратили и никуда не поехали, поэтому цикл может сразу взяться за
+      // второе задание Ордо (если висит как раз оно).
+      return 'skip';
     }
   }
 
@@ -7017,7 +7054,7 @@ async function progressOrdoQuest(page, q) {
     // "откажитесь от текущего в анкете", а Гретхис не выдавала квест (в ресторане пропадал
     // [Журнал наград]).
     console.log(`${q.label}: до боя не дошёл. Экран: ${snapshotText(await getBodyText(page), 400)}`);
-    await declineCurrentTask(page, q.label);
+    await declineCurrentTask(page, q.label, q.take);
     delayOrdoQuest(q.key, 60, 'до боя не дошёл');
     return false;
   }
