@@ -274,16 +274,24 @@ async function walkBranch(page, branch, deps) {
 
     const links = await linksOf(page);
 
-    // Ожидаемый шаг ветки важнее любых «Далее»: на развилке видны оба.
-    if (i < branch.steps.length) {
-      const want = findLink(links, branch.steps[i]);
-      if (want) {
-        console.log(`Ресторан[${branch.n}]: шаг ${i + 1}/${branch.steps.length} «${want.t}»`);
-        await click(page, want.h);
-        i += 1;
-        fillerStreak = 0;
-        continue;
+    // Ищем БЛИЖАЙШИЙ из оставшихся шагов, а не только текущий: сцена помнит экран на сервере, и
+    // после сорванного прогона заход открывается там, где мы остановились. 28.09.2026 из-за этого
+    // проходчик искал «опушка леса», стоя уже в лесу на грибном экране, и падал -- хотя нужный
+    // шаг был прямо на экране. Уже пройденные шаги пропускаются сами.
+    let hit = -1;
+    for (let j = i; j < branch.steps.length; j++) {
+      if (findLink(links, branch.steps[j])) { hit = j; break; }
+    }
+    if (hit >= 0) {
+      const want = findLink(links, branch.steps[hit]);
+      if (hit > i) {
+        console.log(`Ресторан[${branch.n}]: сцена уже была пройдена до шага ${hit + 1}, пропускаю ${hit - i}`);
       }
+      console.log(`Ресторан[${branch.n}]: шаг ${hit + 1}/${branch.steps.length} «${want.t}»`);
+      await click(page, want.h);
+      i = hit + 1;
+      fillerStreak = 0;
+      continue;
     }
 
     // "Скоро вернусь" -- выход из диалога выдачи задания; после него надо снова зайти в ресторан
