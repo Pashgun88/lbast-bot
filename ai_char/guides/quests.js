@@ -353,6 +353,14 @@ async function runGuideQuestIfDue(page, q) {
         console.log(`${q.name}: срыв на шаге ${r.index} второй раз подряд - стираю прогресс, следующий заход начну с начала маршрута (пауза ${pauseMin} мин).`);
         return true;
       }
+      // 28.09.2026: сорвавшийся квест держал слот все три часа паузы, и из-за него стояли ВСЕ
+      // остальные - в логе боёв был один фарм, Паша это и заметил. Своё задание при срыве отпускаем
+      // сразу: маршрут всё равно начнётся заново, а слот нужен другим.
+      if (q.needsSlot || q.takesSlot) {
+        const { dropAssignmentByOrder, forgetSlotOwner } = require('../lib/task_slot');
+        await dropAssignmentByOrder(page, `${q.name}: маршрут встал на шаге ${r.index}, слот не держим`).catch(() => false);
+        forgetSlotOwner();
+      }
       qs.part = p;
       qs.suppressedUntil = Date.now() + pauseMin * 60000;
       st[q.name] = qs;
