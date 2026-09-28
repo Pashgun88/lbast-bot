@@ -839,7 +839,10 @@ async function loginIfNeeded(page) {
       // Рыбный ресторан) -> необязательные бои с HP-гейтом (Рыбий глаз) -> фарм-филлер
       // (Подвалы) -> Q-меню (Штольни и т.п.) ниже. Каждый шаг - один вызов runCycleStep,
       // который сам ловит ошибку, логирует HP и уходит в waitForHeal при падении в 0.
-      r = await runCycleStep(page, 'assassin quest step', () => runAssassinGuildQuestsIfAvailable(page));
+      // Паша, 28.09.2026: «квесты ассасинов мы не делаем больше». Шаг выключен целиком - он ещё и
+      // занимал единственный слот задания, из-за чего стояли квесты по гайду.
+      const ASSASSIN_QUESTS_ENABLED = false;
+      r = await runCycleStep(page, 'assassin quest step', () => (ASSASSIN_QUESTS_ENABLED ? runAssassinGuildQuestsIfAvailable(page) : Promise.resolve(false)));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
