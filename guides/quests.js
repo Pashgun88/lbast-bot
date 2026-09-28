@@ -72,14 +72,12 @@ const GUIDE_QUESTS = [
     files: ['zhertvoprinoshenie1.steps', 'zhertvoprinoshenie2.steps', 'zhertvoprinoshenie3.steps'],
     // Каждый день -- отдельные календарные сутки, за один сеанс цепочку не пройти.
     partsOnSeparateDays: true,
-    // Период точно неизвестен: 17.09.2026 квест стоял в каталоге без кулдауна, 23.09 -- «через
-    // 5 дн.». Отсюда примерно 10 суток. Если ошибся, это видно в логе: попытка упрётся в то, что
-    // квест не выдают, и уйдёт в бэкофф.
-    periodDays: 10,
-    // Показывается в меню Q от случая к случаю (как Варьете) -- гейт по меню не ставим.
-    inQMenu: false,
-    // Дни 1-2 без боёв, но ходьбы много; бой только в третий день, и перед ним в маршруте @heal.
-    minReserveMinutes: 15,
+    // Периода нет: делаем, как только квест появился в меню Q (Паша, 28.09.2026). Гейт -- само
+    // наличие в меню, поэтому inQMenu не выключаем, а periodDays=0 снимает проверку по времени.
+    periodDays: 0,
+    // Пороги только на третий день -- там единственный бой (Паша, 28.09.2026: «порог только на
+    // день 3 - 10 минут и 1200 хп»). Первые два дня -- разговоры и ходьба, их не гейтим.
+    partGates: { 3: { minReserveMinutes: 10, minHp: 1200 } },
   },
 ];
 
@@ -141,6 +139,26 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
   }
 
   for (let p = qs.part; p < q.files.length; p++) {
+    // Порог отдельной части: у многодневных цепочек бой бывает только в одном дне, и держать
+    // из-за него гейт на всей цепочке значит зря не начинать первые дни.
+    const gate = (q.partGates || {})[p + 1];
+    if (gate) {
+      if (gate.minReserveMinutes && (typeof reserveMinutes !== 'number' || reserveMinutes < gate.minReserveMinutes)) {
+        console.log(`${q.name}: часть ${p + 1} ждёт резерв >=${gate.minReserveMinutes} (есть=${reserveMinutes ?? 'n/a'})`);
+        qs.part = p;
+        st[q.name] = qs;
+        saveState(st);
+        return false;
+      }
+      if (gate.minHp && (typeof hpCurrent !== 'number' || hpCurrent < gate.minHp)) {
+        console.log(`${q.name}: часть ${p + 1} ждёт HP >=${gate.minHp} (есть=${hpCurrent ?? 'n/a'})`);
+        qs.part = p;
+        st[q.name] = qs;
+        saveState(st);
+        return false;
+      }
+    }
+
     const file = path.join(__dirname, q.files[p]);
     console.log(`${q.name}: часть ${p + 1}/${q.files.length} (${q.files[p]})`);
     const r = await runGuide(page, file, undefined, deps);
