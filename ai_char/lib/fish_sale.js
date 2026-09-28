@@ -168,6 +168,8 @@ async function sellFriedFishIfDue(page) {
 const TANNED_HIDE_RE = /выделанн[аоы][яе]\s+кожа/i;
 const HIDE_SALE_INTERVAL_MS = 60 * 60 * 1000;
 let lastHideSaleAt = 0;
+// Сбросить таймер вручную: нужен, когда правишь маршрут и хочешь увидеть продажу сразу.
+if (process.env.AI_HIDE_SALE_NOW === '1') lastHideSaleAt = 0;
 
 async function sellHidesInGeneralShop(page) {
   if (Date.now() - lastHideSaleAt < HIDE_SALE_INTERVAL_MS) return false;
@@ -175,7 +177,9 @@ async function sellHidesInGeneralShop(page) {
   await page.goto(STONEGUARD_FASTWAY, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(6000);
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  for (const [re, label] of [[/^Магазин$/, 'Магазин'], [/^Продать$/, 'Продать']]) {
+  // Паша, 28.09.2026: «стоун - магазин - продать вещи. Там кожи продаются». Ссылка называется
+  // «Продать вещи», а не «Продать» - у меня это уже было записано в уроках, и я всё равно ошибся.
+  for (const [re, label] of [[/^Магазин$/, 'Магазин'], [/^Продать вещи$/, 'Продать вещи']]) {
     if (!(await clickLinkText(page, re))) {
       console.log(`Продажа кож: нет ссылки «${label}» в обычном магазине - выхожу.`);
       return false;
@@ -225,7 +229,7 @@ async function sellHidesInGeneralShop(page) {
       earned += n * it.price;
       console.log(`Продажа кож: ${it.name} - продано ${n} шт.`);
       await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      for (const re of [/^Магазин$/, /^Продать$/]) await clickLinkText(page, re);
+      for (const re of [/^Магазин$/, /^Продать вещи$/]) await clickLinkText(page, re);
     }
   }
   if (soldTotal) {
