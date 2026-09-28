@@ -464,7 +464,15 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   } catch (e) {
     console.log('FAILED', e.message);
   }
-  if (from >= steps.length) result = { status: 'done', index: steps.length };
+  // 28.09.2026: раньше здесь стояло «прогресс за концом файла - значит пройдено», и «Вспышки
+  // прошлого» получили ложную отметку о сдаче: заход упал уже ЗА последним шагом, прогресс дошёл до
+  // конца, а квест остался в меню. Победу теперь объявляет только реально дошедший до конца цикл
+  // шагов; прогресс за концом - это сбитый счётчик, стираем и идём с начала.
+  if (from >= steps.length && result.status !== 'done') {
+    console.log(`${name}: прогресс (${from}) за концом маршрута (${steps.length}) - счётчик сбит, начну заново.`);
+    try { fs.unlinkSync(PROG); } catch { /* уже нет */ }
+    result = { status: 'mismatch', index: 0 };
+  }
   return result;
 }
 
