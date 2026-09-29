@@ -109,12 +109,20 @@ async function leaveFishingResultToGame(page) {
 // ===================================================================================
 const HOUSE_ID = 34309;
 const KITCHEN_URL = `http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}&flag=kuchnya`;
-// Порог резерва для кухни и дубления. Был 15, стал 25. Причина (24.09.2026): дубление съедает
-// 15 резерва за пару кож, и после него оставалось 0-1, а квестам нужно не меньше 10 - «Еда для
-// рыбака», «Грабим корованы» и прочие весь день писали «need >=10 reserve minutes, have=1».
-// Паша тогда прислал список открытых квестов. Правило простое и старое: сперва квесты, потом
-// хозяйство, поэтому кухня и дубление работают только с запасом, который квесты не обделит.
-const FRY_MIN_RESERVE = Number(process.env.AI_FRY_MIN_RESERVE || 25);
+// Сколько резерва бережём для квестов (24.09.2026: «Еда для рыбака», «Грабим корованы» и прочие
+// весь день писали «need >=10 reserve minutes, have=1»). Сперва квесты, потом хозяйство.
+//
+// 29.09.2026, Паша прислал снимок: стоит в Кулаке с HP 282/460 и резервом 30 - «в таком состоянии
+// должна рыба жариться и шкуры дубиться». Раньше здесь стоял ОДИН порог в 25 и сравнивался с
+// остатком ДО траты. Он съедал сам себя: резерв 30 -> одна рыба (-10) -> 20, это ниже 25, и всё
+// вставало. Дубление (15) не запускалось вообще никогда. Теперь правило честное: тратим всё,
+// что выше запаса квестов, и сравниваем с остатком ПОСЛЕ траты: резерв 30 = две рыбы до 10.
+const QUEST_RESERVE_FLOOR = Number(process.env.AI_QUEST_RESERVE_FLOOR || 10);
+const FRY_RESERVE_COST = 10;
+// Цена пары кож дублирует lib/tanning.js намеренно: модули связаны по кругу через module.js,
+// и импорт числа приходит undefined -> условие становится NaN и дубление снова не запускается.
+const TAN_RESERVE_COST = 15;
+const FRY_MIN_RESERVE = QUEST_RESERVE_FLOOR + FRY_RESERVE_COST;
 
 // S.kitchenOutOfFish: объявлено в lib/state.js (всё изменяемое состояние - там).
 
@@ -163,10 +171,11 @@ async function fryFishWhileHealing(page, stats) {
         break;
       }
     }
-    // 22.09.2026, Паша: дубить «по тому же принципу», рыба в приоритете -> кожи только без рыбы.
-    if (S.kitchenOutOfFish && left >= FRY_MIN_RESERVE) {
+    // 22.09.2026, Паша: дубить «по тому же принципу», рыба в приоритете - поэтому дубим тем, что
+    // осталось после жарки. Пара кож стоит 15, значит нужно иметь запас квестов + 15.
+    if (left >= QUEST_RESERVE_FLOOR + TAN_RESERVE_COST) {
       await page.goto(`http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      const leftAfter = await tanHidesInHouse(page, left, FRY_MIN_RESERVE);
+      const leftAfter = await tanHidesInHouse(page, left, QUEST_RESERVE_FLOOR + TAN_RESERVE_COST);
       if (leftAfter < left) fried = true;
     }
   } catch (e) {
