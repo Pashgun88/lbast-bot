@@ -156,28 +156,8 @@ async function withHangGuard(page, label, ms, fn) {
 // девять часов вхолостую, ни фарма, ни сна, ни оповещения. Вкладку пересоздать нельзя, если
 // закрыт весь браузер, - значит нужен новый процесс. Перезапускаем себя тем же логом (append) и
 // выходим; Паше уходит строка в Telegram.
-const BROWSER_GONE_RE = /(context or browser has been closed|Browser has been closed|Target closed|browserContext\.newPage)/i;
-let restarting = false;
-function restartSelfBrowserGone(reason) {
-  if (restarting) return;
-  restarting = true;
-  console.log(`Браузер закрыт (${reason}) - вкладкой не спасти, перезапускаю драйвер.`);
-  try {
-    const { spawn } = require('child_process');
-    const fs = require('fs');
-    const out = fs.openSync(path.join(__dirname, 'driver_live.log'), 'a');
-    const err = fs.openSync(path.join(__dirname, 'driver_err.log'), 'a');
-    fs.writeSync(out, `
-===== RESTART (сам, браузер закрыт) ${new Date().toLocaleString('ru-RU')}
-`);
-    spawn(process.execPath, [__filename], {
-      cwd: __dirname, detached: true, stdio: ['ignore', out, err],
-    }).unref();
-  } catch (e) {
-    console.log('Самоперезапуск не удался:', e.message);
-  }
-  setTimeout(() => process.exit(1), 3000);
-}
+// Сам перезапуск живёт в lib/self_restart.js: с 29.09.2026 им пользуется и монитор чата.
+const { BROWSER_GONE_RE, restartSelfBrowserGone } = require('./lib/self_restart');
 
 const HANG = Symbol('hang');
 

@@ -10,6 +10,7 @@ module.exports = {
 };
 
 const path = require('path');
+const { BROWSER_GONE_RE, restartSelfBrowserGone } = require('./self_restart');
 const fs = require('fs');
 const { AI_SELF_NICK_RE } = require('./state');
 const { getBodyText, pause } = require('./core');
@@ -395,6 +396,10 @@ async function runChatMonitorCycle(chatPage, state) {
     }
     const text = await getRecentChatMessages(chatPage, room).catch((e) => {
       console.log(`Chat monitor: ошибка чтения комнаты "${name}" (room=${room}):`, e.message);
+      // 29.09.2026: браузер закрылся, главный цикл замолчал, а чат двадцать минут без толку писал в
+      // лог одно и то же. Проверка была только в главном цикле - значит второй сторож нужен здесь: чат
+      // оказался единственным живым свидетелем поломки.
+      if (BROWSER_GONE_RE.test(String(e.message || ''))) restartSelfBrowserGone(`монитор чата: ${e.message}`);
       return null;
     });
     didAnyFetch = true;
