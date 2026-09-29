@@ -329,6 +329,24 @@ async function runGuideQuestIfDue(page, q) {
       console.log(`${q.name}: бой проигран на шаге ${r.index} - на сегодня всё, завтра заново.`);
       return true;
     }
+    if (r.status === 'stale') {
+      // Маршрут не совпадает с состоянием квеста: долбиться бессмысленно, нужна перезапись
+      // (guides/explore.js). Слот отдаём сразу - из-за такого квеста 29.09.2026 стояла вся очередь.
+      delete qs.part;
+      qs.failCount = 0;
+      qs.staleRoute = true;
+      qs.suppressedUntil = Date.now() + 12 * 60 * 60000;
+      st[q.name] = qs;
+      saveState(st);
+      clearProgress(q);
+      if (q.needsSlot || q.takesSlot) {
+        const { dropAssignmentByOrder, forgetSlotOwner } = require('../lib/task_slot');
+        await dropAssignmentByOrder(page, `${q.name}: маршрут устарел, слот нужен другим`, { quiet: true }).catch(() => false);
+        forgetSlotOwner();
+      }
+      console.log(`КВЕСТ ЗАСТРЯЛ: ${q.name} - игра говорит «делать уже нечего» на шаге ${r.index}: квест ушёл дальше записанного маршрута, нужна перезапись. Слот отпустил, пауза 12 ч.`);
+      return true;
+    }
     if (r.status === 'mismatch' && SLOT_BUSY_TEXT_RE.test(await m.getBodyText(page).catch(() => ''))) {
       // Слот заняли между проверкой и стартом: начать заново позже, а не ждать человека 3 часа.
       delete qs.part;
@@ -377,17 +395,26 @@ async function runGuideQuestIfDue(page, q) {
         const { dropAssignmentByOrder, forgetSlotOwner } = require('../lib/task_slot');
         // Сюжетную миссию отказ не тронет (проверка внутри dropAssignmentByOrder) - иначе теряется
         // весь пройденный квест, как чуть не вышло с «Вспышками прошлого» 28.09.2026.
-        await dropAssignmentByOrder(page, `${q.name}: маршрут встал на шаге ${r.index}, слот не держим`).catch(() => false);
+        await dropAssignmentByOrder(page, `${q.name}: маршрут встал на шаге ${r.index}, слот не держим`, { quiet: true }).catch(() => false);
         forgetSlotOwner();
       }
       qs.part = p;
       qs.suppressedUntil = Date.now() + pauseMin * 60000;
       st[q.name] = qs;
       saveState(st);
-      console.log(`${q.name}: маршрут остановился (${r.status}) в части ${p + 1} на шаге ${r.index}; пауза ${pauseMin} мин.`);
+      // 29.09.2026, Паша: «Я же просил не спамить». Одиночный срыв маршрута - рабочая мелочь: он сам
+      // чинится следующим заходом и пишется только в лог. В Telegram идёт лишь ошибка кода и квест,
+      // застрявший по-настоящему - четвёртый срыв на одном и том же шаге.
+      qs.stuckCount = sameStep ? (qs.stuckCount || 0) + 1 : 1;
+      st[q.name] = qs;
+      saveState(st);
+      const loud = r.status === 'error' || qs.stuckCount >= 4;
+      console.log(`${loud ? 'КВЕСТ ЗАСТРЯЛ: ' : ''}${q.name}: маршрут остановился (${r.status}) в части ${p + 1} на шаге ${r.index}, подряд ${qs.stuckCount}; пауза ${pauseMin} мин.`);
       return true;
     }
     qs.part = p + 1;
+    qs.failCount = 0;
+    qs.stuckCount = 0;
     if (q.dayGatedParts) qs.partDoneDay = localDayKey(Date.now());
     st[q.name] = qs;
     saveState(st);

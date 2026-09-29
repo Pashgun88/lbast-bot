@@ -101,7 +101,7 @@ function consumeDropOrder() {
 
 // Сам отказ + проверка, что задание действительно ушло. Без проверки верить нельзя: экран
 // mod=dropquest выполняет действие сразу и ничего не подтверждает.
-async function dropAssignmentByOrder(page, reason, { allowStory = false } = {}) {
+async function dropAssignmentByOrder(page, reason, { allowStory = false, quiet = false } = {}) {
   const before = await readSlot(page);
   if (before.busy && !allowStory && STORY_MISSION_RE.test(String(before.line || ''))) {
     console.log(`Отказ от задания НЕ делаю: в анкете «${before.line}» - это сюжетная миссия, её отказ выбрасывает весь пройденный квест.`);
@@ -123,7 +123,9 @@ async function dropAssignmentByOrder(page, reason, { allowStory = false } = {}) 
     return false;
   }
   console.log(`Отказ от задания выполнен: было «${before.line}», причина: ${reason}.`);
-  await sendTelegram(`Отказался от задания «${before.line}». Причина: ${reason}.`).catch(() => {});
+  // 29.09.2026, Паша просил не спамить: отказ по служебной нужде (освободить слот под другой квест)
+  // остаётся в логе. В Telegram идёт только то, что не мы запланировали.
+  if (!quiet) await sendTelegram(`Отказался от задания «${before.line}». Причина: ${reason}.`).catch(() => {});
   forgetSlotOwner();
   return true;
 }
@@ -167,13 +169,13 @@ async function ensureSlotFreeFor(page, questName) {
   // каждый день, а маршрут по гайду из-за него стоит сутки.
   const known = recognizeTask(slot.line);
   if (known && known.droppable) {
-    return dropAssignmentByOrder(page, `${known.label} держит слот, а он нужен «${questName}» - задание короткое и берётся заново`);
+    return dropAssignmentByOrder(page, `${known.label} держит слот, а он нужен «${questName}» - задание короткое и берётся заново`, { quiet: true });
   }
 
   // 3) Наше же задание, которое давно не двигается, - это и есть «застрявшее» из правила Паши.
   const idleMin = owner ? Math.round((Date.now() - owner.at) / 60000) : null;
   if (owner && idleMin >= STUCK_MINUTES && !questInProgress(owner.label)) {
-    return dropAssignmentByOrder(page, `${owner.label} держит слот ${idleMin} мин и не двигается, слот нужен «${questName}»`);
+    return dropAssignmentByOrder(page, `${owner.label} держит слот ${idleMin} мин и не двигается, слот нужен «${questName}»`, { quiet: true });
   }
 
   // 4) Всё остальное - только доклад. Чужое и своё в работе не снимаем.

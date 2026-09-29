@@ -1,6 +1,6 @@
 // Guide runner. CLI: node guide_run.js <steps.txt> [fromIndex]
 // Library: const { runGuide } = require('./guide_run'); await runGuide(page, file, from?)
-//   -> { status: 'done'|'stop'|'mismatch'|'lost'|'nofight'|'error', index }
+//   -> { status: 'done'|'stop'|'mismatch'|'stale'|'lost'|'nofight'|'error', index }
 //   opts.quietDone: не писать письмо Tsunami об успешном проходе (ежедневные квесты - только сбои)
 // Step file lines:
 //   # comment            ignored
@@ -59,7 +59,8 @@ async function readHpInNewTab(page) {
     await temp.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     const t = await temp.locator('body').innerText().catch(() => '');
     const mm = t.match(new RegExp(String.raw`\((-?\d+)\s*/\s*(\d+)\)`));
-    return mm ? { hp: Number(mm[1]), max: Number(mm[2]) } : null;
+    const rr = t.match(/Лечение:\s*(\d+)\s*hp/i);
+    return mm ? { hp: Number(mm[1]), max: Number(mm[2]), rate: rr ? Number(rr[1]) : null } : null;
   } catch (e) {
     return null;
   } finally {
@@ -83,6 +84,28 @@ async function healInPlace(page, frac) {
     const rate = s.rate > 0 ? s.rate : 14;
     const ms = Math.ceil(((target - s.hp) / rate) * 60000) + 10000;
     console.log(`HP ${s.hp}/${s.max}, need ${target}, ${rate}/min -> wait ${Math.round(ms / 1000)}s`);
+    await sleep(ms);
+  }
+  return null;
+}
+// Экран сцены или карта: на любой локации есть «Кто здесь?», в сцене его нет.
+async function inScene(page) {
+  const t = await m.getBodyText(page).catch(() => '');
+  return !!t && !/Кто здесь\?/i.test(t);
+}
+// Лечение ВНУТРИ сцены: на главной вкладке НИЧЕГО не открываем - ни анкеты, ни location.php.
+// 29.09.2026, «Магическая башня»: после прыжка HP было -1, @heal ушёл на анкету и вернулся
+// на location.php - а в башне нет «Продолжить квест», и персонаж оказался снаружи. Следующий шаг
+// «Подойти ближе» честно сказал mismatch. То же самое было у сапёра - лечим только отдельной вкладкой.
+async function healQuietly(page, frac) {
+  for (let i = 0; i < 40; i++) {
+    const s = await readHpInNewTab(page);
+    if (!s) { await sleep(60000); continue; }
+    const target = Math.ceil(s.max * frac);
+    if (s.hp >= target) { console.log(`HP ${s.hp}/${s.max} >= ${target} (лечился, не покидая сцену)`); return s; }
+    const rate = s.rate > 0 ? s.rate : 14;
+    const ms = Math.ceil(((target - s.hp) / rate) * 60000) + 10000;
+    console.log(`HP ${s.hp}/${s.max}, нужно ${target}, ${rate}/мин -> жду ${Math.round(ms / 1000)}с в сцене`);
     await sleep(ms);
   }
   return null;
@@ -382,6 +405,15 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         const frac = Number(step.split(/\s+/)[1] || HP_GATE);
         // При висящем бое HP не восстанавливается: 19.09 «Ожерелье» ~20 мин ждало лечения перед
         // вторым налётчиком. Бой уже на экране - лечение пропускаем.
+        // В сцене ничего не трогаем: любой переход её закроет (башня, 29.09.2026).
+        if (await inScene(page)) {
+          const ts = await m.getBodyText(page).catch(() => '');
+          if (/Ударить/.test(ts) || /В бой/.test(ts)) {
+            console.log('@heal skipped: fight pending, HP does not regenerate');
+          } else {
+            await healQuietly(page, frac);
+          }
+        } else {
         await backToScene(page);
         const lh = await links(page);
         if (lh.some((x) => /^(В бой!?|Принять бой!?)$/i.test(x.t)) || /Ударить/.test(await m.getBodyText(page))) {
@@ -389,6 +421,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         } else {
           await healInPlace(page, frac);
           await backToScene(page);
+        }
         }
       } else if (step.startsWith('@stop')) {
         await dump(page, 'STOP');
@@ -475,6 +508,16 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         }
         if (!hit) {
           if (optional) { console.log('optional, skipped'); fs.writeFileSync(PROG, String(i + 1)); continue; }
+          // Игра ответила «Здесь вам делать уже нечего, загляните в дневник» - это не поломка, а знак, что
+          // квест ушёл дальше записанного маршрута. 29.09.2026 «Унесенные ветром» сам запустился ночью,
+          // кузница была уже пройдена - и маршрут каждые 15 минут бился в одну и ту же стену, держа
+          // слот задания и не пуская остальные квесты. Такой маршрут надо перезаписывать, а не повторять.
+          if (/делать уже нечего/i.test(await m.getBodyText(page).catch(() => ''))) {
+            console.log(`>>> СЦЕНА ПРОЙДЕНА РАНЬШЕ: игра говорит «делать уже нечего» на шаге ${i} «${want}» - маршрут устарел.`);
+            fs.writeFileSync(PROG, '0');
+            result = { status: 'stale', index: i };
+            break;
+          }
           console.log('>>> MISMATCH, stopping');
           if (process.env.MISMATCH_LETTERS === '1') await notify(page, `${name}: шаг ${i} «${want}» не найден. На экране: ${l.map((x) => x.t).filter((x) => !/^(Обновить|Чат|В игру|Aмулет|Амулет|Конь|Карта|Форум|Кланы|ЖГ|Галерея|Кто здесь\?|Выход|Размер текста)$/.test(x)).slice(0, 12).join(' / ')}. Стою.`);
           fs.writeFileSync(PROG, String(i));
