@@ -410,6 +410,9 @@ function restoreDailyQuestState() {
 
   if (typeof s.galleryQuestDone === 'boolean') S.galleryQuestDone = s.galleryQuestDone;
 
+  if (Array.isArray(s.lastQMenuNames)) S.lastQMenuNames = s.lastQMenuNames;
+  if (Number.isFinite(s.lastQMenuAt)) S.lastQMenuAt = s.lastQMenuAt;
+
   if (typeof s.demonLakeDayKey === 'string') S.demonLakeDayKey = s.demonLakeDayKey;
   if (typeof s.demonLakeDoneToday === 'boolean') S.demonLakeDoneToday = s.demonLakeDoneToday;
 
@@ -463,6 +466,9 @@ function persistDailyQuestState() {
     fishRestaurantJournalOpened: S.fishRestaurantJournalOpened, fishRestaurantDayKey: S.fishRestaurantDayKey, fishRestaurantDoneToday: S.fishRestaurantDoneToday, fishRestaurantNextRewardNumber: S.fishRestaurantNextRewardNumber, fishRestaurantRewardsTaken: S.fishRestaurantRewardsTaken,
     thursdayDailiesDayKey: S.thursdayDailiesDayKey, thursdayDailiesDone: S.thursdayDailiesDone,
     harpyHuntDayKey: S.harpyHuntDayKey, harpyHuntFightsToday: S.harpyHuntFightsToday,
+    // Список меню Q хранился только в памяти, и после каждого перезапуска ферма вставала:
+    // любой «созревший по календарю» квест считался ждущим, пока меню не прочтётся (29.09.2026).
+    lastQMenuNames: S.lastQMenuNames, lastQMenuAt: S.lastQMenuAt,
   });
   saveStateToDisk(persistedState);
 }

@@ -408,7 +408,13 @@ function guideQuestDueNow() {
     // Список меню берём последний непустой и не старше двух часов; квестам с inQMenu:false меню не нужно.
     if (q.inQMenu !== false && qs.part === undefined) {
       const fresh = S.lastQMenuAt && now - S.lastQMenuAt < 2 * 60 * 60000;
-      if (fresh && !(S.lastQMenuNames || []).some((n) => n === q.name)) continue;
+      // 29.09.2026, Паша: «а сейчас почему завис? хп и резервы полные». Раньше при НЕИЗВЕСТНОМ
+      // меню ферма всё равно стояла - а меню пусто после каждого перезапуска и при сбое чтения
+      // («Q menu parse returned empty list»). Так «Галерея искусств» держала ферму при полных HP и резерве.
+      // Не знаем, есть ли квест в меню - значит не держим: сам квест от этого не пропадает, его
+      // запускает runGuideQuestsIfDue отдельно, а стоять без дела хуже, чем фармить.
+      if (!fresh) continue;
+      if (!(S.lastQMenuNames || []).some((n) => n === q.name)) continue;
     }
     if (qs.part !== undefined) return q.name;
     if (!qs.lastDone) return q.name;
