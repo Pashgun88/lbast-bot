@@ -11,6 +11,17 @@ const { runGuideQuestsIfDue, GUIDE_QUESTS, STATE_FILE: GUIDE_STATE_FILE } = requ
 function readGuideState() {
   try { return JSON.parse(require('fs').readFileSync(GUIDE_STATE_FILE, 'utf8')); } catch (e) { return {}; }
 }
+// Состояние хранит записи ВСЕХ когда-либо запущенных квестов, в том числе выключенных позже.
+// 29.09.2026: «Магическую башню» Паша велел не делать, я вынул её из GUIDE_QUESTS - а эти проверки
+// читают файл состояния, а не список. Оставшаяся запись с part держала ферму насмерть: «Ферма
+// пропущена: башня ждёт» при полных HP и резерве. Ждём только того, что есть в списке.
+function activeGuideState() {
+  const live = new Set(GUIDE_QUESTS.map((q) => q.name));
+  const st = readGuideState();
+  const out = {};
+  for (const [name, qs] of Object.entries(st)) if (live.has(name)) out[name] = qs;
+  return out;
+}
 const { runBungaloIfDue } = require('./guides/bungalo');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
@@ -409,7 +420,7 @@ function guideQuestDueNow() {
   return null;
 }
 function guideQuestInProgress() {
-  const st = readGuideState();
+  const st = activeGuideState();
   for (const [name, qs] of Object.entries(st)) {
     if (dayPartDoneToday(qs)) continue;
     if (qs && qs.part !== undefined && !(qs.suppressedUntil && Date.now() < qs.suppressedUntil)) return name;
@@ -418,7 +429,7 @@ function guideQuestInProgress() {
 }
 
 function guideQuestWaitsForReserve() {
-  const st = readGuideState();
+  const st = activeGuideState();
   // Только если квест реально близко к старту: не дальше 10 минут от своего порога. Иначе фарм
   // стоял бы весь день впустую - при резерве -3 и пороге 20 виноват не фарм, а общая нагрузка
   // цикла, и часть этого резерва всё равно набежит только к утру.
