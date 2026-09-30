@@ -13,6 +13,7 @@
 // Progress is saved to <steps>.progress after each step; rerun resumes from there.
 // Stops on the first step that is not on the screen, dumps the screen and writes a letter to Tsunami.
 const { chromium } = require('playwright');
+const { beat } = require('../lib/self_restart');
 const fs = require('fs');
 const m = require('../module');
 const HP_GATE = Number(process.env.HP_GATE || 0.7);
@@ -260,6 +261,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   try {
     await backToScene(page);
     for (let i = start; i < steps.length; i++) {
+      beat(); // шаг маршрута - тоже жизнь главного цикла
       let step = steps[i];
       let banRewound = false;
       console.log(`\n--- [${i}/${steps.length}] ${step}`);

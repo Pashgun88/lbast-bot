@@ -8,10 +8,10 @@ const BROWSER_GONE_RE = /(context or browser has been closed|Browser has been cl
 const DRIVER = path.join(__dirname, '..', 'driver.js');
 
 let restarting = false;
-function restartSelfBrowserGone(reason) {
+function restartSelf(reason) {
   if (restarting) return;
   restarting = true;
-  console.log(`Браузер закрыт (${reason}) - вкладкой не спасти, перезапускаю драйвер.`);
+  console.log(`Перезапуск драйвера: ${reason}.`);
   try {
     const { spawn } = require('child_process');
     const fs = require('fs');
@@ -26,4 +26,15 @@ function restartSelfBrowserGone(reason) {
   setTimeout(() => process.exit(1), 3000);
 }
 
-module.exports = { BROWSER_GONE_RE, restartSelfBrowserGone };
+// Пульс ГЛАВНОГО цикла. 29.09.2026 в 12:43 цикл встал на шаге «Fish Restaurant» и простоял 30 часов:
+// процесс был жив, браузер жив, вкладка чата бодро писала в лог - и ни один сторож не помог:
+// внешний смотрит только «есть ли процесс», а внутренний только писал в Telegram. Файл пульса даёт
+// внешнему сторожу честный признак жизни: чат его не трогает, только шаги главного цикла.
+const HEARTBEAT = path.join(path.dirname(DRIVER), 'driver_cycle.heartbeat');
+function beat() {
+  try { require('fs').writeFileSync(HEARTBEAT, String(Date.now())); } catch (e) { /* пульс не должен ронять драйвер */ }
+}
+
+const restartSelfBrowserGone = (reason) => restartSelf(`браузер закрыт (${reason}), вкладкой не спасти`);
+
+module.exports = { BROWSER_GONE_RE, restartSelf, restartSelfBrowserGone, beat, HEARTBEAT };

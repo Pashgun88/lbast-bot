@@ -18,7 +18,27 @@ $err = Join-Path $dir 'driver_err.log'
 
 $alive = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   Where-Object { $_.CommandLine -like '*driver.js*' })
-if ($alive.Count -gt 0) { exit 0 }
+
+# Процесс жив - это ещё не значит, что он работает. 29.09.2026 главный цикл встал в 12:43 на шаге
+# «Fish Restaurant» и простоял 30 часов: процесс жив, браузер жив, вкладка чата бодро писала в лог. Поэтому
+# смотрим не на процесс, а на пульс: его ставят только шаги главного цикла, шаги маршрутов и ожидание
+# лечения. Срок щедрый (40 мин): самое долгое законное молчание - это лечение с нуля (~25 мин).
+$beatFile = Join-Path $dir 'driver_cycle.heartbeat'
+$stalled = $false
+if ($alive.Count -gt 0) {
+  if (Test-Path $beatFile) {
+    $idleMin = [int]((Get-Date) - (Get-Item $beatFile).LastWriteTime).TotalMinutes
+    if ($idleMin -ge 40) {
+      $stalled = $true
+      Add-Content -Path $log -Encoding utf8 -Value "`n===== СТОРОЖ: главный цикл молчит $idleMin мин - перезапускаю драйвер ====="
+      $alive | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      Start-Sleep -Seconds 3
+    }
+  } else {
+    # Пульса ещё нет (старая сборка или драйвер только что стартовал) - не трогаем.
+  }
+}
+if ($alive.Count -gt 0 -and -not $stalled) { exit 0 }
 
 # Осиротевший Chrome от упавшего драйвера держит профиль - закрываем.
 $profileDir = Join-Path $dir 'chrome-profile-ai-char'

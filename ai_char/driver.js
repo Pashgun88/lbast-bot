@@ -168,7 +168,7 @@ async function withHangGuard(page, label, ms, fn) {
 // закрыт весь браузер, - значит нужен новый процесс. Перезапускаем себя тем же логом (append) и
 // выходим; Паше уходит строка в Telegram.
 // Сам перезапуск живёт в lib/self_restart.js: с 29.09.2026 им пользуется и монитор чата.
-const { BROWSER_GONE_RE, restartSelfBrowserGone } = require('./lib/self_restart');
+const { BROWSER_GONE_RE, restartSelfBrowserGone, beat } = require('./lib/self_restart');
 
 const HANG = Symbol('hang');
 
@@ -269,6 +269,7 @@ async function runFarmSession(page) {
       let lastHealLog = Date.now();
       for (;;) {
         await new Promise((r) => setTimeout(r, 120_000));
+        beat(); // долгое лечение - это жизнь, а не зависание
         const h = await readLocationStats(page);
         if (typeof h.hpCurrent !== 'number') break;
         if (h.hpCurrent >= h.hpMax * FARM_HEAL_TARGET || Date.now() >= deadline || isSleepTime()) break;
@@ -450,6 +451,7 @@ function guideQuestWaitsForReserve() {
 }
 
 async function runCycleStep(page, label, fn) {
+  beat(); // пульс главного цикла для внешнего сторожа: чат его не поддерживает
   const fightMode = getFightMode();
   // 23.09.2026, Паша: в режиме без боёв, кроме бизона, разрешён кабан («харчевня... потом кабана»).
   const blocked = fightMode === 'none' ? ((CHAIN_FIGHT_STEPS.has(label) || SINGLE_FIGHT_STEPS.has(label)) && !NONE_MODE_ALLOWED_STEPS.has(label))
