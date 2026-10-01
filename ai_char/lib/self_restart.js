@@ -34,7 +34,12 @@ const HEARTBEAT = path.join(path.dirname(DRIVER), 'driver_cycle.heartbeat');
 function beat() {
   try { require('fs').writeFileSync(HEARTBEAT, String(Date.now())); } catch (e) { /* пульс не должен ронять драйвер */ }
 }
+// Сколько прошло с последнего пульса, мс (null - пульса ещё нет). Нужен не только внешнему сторожу:
+// внутренний сторож «лог молчит» без него путал тихую работу с зависанием (01.10.2026).
+function beatAge() {
+  try { return Date.now() - require('fs').statSync(HEARTBEAT).mtimeMs; } catch (e) { return null; }
+}
 
 const restartSelfBrowserGone = (reason) => restartSelf(`браузер закрыт (${reason}), вкладкой не спасти`);
 
-module.exports = { BROWSER_GONE_RE, restartSelf, restartSelfBrowserGone, beat, HEARTBEAT };
+module.exports = { BROWSER_GONE_RE, restartSelf, restartSelfBrowserGone, beat, beatAge, HEARTBEAT };

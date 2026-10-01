@@ -78,6 +78,7 @@ function alertIfNeeded(line) {
 // "Обновить чат ..."» и «Chat monitor: ошибка чтения комнаты ...». Под прежний фильтр они не
 // подходили и считались признаком жизни. Любая строка чата, включая его ошибки, - не прогресс.
 const CHAT_LINE_RE = /^(OK: Обновить чат|CHAT_SENT|CHAT_SEND_FAILED|Автоответ|>>> ПОРА ОТВЕТИТЬ|Chat monitor:|Не найдено для шага "Обновить чат|\s|$)/;
+const { beatAge } = require('./lib/self_restart');
 function installAlertHook({ stallMs = 30 * 60 * 1000 } = {}) {
   let lastLogAt = Date.now();
   let stallReported = false;
@@ -100,7 +101,16 @@ function installAlertHook({ stallMs = 30 * 60 * 1000 } = {}) {
     } catch (e) { /* оповещение не должно ронять драйвер */ }
   };
   const timer = setInterval(() => {
-    const idle = Date.now() - lastLogAt;
+    // 01.10.2026, Паша: «все еще слишком часто скрипт выскакивает». Персонаж лежал в минусе, цикл
+    // честно досиживал два часа ожидания и в лог ничего не писал - а этот сторож каждые полчаса
+    // объявлял его зависшим и перезапускал рабочий драйвер. Признак жизни один на всех - пульс:
+    // молчание в логе не смерть, смерть - это молчащий пульс. Ночью (сон 23:00-05:15) не смотрим
+    // вовсе: персонаж спит, полезной работы нет.
+    const h = new Date().getHours();
+    const m = new Date().getMinutes();
+    if (h >= 23 || h < 5 || (h === 5 && m < 15)) { lastLogAt = Date.now(); return; }
+    const age = beatAge();
+    const idle = Math.min(Date.now() - lastLogAt, age === null ? Infinity : age);
     if (idle > stallMs && !stallReported) {
       stallReported = true;
       const min = Math.round(idle / 60000);
@@ -108,9 +118,9 @@ function installAlertHook({ stallMs = 30 * 60 * 1000 } = {}) {
       // и простоял 30 часов. Этот сторож тогда сработал, но только написал в Telegram: в журнале следа
       // не осталось, и никто ничего не сделал. Теперь пишем в журнал И перезапускаемся:
       // цикл, молчащий полчаса, на деле мёртв - ждать его возвращения нечего.
-      console.log(`ДРАЙВЕР ЗАВИС: основной цикл молчит ${min} мин (чат не в счёт) - перезапускаю драйвер.`);
+      console.log(`ДРАЙВЕР ЗАВИС: ни строки в журнале, ни пульса ${min} мин (чат не в счёт) - перезапускаю драйвер.`);
       try {
-        require('./lib/self_restart').restartSelf(`главный цикл молчит ${min} мин`);
+        require('./lib/self_restart').restartSelf(`ни журнала, ни пульса ${min} мин`);
       } catch (e) { /* если не вышло - поднимет внешний сторож по пульсу */ }
     }
   }, 60 * 1000);
