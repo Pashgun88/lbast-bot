@@ -105,7 +105,7 @@ async function leaveFishingResultToGame(page) {
 // и жарить рыбу пока восстанавливаешься, 1 рыба - 10 минут резерва, жарь так чтобы не в ущерб
 // фарму». Жареная рыба стоит 48 дин против 2 у сырого карася.
 // ВНИМАНИЕ: GET на flag=kuchnya сразу жарит одну рыбу (проверено: «посмотреть» кухню = пожарить).
-// Поэтому вызывается только отсюда и только при резерве от FRY_MIN_RESERVE (15).
+// Поэтому вызывается только отсюда и только когда резерва хватает на целую рыбу поверх запаса.
 // ===================================================================================
 const HOUSE_ID = 34309;
 const KITCHEN_URL = `http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}&flag=kuchnya`;
@@ -122,8 +122,6 @@ const FRY_RESERVE_COST = 10;
 // Цена пары кож дублирует lib/tanning.js намеренно: модули связаны по кругу через module.js,
 // и импорт числа приходит undefined -> условие становится NaN и дубление снова не запускается.
 const TAN_RESERVE_COST = 15;
-const FRY_MIN_RESERVE = QUEST_RESERVE_FLOOR + FRY_RESERVE_COST;
-const TAN_MIN_RESERVE = QUEST_RESERVE_FLOOR + TAN_RESERVE_COST;
 
 // S.kitchenOutOfFish: объявлено в lib/state.js (всё изменяемое состояние - там).
 
@@ -138,13 +136,24 @@ function choreOrder() {
   return tanTurn ? ['tan', 'fry'] : ['fry', 'tan'];
 }
 
+// Запас резерва на квесты нужен только живому персонажу. Паша, 01.10.2026: «но сейчас минус хп,
+// можно дубить и жарить так как ботов ты бить не можешь». В минусе (HP <= 0) ни один квест с боем
+// не начнётся, беречь не для кого - тратим резерв до нуля, рыба и кожи идут всё той же очередью.
+function reserveFloor(stats) {
+  return stats && typeof stats.hpCurrent === 'number' && stats.hpCurrent <= 0 ? 0 : QUEST_RESERVE_FLOOR;
+}
+
 async function fryFishWhileHealing(page, stats) {
   const reserve = stats && (typeof stats.reserveMinutes === 'number' ? stats.reserveMinutes : stats.cooldown);
   if (typeof reserve !== 'number') return false;
+  const floor = reserveFloor(stats);
+  const fryMin = floor + FRY_RESERVE_COST;
+  const tanMin = floor + TAN_RESERVE_COST;
   const order = choreOrder();
-  // Порог входа - по тому делу, чей ход: на «кожаном» ходу входим от 25, иначе от 20.
-  const minNeed = order[0] === 'tan' ? TAN_MIN_RESERVE : FRY_MIN_RESERVE;
+  // Порог входа - по тому делу, чей ход: на «кожаном» ходу нужно на пару кож, иначе на рыбу.
+  const minNeed = order[0] === 'tan' ? tanMin : fryMin;
   if (reserve < minNeed) return false;
+  if (floor === 0) console.log(`Хозяйство: HP ${stats.hpCurrent} - в минусе бои недоступны, трачу резерв (${reserve}) без запаса на квесты.`);
   let fried = false;
   try {
     // В дом пускают только из Форпоста («Вы находитесь не в том месте» с улицы Кулака, 19.09):
@@ -172,7 +181,7 @@ async function fryFishWhileHealing(page, stats) {
         // резерв не упадёт ниже порога, а не по одной рыбе раз в 2 минуты. Уже внутри дома кухня
         // открывается прямой ссылкой; новый резерв читается из шапки страницы кухни.
         // Один проход: отдал рыбе излишек - следующий ход кожаный (очередь выше).
-        for (let n = 0; n < 3 && left >= FRY_MIN_RESERVE && !S.kitchenOutOfFish; n++) {
+        for (let n = 0; n < 4 && left >= fryMin && !S.kitchenOutOfFish; n++) {
           await page.goto(KITCHEN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
           const t = await getBodyText(page);
           if (/поджарили/i.test(t)) {
@@ -194,11 +203,11 @@ async function fryFishWhileHealing(page, stats) {
             break;
           }
         }
-      } else if (left >= TAN_MIN_RESERVE) {
+      } else if (left >= tanMin) {
         // 22.09.2026, Паша: дубить «по тому же принципу», рыба в приоритете. Пара кож стоит 15,
         // значит нужно иметь запас квестов + 15. Дубильный набор живёт на странице дома.
         await page.goto(`http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        const leftAfter = await tanHidesInHouse(page, left, TAN_MIN_RESERVE);
+        const leftAfter = await tanHidesInHouse(page, left, tanMin);
         if (leftAfter < left) {
           fried = true;
           S.houseChoreLastWasFry = false;
