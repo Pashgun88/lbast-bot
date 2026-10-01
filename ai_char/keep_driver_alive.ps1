@@ -16,6 +16,13 @@ $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $log = Join-Path $dir 'driver_live.log'
 $err = Join-Path $dir 'driver_err.log'
 
+# Запись в лог НЕ должна ронять сторожа. 01.10.2026: лог держал открытым посторонний `tail -f`,
+# Add-Content упал, а $ErrorActionPreference = 'Stop' оборвал скрипт ДО запуска - драйвер остался
+# лежать. Сторож обязан поднять драйвер даже если пожаловаться в лог не вышло.
+function Note($text) {
+  try { Add-Content -Path $log -Encoding utf8 -Value $text -ErrorAction Stop } catch { Write-Host $text }
+}
+
 $alive = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   Where-Object { $_.CommandLine -like '*driver.js*' })
 
@@ -35,7 +42,7 @@ if ($alive.Count -gt 0 -and -not $sleeping) {
     $idleMin = [int]((Get-Date) - (Get-Item $beatFile).LastWriteTime).TotalMinutes
     if ($idleMin -ge 40) {
       $stalled = $true
-      Add-Content -Path $log -Encoding utf8 -Value "`n===== СТОРОЖ: главный цикл молчит $idleMin мин - перезапускаю драйвер ====="
+      Note "`n===== СТОРОЖ: главный цикл молчит $idleMin мин - перезапускаю драйвер ====="
       $alive | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
       Start-Sleep -Seconds 3
     }
@@ -56,7 +63,7 @@ foreach ($n in 'SingletonLock', 'SingletonCookie', 'SingletonSocket') {
   if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 }
 
-Add-Content -Path $log -Encoding utf8 -Value "`n===== RESTART (сторож keep_driver_alive) $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss') ====="
+Note "`n===== RESTART (сторож keep_driver_alive) $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss') ====="
 # Запуск именно через bash с '>>': Start-Process -RedirectStandardOutput ЗАТИРАЕТ файл, а лог
 # нужно дописывать - иначе теряется история дня и нечем ответить на «почему квест не делался».
 $bash = 'C:\Program Files\Git\bin\bash.exe'
