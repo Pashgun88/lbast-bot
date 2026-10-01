@@ -9,7 +9,7 @@ module.exports = {
   runFishingViaLastPortalOrRoute,
 };
 
-const { tanHidesInHouse } = require('./tanning');
+const { tanHidesInHouse, tanningPaused } = require('./tanning');
 const { S, FISHING_DAILY_CATCH_LIMIT, persistDailyQuestState } = require('./state');
 const { getBodyText, pause, snapshotText, parseStats } = require('./core');
 const { canRunFishingNow, syncFishingDayState } = require('./daily_quests');
@@ -123,12 +123,28 @@ const FRY_RESERVE_COST = 10;
 // и импорт числа приходит undefined -> условие становится NaN и дубление снова не запускается.
 const TAN_RESERVE_COST = 15;
 const FRY_MIN_RESERVE = QUEST_RESERVE_FLOOR + FRY_RESERVE_COST;
+const TAN_MIN_RESERVE = QUEST_RESERVE_FLOOR + TAN_RESERVE_COST;
 
 // S.kitchenOutOfFish: объявлено в lib/state.js (всё изменяемое состояние - там).
 
+// 01.10.2026, Паша: «почему шкуры не дубишь в минусе хп? я за тебя жму». Поломки не было - была
+// арифметика, в которой дубление не могло наступить никогда. Резерв максимум 30, на квесты бережём
+// 10, свободных остаётся 20 - ровно две рыбы. Пока персонаж лежит, рыбалка каждые 5 минут подкидывает
+// свежего карася, кухня съедает излишек первой, и до 25 (запас + пара кож) резерв не доживает.
+// Поэтому дела ходят по очереди: пожарили - следующий излишек уходит на кожи, и на «кожаном» ходу
+// рыбу не трогаем, даём резерву дорасти до 25. Если сырых кож нет, очередь пропускается и жарим.
+function choreOrder() {
+  const tanTurn = S.houseChoreLastWasFry === true && !tanningPaused();
+  return tanTurn ? ['tan', 'fry'] : ['fry', 'tan'];
+}
+
 async function fryFishWhileHealing(page, stats) {
   const reserve = stats && (typeof stats.reserveMinutes === 'number' ? stats.reserveMinutes : stats.cooldown);
-  if (typeof reserve !== 'number' || reserve < FRY_MIN_RESERVE) return false;
+  if (typeof reserve !== 'number') return false;
+  const order = choreOrder();
+  // Порог входа - по тому делу, чей ход: на «кожаном» ходу входим от 25, иначе от 20.
+  const minNeed = order[0] === 'tan' ? TAN_MIN_RESERVE : FRY_MIN_RESERVE;
+  if (reserve < minNeed) return false;
   let fried = false;
   try {
     // В дом пускают только из Форпоста («Вы находитесь не в том месте» с улицы Кулака, 19.09):
@@ -150,33 +166,45 @@ async function fryFishWhileHealing(page, stats) {
     // резерв не упадёт ниже порога, а не по одной рыбе раз в 2 минуты. Уже внутри дома кухня
     // открывается прямой ссылкой; новый резерв читается из шапки страницы кухни.
     let left = reserve;
-    for (let n = 0; n < 3 && left >= FRY_MIN_RESERVE && !S.kitchenOutOfFish; n++) {
-      await page.goto(KITCHEN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      const t = await getBodyText(page);
-      if (/поджарили/i.test(t)) {
-        fried = true;
-        const after = parseStats(t);
-        const r = typeof after.reserveMinutes === 'number' ? after.reserveMinutes : after.cooldown;
-        console.log(`Кухня: поджарил рыбу (резерв был ${left}${typeof r === 'number' ? `, стал ${r}` : ''}).`);
-        // Шапка кухни показывает резерв ДО списания (живьём 19.09: 30 -> «стал 30»), поэтому
-        // доверяем ей только в меньшую сторону: каждая рыба стоит 10 минут резерва.
-        left = typeof r === 'number' ? Math.min(r, left - 10) : left - 10;
-        await pause(page, 600, 1200);
-      } else if (/жарен\S*\s+рыб[^.]*нужно иметь|нужно иметь в инвентаре (рыб|карас)/i.test(t)) {
-        S.kitchenOutOfFish = true;
-        console.log('Кухня: сырой рыбы нет -> не жарю до следующего улова.');
-        break;
-      } else {
-        console.log(`Кухня: не получилось: "${snapshotText(t, 200)}"`);
-        break;
+    for (const chore of order) {
+      if (chore === 'fry') {
+        // Паша, 19.09.2026 (скриншот: стоит в Кулаке с резервом 30 и не жарит): жарить подряд, пока
+        // резерв не упадёт ниже порога, а не по одной рыбе раз в 2 минуты. Уже внутри дома кухня
+        // открывается прямой ссылкой; новый резерв читается из шапки страницы кухни.
+        // Один проход: отдал рыбе излишек - следующий ход кожаный (очередь выше).
+        for (let n = 0; n < 3 && left >= FRY_MIN_RESERVE && !S.kitchenOutOfFish; n++) {
+          await page.goto(KITCHEN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+          const t = await getBodyText(page);
+          if (/поджарили/i.test(t)) {
+            fried = true;
+            S.houseChoreLastWasFry = true;
+            const after = parseStats(t);
+            const r = typeof after.reserveMinutes === 'number' ? after.reserveMinutes : after.cooldown;
+            console.log(`Кухня: поджарил рыбу (резерв был ${left}${typeof r === 'number' ? `, стал ${r}` : ''}).`);
+            // Шапка кухни показывает резерв ДО списания (живьём 19.09: 30 -> «стал 30»), поэтому
+            // доверяем ей только в меньшую сторону: каждая рыба стоит 10 минут резерва.
+            left = typeof r === 'number' ? Math.min(r, left - 10) : left - 10;
+            await pause(page, 600, 1200);
+          } else if (/жарен\S*\s+рыб[^.]*нужно иметь|нужно иметь в инвентаре (рыб|карас)/i.test(t)) {
+            S.kitchenOutOfFish = true;
+            console.log('Кухня: сырой рыбы нет -> не жарю до следующего улова.');
+            break;
+          } else {
+            console.log(`Кухня: не получилось: "${snapshotText(t, 200)}"`);
+            break;
+          }
+        }
+      } else if (left >= TAN_MIN_RESERVE) {
+        // 22.09.2026, Паша: дубить «по тому же принципу», рыба в приоритете. Пара кож стоит 15,
+        // значит нужно иметь запас квестов + 15. Дубильный набор живёт на странице дома.
+        await page.goto(`http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        const leftAfter = await tanHidesInHouse(page, left, TAN_MIN_RESERVE);
+        if (leftAfter < left) {
+          fried = true;
+          S.houseChoreLastWasFry = false;
+          left = leftAfter;
+        }
       }
-    }
-    // 22.09.2026, Паша: дубить «по тому же принципу», рыба в приоритете - поэтому дубим тем, что
-    // осталось после жарки. Пара кож стоит 15, значит нужно иметь запас квестов + 15.
-    if (left >= QUEST_RESERVE_FLOOR + TAN_RESERVE_COST) {
-      await page.goto(`http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      const leftAfter = await tanHidesInHouse(page, left, QUEST_RESERVE_FLOOR + TAN_RESERVE_COST);
-      if (leftAfter < left) fried = true;
     }
   } catch (e) {
     console.log('Кухня: ошибка', e.message);

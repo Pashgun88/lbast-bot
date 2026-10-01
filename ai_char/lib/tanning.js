@@ -17,6 +17,13 @@ module.exports.TAN_RESERVE_COST = TAN_RESERVE_COST;
 const NO_HIDES_RECHECK_MS = 3 * 60 * 60 * 1000; // сырые кожи кончились - заглянуть через 3 ч
 let noHidesAt = 0;
 
+// Кухня спрашивает, прежде чем уступить дубильне свой ход: если сырых кож нет, уступать нечему,
+// и резерв надо тратить на рыбу, а не копить впустую (см. очередь дел в lib/fishing.js).
+function tanningPaused() {
+  return Date.now() - noHidesAt < NO_HIDES_RECHECK_MS;
+}
+module.exports.tanningPaused = tanningPaused;
+
 // Стоим на странице своего дома. Дубим, пока резерв не ниже minReserve; возвращает остаток резерва.
 async function tanHidesInHouse(page, reserve, minReserve) {
   if (Date.now() - noHidesAt < NO_HIDES_RECHECK_MS) return reserve;

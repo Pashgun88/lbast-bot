@@ -410,6 +410,7 @@ function restoreDailyQuestState() {
 
   if (typeof s.galleryQuestDone === 'boolean') S.galleryQuestDone = s.galleryQuestDone;
 
+  if (typeof s.houseChoreLastWasFry === 'boolean') S.houseChoreLastWasFry = s.houseChoreLastWasFry;
   if (Array.isArray(s.lastQMenuNames)) S.lastQMenuNames = s.lastQMenuNames;
   if (Number.isFinite(s.lastQMenuAt)) S.lastQMenuAt = s.lastQMenuAt;
 
@@ -469,6 +470,7 @@ function persistDailyQuestState() {
     // Список меню Q хранился только в памяти, и после каждого перезапуска ферма вставала:
     // любой «созревший по календарю» квест считался ждущим, пока меню не прочтётся (29.09.2026).
     lastQMenuNames: S.lastQMenuNames, lastQMenuAt: S.lastQMenuAt,
+    houseChoreLastWasFry: S.houseChoreLastWasFry,
   });
   saveStateToDisk(persistedState);
 }
@@ -533,6 +535,9 @@ S.attackAlertCooldownUntil = 0;
 
 // (из lib/fishing.js)
 S.kitchenOutOfFish = false;
+// Чья очередь тратить излишек резерва: true = в прошлый раз жарили рыбу, значит теперь кожи.
+// Переживает перезапуск, иначе после каждого рестарта очередь начиналась бы с рыбы заново.
+S.houseChoreLastWasFry = false;
 
 // ---------------------------------------------------------------------------------------
 // Константы, которые используются в нескольких файлах lib/. Держим их здесь, а не в файле

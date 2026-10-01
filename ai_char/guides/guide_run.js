@@ -79,7 +79,7 @@ async function readHp(page) {
 async function healInPlace(page, frac) {
   for (let i = 0; i < 20; i++) {
     const s = await readHp(page);
-    if (!s) { await sleep(60000); continue; }
+    if (!s) { await sleepBeating(60000); continue; }
     const target = Math.ceil(s.max * frac);
     if (s.hp >= target) { console.log(`HP ${s.hp}/${s.max} >= ${target}`); return s; }
     const rate = s.rate > 0 ? s.rate : 14;
@@ -98,8 +98,19 @@ async function inScene(page) {
 // 29.09.2026, «Магическая башня»: после прыжка HP было -1, @heal ушёл на анкету и вернулся
 // на location.php - а в башне нет «Продолжить квест», и персонаж оказался снаружи. Следующий шаг
 // «Подойти ближе» честно сказал mismatch. То же самое было у сапёра - лечим только отдельной вкладкой.
+// Ждём, отмечаясь пульсом каждые пять минут: один сон на полчаса (лечение с нуля - это 33 минуты
+// при 14 hp/мин) внешний сторож 01.10.2026 принял за зависание и перезапустил рабочий драйвер.
+async function sleepBeating(ms) {
+  const until = Date.now() + ms;
+  do {
+    beat();
+    await sleep(Math.min(5 * 60000, Math.max(1000, until - Date.now())));
+  } while (Date.now() < until);
+  beat();
+}
 async function healQuietly(page, frac) {
   for (let i = 0; i < 40; i++) {
+    beat();
     const s = await readHpInNewTab(page);
     if (!s) { await sleep(60000); continue; }
     const target = Math.ceil(s.max * frac);
@@ -107,7 +118,7 @@ async function healQuietly(page, frac) {
     const rate = s.rate > 0 ? s.rate : 14;
     const ms = Math.ceil(((target - s.hp) / rate) * 60000) + 10000;
     console.log(`HP ${s.hp}/${s.max}, нужно ${target}, ${rate}/мин -> жду ${Math.round(ms / 1000)}с в сцене`);
-    await sleep(ms);
+    await sleepBeating(ms);
   }
   return null;
 }
