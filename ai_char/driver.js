@@ -593,6 +593,8 @@ async function waitForHeal(page) {
         await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
         await new Promise((r) => setTimeout(r, 8000));
       }
+      // Скорость регена читаем в Кулаке, где и лежим: оценка «ждать N минут» считается по ней.
+      if (first) await readHealRateHere(page).catch(() => 0);
       first = false;
       // Паша, 24.09.2026 (после смерти от yasnovidec): «можешь пока пользоватся домом» «и рыбачить».
       // Лежать после смерти долго - минус глубокий, восстановление 16 hp/мин, - и всё это время
