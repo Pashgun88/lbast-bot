@@ -32,6 +32,14 @@ const { clickByTexts, existsAnyText, performStep } = require('./ui');
 // бросил квесты и фармит", хотя на самом деле сам фарм и съел HP, нужный квестам. Подняли
 // порог до 0.7 (тот же вывод, что и для банкира/Рыбьего глаза) и срезали число боёв за
 // раунд до 1, чтобы Подвалы не могли утащить HP ниже уровня, нужного реальным квестам.
+// Кулдаун, который назвала игра, запоминаем в S: драйвер ждёт ровно столько, сколько сказано,
+// вместо того чтобы спрашивать раз в минуту (03.10.2026, Паша: «ты каждые 5 минут фармишь?»).
+// Держим БЛИЖАЙШИЙ срок из всех целей - освободится первая, круг сессии пойдёт снова.
+function noteFarmCooldown(waitMinutes) {
+  const t = Date.now() + Math.max(1, Number(waitMinutes) || 1) * 60_000;
+  S.farmCooldownUntil = S.farmCooldownUntil && S.farmCooldownUntil > Date.now() ? Math.min(S.farmCooldownUntil, t) : t;
+}
+
 const PODVALY_HP_SAFETY_FRACTION = 0.7; // не начинать новый бой ниже этой доли от макс. HP
 const PODVALY_MAX_FIGHTS_PER_ROUND = 1; // не более N боёв за один вызов из driver.js
 // "Штольни" требуют SHTOLNI_MIN_HP_FRACTION=0.99 - если Подвалы фармят всё, что выше 70%,
@@ -429,6 +437,7 @@ async function runBisonFarmRound(page, buffed = false) {
     const waitMinutes = parseCooldownError(e);
     if (waitMinutes !== null) {
       console.log(`Bison farm: бизон ещё на кулдауне (${waitMinutes} мин) -> попробую в следующем цикле`);
+      noteFarmCooldown(waitMinutes);
       return false;
     }
     console.log('Bison farm: fightLoop error:', e.message);
@@ -587,6 +596,7 @@ async function runBoarFarmRound(page, buffed = false) {
     const waitMinutes = parseCooldownError(e);
     if (waitMinutes !== null) {
       console.log(`Boar farm: кабан ещё на кулдауне (${waitMinutes} мин) -> попробую в следующем цикле`);
+      noteFarmCooldown(waitMinutes);
       return false;
     }
     console.log('Boar farm: fightLoop error:', e.message);

@@ -311,6 +311,7 @@ async function runFarmSession(page) {
         console.log(`Фарм-сессия: кожи бизон ${hides.bison}, кабан ${hides.boar}.`);
       }
     }
+    S.farmCooldownUntil = 0; // сроки кулдаунов этого круга собираем заново (ставит lib/farm.js)
     // Рыбалка между боями: попытка раз в 2 минуты, до 6 карасей в день.
     await runFishingIfDue(page).catch((e) => console.log('Фарм-сессия: рыбалка:', e.message));
     const buffed = await isAnyBuffAleActive(page).catch(() => false);
@@ -332,8 +333,15 @@ async function runFarmSession(page) {
       console.log(`Фарм-сессия: бизоньих кож ${hides.bison} против ${hides.boar} кабаньих - бизона пропускаю, догоняю кабаном.`);
     }
     if (!b && !k && !g) {
-      // обе цели на кулдауне или маршрут не прошёл - не долбим сервер, ждём минуту
-      await new Promise((r) => setTimeout(r, 60_000));
+      // Обе цели на кулдауне. Раньше тут всегда ждали ровно минуту и спрашивали снова - за час
+      // сессии это шесть десятков лишних заходов на сайт при кулдауне ботов в 5 минут (по журналу
+      // выше 5-6 не бывает). Теперь ждём столько, сколько назвала сама игра (S.farmCooldownUntil),
+      // но не дольше 5 минут: в начале каждого круга проверяются сроки квестов, а они важнее фарма.
+      const left = S.farmCooldownUntil > Date.now() ? S.farmCooldownUntil - Date.now() : 60_000;
+      const ms = Math.max(30_000, Math.min(left, 5 * 60_000, Math.max(0, deadline - Date.now()) || 30_000));
+      console.log(`Фарм-сессия: цели на кулдауне -> жду ${Math.round(ms / 60_000 * 10) / 10} мин.`);
+      beat();
+      await new Promise((r) => setTimeout(r, ms));
     }
   }
   console.log(`Фарм-сессия окончена: ${fights} боёв.`);

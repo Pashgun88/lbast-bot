@@ -533,6 +533,10 @@ S.lastAttackClickAt = 0;
 // (из lib/pvp.js)
 S.attackAlertCooldownUntil = 0;
 
+// (из lib/farm.js) Ближайший момент, когда хоть одна цель фарма выйдет из кулдауна. Ставится из
+// farm.js по ответу игры, обнуляется драйвером в начале каждого круга сессии.
+S.farmCooldownUntil = 0;
+
 // (из lib/fishing.js)
 S.kitchenOutOfFish = false;
 // Чья очередь тратить излишек резерва: true = в прошлый раз жарили рыбу, значит теперь кожи.
