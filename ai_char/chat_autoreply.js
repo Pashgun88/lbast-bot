@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const memory = require('./chat_memory');
+const { S } = require('./lib/state');
 const dayLog = require('./chat_day');
 
 const PROMPT_FILE = path.join(__dirname, 'chat_persona_prompt.txt');
@@ -104,6 +105,16 @@ function affairsBlock() {
   if (!lines.length) return '';
   const fresh = lines.slice(-AFFAIRS_MAX_LINES).reverse();
   return `<affairs>\nСвежее первым:\n${cleanInput(fresh.join('\n'), AFFAIRS_MAX_CHARS)}\n</affairs>\n`;
+}
+
+// Живые факты о себе. 03.10.2026, Паша: «ты всё ещё упоминаешь что ты 7 уровень, но ты 8-й уже
+// давно». Уровень жил только словами в affairs.txt и устарел молча - а словам модель верит охотнее,
+// чем молчанию. Теперь он берётся из игры (анкета -> S.charLevel) и идёт в промпт отдельной строкой
+// выше дел: факт из игры важнее записи о прошлом.
+function selfBlock() {
+  const parts = [];
+  if (S.charLevel > 0) parts.push(`у тебя ${S.charLevel}-й уровень (это точно, из анкеты - старым записям про уровень не верь)`);
+  return parts.length ? `<сейчас>\n${parts.join('; ')}\n</сейчас>\n` : '';
 }
 
 // Что AI__ делал сегодня - данные для промпта, чтобы разговор шёл про реальную жизнь персонажа.
@@ -220,6 +231,7 @@ function handleChatTrigger(trigger, roomText) {
     const user = `${task}\nКомната: ${cleanInput(trigger.roomName, 40)}. Новые сообщения сверху.\n`
       + `${styleHints(room)}\n`
       + (said ? `Сначала ответь ровно на это: «${said}». Потом, если есть что, добавь своё.\n` : '')
+      + selfBlock()
       + todayBlock()
       + affairsBlock()
       + adviceBlock(room)
@@ -256,6 +268,7 @@ async function composeLetterReply(sender, body, { owner = false } = {}) {
     ? `Тебе пришло письмо от ${who} - это твой командир и старший в клане. Ответь коротко и по делу (1-3 предложения): что понял из письма, что сделаешь, и спроси, если что-то неясно. Без байки и без шуток-заглушек, лишнего не обещай.`
     : `Тебе пришло личное письмо от игрока ${who}. Ответь письмом в 1-3 предложения (до 400 символов).`;
   const user = `${task}\n`
+    + selfBlock()
     + todayBlock()
     + affairsBlock()
     + (mem ? `<memory>\n${mem}\n</memory>\n` : '')

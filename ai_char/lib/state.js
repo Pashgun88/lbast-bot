@@ -147,6 +147,15 @@ S.drabasNoPetUntil = 0;
 // Про взятый уровень надо не просто написать в лог, а дать знать в Telegram один раз - шмотки,
 // статы и тату разбираются с Пашей (см. чек-лист уровня).
 S.levelUpReported = false;
+// Живой уровень персонажа из анкеты. 03.10.2026, Паша: «ты всё ещё упоминаешь что ты 7 уровень, но
+// ты 8-й уже давно» - уровень был записан только словами в chat_memory/affairs.txt, то есть устарел
+// молча. Теперь он читается из игры (lib/levelup.js) и попадает в промпт чата как факт, а не память.
+S.charLevel = 0;
+// Скорость лечения из анкеты («Лечение: N hp/мин») и когда её прочли. Паша, 03.10.2026: «лечение
+// смотри в Кулаке Хаоса в профиле, я тебе дом купил максимальный» - реген зависит от места, а в
+// коде стояла константа 16. Ноль значит «не читали, берём константу».
+S.healRatePerMin = 0;
+S.healRateAt = 0;
 
 // Полив винограда: каждые 8 часов.
 const VINOGRAD_INTERVAL_MS = 8 * 60 * 60 * 1000;
@@ -360,6 +369,9 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.drabasRunsToday)) S.drabasRunsToday = s.drabasRunsToday;
   if (Number.isFinite(s.drabasNoPetUntil)) S.drabasNoPetUntil = s.drabasNoPetUntil;
   if (typeof s.levelUpReported === 'boolean') S.levelUpReported = s.levelUpReported;
+  if (Number.isFinite(s.charLevel)) S.charLevel = s.charLevel;
+  if (Number.isFinite(s.healRatePerMin)) S.healRatePerMin = s.healRatePerMin;
+  if (Number.isFinite(s.healRateAt)) S.healRateAt = s.healRateAt;
 
   if (Number.isFinite(s.lastVinogradRunAt)) S.lastVinogradRunAt = s.lastVinogradRunAt;
   if (Number.isFinite(s.lastFishSaleAt)) S.lastFishSaleAt = s.lastFishSaleAt;
@@ -446,6 +458,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
+    charLevel: S.charLevel, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,

@@ -82,9 +82,11 @@ const PASS = process.env.AI_PASS;
 // ещё может задать конкретное число, если понадобится вручную ограничить прогон.
 const MAX_CYCLES = Number(process.env.AI_MAX_CYCLES || Infinity);
 
-// Наблюдаемая скорость регена (страница профиля пишет "Лечение: 16 hp/мин.").
-// Считаем сами, когда персонаж будет здоров, вместо того чтобы гонять его в новые бои с низким HP.
+// Скорость регена. Запасное значение на случай, если анкету ещё не читали: живое число берётся из
+// профиля (lib/levelup.js -> S.healRatePerMin), потому что реген зависит от места - 03.10.2026 Паша:
+// «лечение смотри в Кулаке Хаоса в профиле, я тебе дом купил максимальный».
 const HEAL_RATE_HP_PER_MIN = 16;
+const healRate = () => (S.healRatePerMin > 0 ? S.healRatePerMin : HEAL_RATE_HP_PER_MIN);
 
 // Одиночные необязательные бои вне сюжетных квестов (Рыбий глаз, будущий "слизняк" и т.п.) —
 // по прямой просьбе Паши идти в такой бой только при HP > 50% от максимума, чтобы не ловить
@@ -284,7 +286,8 @@ async function runFarmSession(page) {
       if (!/Кулак Хаоса/i.test(here)) {
         await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       }
-      console.log(`Фарм-сессия: HP ${st.hpCurrent}/${st.hpMax} -> лечусь в Кулаке Хаоса до ${Math.round(FARM_HEAL_TARGET * 100)}%.`);
+      await readHealRateHere(page).catch(() => 0); // скорость регена читаем на месте, в Кулаке
+      console.log(`Фарм-сессия: HP ${st.hpCurrent}/${st.hpMax} -> лечусь в Кулаке Хаоса до ${Math.round(FARM_HEAL_TARGET * 100)}% (реген ${healRate()} hp/мин).`);
       // Жарить сразу по приходу, не дожидаясь первого замера через 2 минуты (Паша, 19.09.2026).
       const firstSt = await readLocationStats(page);
       await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, firstSt).catch(() => {}));
@@ -357,7 +360,7 @@ const { claimTrigPremiumIfReady } = require('./lib/trig_premium');
 const { sellFriedFishIfDue, sellHidesInGeneralShop } = require('./lib/fish_sale');
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
-const { checkLevelUpIfDue } = require('./lib/levelup');
+const { checkLevelUpIfDue, readHealRateHere } = require('./lib/levelup');
 const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendingFightQuestsNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 const { acceptPendingLeasesIfAny } = require('./lib/lease');
@@ -558,7 +561,7 @@ async function waitForHeal(page) {
       return stats;
     }
     const needed = stats.hpMax - stats.hpCurrent;
-    const waitMinutes = Math.ceil(needed / HEAL_RATE_HP_PER_MIN) + 1;
+    const waitMinutes = Math.ceil(needed / healRate()) + 1;
     const eta = new Date(Date.now() + waitMinutes * 60_000);
     console.log(
       `HP=${stats.hpCurrent}/${stats.hpMax} -> персонаж выбыл из строя. Жду восстановления ~${waitMinutes} мин (до ${eta.toLocaleTimeString('ru-RU')}), браузер остаётся открытым.`
@@ -1231,7 +1234,7 @@ async function loginIfNeeded(page) {
       if (idleStats && typeof idleStats.hpCurrent === 'number' && idleStats.hpMax > 0) {
         const need = Math.ceil(idleStats.hpMax * 0.7);
         if (idleStats.hpCurrent < need) {
-          idleMinutes = Math.max(1, Math.min(idleMinutes, Math.ceil((need - idleStats.hpCurrent) / 14)));
+          idleMinutes = Math.max(1, Math.min(idleMinutes, Math.ceil((need - idleStats.hpCurrent) / healRate())));
           // 18.09.2026, Паша: "купил тебе дом, теперь для быстрого лечения достаточно просто
           // стоять в локации кулак хаоса". Ждём HP не где попало, а там: амулетом в Кулак Хаоса.
           // Скорость лечения там ещё не замерена, поэтому спим не дольше 3 минут и пишем HP
@@ -1241,7 +1244,8 @@ async function loginIfNeeded(page) {
             console.log(`Лечение: HP ${idleStats.hpCurrent}/${idleStats.hpMax} < 70% -> иду в Кулак Хаоса (там дом).`);
             await page.goto('http://lbast.ru/location.php?mod=fastway&lway=4', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
           }
-          console.log(`Лечение в Кулаке Хаоса: HP ${idleStats.hpCurrent}/${idleStats.hpMax} в ${new Date().toLocaleTimeString('ru-RU')}`);
+          await readHealRateHere(page).catch(() => 0); // «смотри в Кулаке Хаоса в профиле» - раз в час
+          console.log(`Лечение в Кулаке Хаоса: HP ${idleStats.hpCurrent}/${idleStats.hpMax} в ${new Date().toLocaleTimeString('ru-RU')}, реген ${healRate()} hp/мин`);
           await fryFishWhileHealing(page, idleStats).catch(() => {});
           idleMinutes = Math.min(idleMinutes, 3);
         }

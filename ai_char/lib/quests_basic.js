@@ -14,6 +14,7 @@ const {
   getDayKeyNow, LIFE_TREE_DAILY_LIMIT, persistDailyQuestState, QUEST_FIGHT_HP_FLOOR,
 } = require('./state');
 const { getBodyText, pause } = require('./core');
+const { beat } = require('./self_restart');
 const {
   canRunDrabasNow, canRunFishEyeFightNow, canRunFishEyeRewardNow, canRunLifeTreeNow,
   runNonQQuestSafe, syncDrabasDayState, syncFishEyeDayState,
@@ -372,6 +373,31 @@ async function runDrabasQuest(page) {
     persistDailyQuestState();
     console.log('Drabas quest: \u043a\u0430\u043c\u043d\u0438 \u043d\u0438 \u043a \u0447\u0435\u043c\u0443 - \u043d\u0435\u0442 \u043f\u0438\u0442\u043e\u043c\u0446\u0430 (\u0443\u043a\u0440\u043e\u0442\u0438\u0442\u0435\u043b\u044c, 2000 \u0434\u0438\u043d). \u041a\u0432\u0435\u0441\u0442 \u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d \u043d\u0430 \u0441\u0443\u0442\u043a\u0438.');
     return false;
+  }
+
+  // 03.10.2026, Паша прислал ошибку: шаг «Напасть» не нашёлся, а на экране было «Вам нужно
+  // отдохнуть еще 4 мин». Это не поломка маршрута, а кулдаун боя: из-за четырёх минут квест падал
+  // ошибкой в Telegram и терялся на день. Пережидаем на месте (не дольше 6 минут), возвращаемся
+  // «Вернуться» и повторяем поиск камней; отдыхать дольше - уходим тихо, вернёмся в другом круге.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const restText = await getBodyText(page);
+    const rest = restText.match(/нужно отдохнуть еще\s+(\d+)\s*мин/i);
+    if (!rest) break;
+    const restMin = Number(rest[1]);
+    if (attempt > 1 || restMin > 6) {
+      console.log(`Драбас: нужно отдохнуть ${restMin} мин - не настаиваю, вернусь в следующем круге.`);
+      return false;
+    }
+    console.log(`Драбас: нужно отдохнуть ${restMin} мин - пережду на месте и повторю.`);
+    await new Promise((r) => setTimeout(r, (restMin + 1) * 60_000));
+    beat();
+    await clickByTexts(page, ['\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f', '\u0432\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f'], 'Drabas: back after rest').catch(() => false);
+    await pause(page, 800, 1600);
+    await tryPerformStepOptional(page, {
+      stepName: '\u0418\u0441\u043a\u0430\u0442\u044c \u043a\u0430\u043c\u043d\u0438 \u0414\u0440\u0430\u0431\u0430\u0441\u0430',
+      currentTexts: ['\u0418\u0441\u043a\u0430\u0442\u044c \u043a\u0430\u043c\u043d\u0438 \u0414\u0440\u0430\u0431\u0430\u0441\u0430'],
+      retries: 2,
+    });
   }
 
   await performStep(page, {
