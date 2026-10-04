@@ -140,7 +140,11 @@ async function equipEmblemFromBag(page) {
       let lastName = '';
       for (const a of Array.from(document.querySelectorAll('a'))) {
         const t = (a.textContent || '').trim();
-        if (t === 'Экипировать') { if (/^Герб\b/i.test(lastName)) return a.getAttribute('href'); continue; }
+        // ВНИМАНИЕ: было /^Герб\b/ - и не работало НИКОГДА. \b в JS считает словом только
+        // ASCII, поэтому между кириллической «б» и пробелом границы слова нет, и «Герб Боги войны»
+        // не совпадал. Из-за этого 04.10.2026 герб лежал в сумке неодетым, а я искал причину в
+        // страницах инвентаря. Тот же капкан уже ловил меня на \w в Штольнях.
+        if (t === 'Экипировать') { if (/^Герб(?:\s|$)/i.test(lastName)) return a.getAttribute('href'); continue; }
         if (t && !/^\d+$/.test(t) && !/^(Использовать|Передать|Экипировать|Снять|Вернуть|Взять|\[i\])$/.test(t)) lastName = t;
       }
       return null;
