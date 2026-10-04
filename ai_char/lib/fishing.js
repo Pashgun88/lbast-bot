@@ -10,7 +10,10 @@ module.exports = {
 };
 
 const { tanHidesInHouse, tanningPaused } = require('./tanning');
-const { brewBragaInHouse, brewingPaused, BRAGA_RESERVE_COST } = require('./brewing');
+// Берём МОДУЛЬ, а не свойства: lib/* связаны по кругу через module.js, и при разборе по месту
+// импорт приходит undefined (node так и предупреждает: «Accessing non-existent property ... inside
+// circular dependency»). Свойства читаем в момент вызова, когда модуль уже догружен.
+const brewing = require('./brewing');
 const { S, FISHING_DAILY_CATCH_LIMIT, persistDailyQuestState } = require('./state');
 const { getBodyText, pause, snapshotText, parseStats } = require('./core');
 const { canRunFishingNow, syncFishingDayState } = require('./daily_quests');
@@ -128,6 +131,8 @@ const FRY_RESERVE_COST = 10;
 // Цена пары кож дублирует lib/tanning.js намеренно: модули связаны по кругу через module.js,
 // и импорт числа приходит undefined -> условие становится NaN и дубление снова не запускается.
 const TAN_RESERVE_COST = 15;
+// Цена захода в самогонный аппарат дублируется по той же причине, что и цена пары кож.
+const BRAGA_RESERVE_COST = 10;
 
 // S.kitchenOutOfFish: объявлено в lib/state.js (всё изменяемое состояние - там).
 
@@ -146,7 +151,7 @@ function choreOrder() {
   const last = CHORES.includes(S.houseChoreLast) ? S.houseChoreLast : 'brew';
   const from = (CHORES.indexOf(last) + 1) % CHORES.length;
   const order = [...CHORES.slice(from), ...CHORES.slice(0, from)];
-  return order.filter((c) => (c === 'tan' ? !tanningPaused() : c === 'brew' ? !brewingPaused() : true));
+  return order.filter((c) => (c === 'tan' ? !tanningPaused() : c === 'brew' ? !brewing.brewingPaused() : true));
 }
 
 // Запас резерва на квесты нужен только живому персонажу. Паша, 01.10.2026: «но сейчас минус хп,
@@ -219,7 +224,7 @@ async function fryFishWhileHealing(page, stats) {
         }
       } else if (chore === 'brew') {
         if (left >= need.brew) {
-          const leftAfter = await brewBragaInHouse(page, `http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, left, need.brew);
+          const leftAfter = await brewing.brewBragaInHouse(page, `http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, left, need.brew);
           if (leftAfter < left) {
             fried = true;
             S.houseChoreLast = 'brew';

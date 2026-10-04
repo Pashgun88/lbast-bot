@@ -18,6 +18,18 @@ const { S } = require('./state');
 const { getBodyText, pause } = require('./core');
 
 const OUTFIT_URL = 'http://lbast.ru/inv.php?mod=outfit';
+// Конь, пункт «В клановый замок». Своё ожидание дороги, а не импорт из lib/assassins: lib/* связаны
+// по кругу через module.js, и импорт функции оттуда приходит undefined (см. раскладку кода).
+const CLAN_CASTLE_KONJ_URL = 'http://lbast.ru/location.php?mod=konj&lway=10';
+async function goToClanCastle(page) {
+  await page.goto(CLAN_CASTLE_KONJ_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  for (let i = 0; i < 8; i++) {
+    const t = await getBodyText(page).catch(() => '');
+    if (!/В\s*пути/i.test(t)) break;
+    await pause(page, 2000, 3000);
+    await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  }
+}
 const PROGRESS_URL = 'http://lbast.ru/zamok.php?mod=active_progress';
 const CHECK_EVERY_MS = 60 * 60 * 1000;
 // «inv.php» без invMod - отдельный список страниц, не то же, что invMod=2/3 (на нём нашёлся
@@ -57,8 +69,19 @@ async function takeClanEmblemIfDue(page) {
   }
 
   console.log('Клановый герб: слот клан-вещи пуст -> иду в замок, активный прогресс.');
+  // 04.10.2026, Паша: «а почему ты клановый герб не берешь в замке?» Потому что приходил в ЧУЖОЙ
+  // замок. zamok.php показывает замок ТОЙ локации, где стоишь, а стоял AI__ где попало после
+  // квестов - и экран честно отвечал «Вы стоите на руинах замка, некогда принадлежавшего клану
+  // Лудос» (так с 11:21 и каждый круг). 26.09, когда механику снимали, персонаж случайно оказался
+  // в нужном месте, и это приняли за «прямой заход работает».
+  // Теперь сначала едем к СВОЕМУ замку: у коня для этого есть отдельный пункт «В клановый замок».
+  await goToClanCastle(page);
   await page.goto(PROGRESS_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   const progress = await getBodyText(page).catch(() => '');
+  if (/руинах замка/i.test(progress)) {
+    console.log(`Клановый герб: это чужой замок (${flat(progress, 120)}) - к своему не доехал, попробую в следующем круге.`);
+    return false;
+  }
   const href = await page.evaluate(() => {
     const a = Array.from(document.querySelectorAll('a')).find((x) => /Клановый герб/i.test((x.textContent || '').trim()));
     return a ? a.getAttribute('href') : null;

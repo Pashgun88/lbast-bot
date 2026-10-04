@@ -8,11 +8,15 @@
 //
 // Запас держим маленький: брага нужна штуки по одной под квест, а резерв нужнее рыбе и кожам.
 
-module.exports = { brewBragaInHouse, BRAGA_RESERVE_COST };
+// Только функции: число экспортируется ПОСЛЕ объявления. Ровно на этом сорвался старт драйвера
+// 04.10.2026 («Cannot access BRAGA_RESERVE_COST before initialization») - тот же капкан, что уже
+// был с TAN_RESERVE_COST в lib/tanning.js.
+module.exports = { brewBragaInHouse };
 
 const { getBodyText, pause } = require('./core');
 
 const BRAGA_RESERVE_COST = 10;
+module.exports.BRAGA_RESERVE_COST = BRAGA_RESERVE_COST;
 const BRAGA_KEEP = Number(process.env.AI_BRAGA_KEEP || 3); // больше в сумке держать смысла нет
 const NO_HOPS_RECHECK_MS = 3 * 60 * 60 * 1000; // хмель кончился - заглянуть через 3 ч
 let noHopsAt = 0;
