@@ -385,6 +385,7 @@ const { sellFriedFishIfDue, sellHidesInGeneralShop } = require('./lib/fish_sale'
 const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
 const { checkLevelUpIfDue, readHealRateHere } = require('./lib/levelup');
+const { sendSkullsIfDue } = require('./lib/skulls');
 const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendingFightQuestsNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 const { acceptPendingLeasesIfAny } = require('./lib/lease');
@@ -915,6 +916,11 @@ async function loginIfNeeded(page) {
       // 26.09.2026, Паша: «раз в неделю нужно взять клановый герб и одеть его... если в экипировке
       // на месте клан-вещи - пусто. В замке - активный прогресс». Шаг мирный: ни боёв, ни трат.
       r = await runCycleStep(page, 'Клановый герб', () => takeClanEmblemIfDue(page));
+      if (r.ko) continue;
+      didAnything = didAnything || r.didAnything;
+
+      // Черепа с молега - в казну клана раз в 2 дня (Паша, 04.10.2026: «отправляй раз в 2 дня»).
+      r = await runCycleStep(page, 'Черепа в казну', () => sendSkullsIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

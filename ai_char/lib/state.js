@@ -151,6 +151,8 @@ S.levelUpReported = false;
 // ты 8-й уже давно» - уровень был записан только словами в chat_memory/affairs.txt, то есть устарел
 // молча. Теперь он читается из игры (lib/levelup.js) и попадает в промпт чата как факт, а не память.
 S.charLevel = 0;
+// Когда последний раз отправляли черепа в казну клана (lib/skulls.js, раз в 2 дня по слову Паши).
+S.skullsSentAt = 0;
 // Скорость лечения из анкеты («Лечение: N hp/мин») и когда её прочли. Паша, 03.10.2026: «лечение
 // смотри в Кулаке Хаоса в профиле, я тебе дом купил максимальный» - реген зависит от места, а в
 // коде стояла константа 16. Ноль значит «не читали, берём константу».
@@ -370,6 +372,7 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.drabasNoPetUntil)) S.drabasNoPetUntil = s.drabasNoPetUntil;
   if (typeof s.levelUpReported === 'boolean') S.levelUpReported = s.levelUpReported;
   if (Number.isFinite(s.charLevel)) S.charLevel = s.charLevel;
+  if (Number.isFinite(s.skullsSentAt)) S.skullsSentAt = s.skullsSentAt;
   if (Number.isFinite(s.healRatePerMin)) S.healRatePerMin = s.healRatePerMin;
   if (Number.isFinite(s.healRateAt)) S.healRateAt = s.healRateAt;
 
@@ -458,7 +461,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, skullsSentAt: S.skullsSentAt, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,
