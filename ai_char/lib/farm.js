@@ -7,6 +7,7 @@ module.exports = {
   enterPodvaly, runPodvalyFarmRound, isHarpyLocation, goRouteToHarpy, openHarpyFight,
   runHarpyFarmRound, isBisonLocation, goRouteToBison, openBisonFight, runBisonFarmRound,
   isBoarLocation, goRouteToBoar, openBoarFight, runBoarFarmRound, runSawmillGuardRound,
+  isMolegLocation, goRouteToMoleg, runMolegFarmRound,
 };
 
 const {
@@ -392,6 +393,89 @@ async function openBisonFight(page) {
 // воскресенье x3, см. HARPY/BISON_HUNT_WEEKDAYS выше) бизон и кабан остаются обычными
 // фармящимися мобами без ограничения по числу боёв - единственный реальный гейт это
 // игровой кулдаун по цели (fight_target_cooldown, тот же механизм). Дневной счётчик/гейт
+// ===================================================================================
+// МОЛЕГ, Гора Вейлия. Паша, 04.10.2026: «давай сменим точку фарма на молега», «зайти в пещеру».
+// Где он - я не знал: в маршрутах его нет, в справке только дроп («Молег - Череп 50%»), а клан
+// третий раз посылал «на молегов» без дороги. Нашёл слоем «Боты» на карте мира
+// (map.php?mv=0&go=showBot): «№149 - Молег -> Гора Вейлия».
+//
+// Дорога: Конь -> Гора Вейлия (lway=20), «Зайти в пещеру» = location_boi.php (это и есть экран
+// охоты локации), затем «Встретить опасность» (go=1) и обычный бой.
+//
+// Живой проверочный бой 04.10.2026: выигран, HP 460 -> 229, то есть 231 за бой - ровно половина
+// запаса. Поэтому порог 0.9: начав ниже, можно не дожить до конца боя.
+//
+// ВАЖНО про лечение: на Горе Вейлия анкета показывает 18 hp/мин, а в Кулаке Хаоса с 50-метровым
+// домом - 26. Бонус дома действует только в своей локации, поэтому лечиться надо дома, а на гору
+// возвращаться на коне (так и работает: драйвер лечится в Кулаке, а раунд сам доедет обратно).
+// ===================================================================================
+const MOLEG_HP_SAFETY_FRACTION = 0.9; // бой снимает ~231 из 460
+const MOLEG_KONJ_URL = 'http://lbast.ru/location.php?mod=konj&lway=20';
+
+function isMolegLocation(text) {
+  return /Гора Вейлия|ПЕЩЕРА/i.test(String(text || ''));
+}
+
+async function goRouteToMoleg(page) {
+  await page.goto(MOLEG_KONJ_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 900, 1500);
+  await waitOutHorseTravel(page, 'http://lbast.ru/location.php');
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+}
+
+async function runMolegFarmRound(page, buffed = false) {
+  const floor = buffed ? Math.min(MOLEG_HP_SAFETY_FRACTION, HP_FLOOR_WITH_BUFF) : MOLEG_HP_SAFETY_FRACTION;
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  let stats = parseStats(await getBodyText(page));
+  const low = (st) => typeof st.hpCurrent !== 'number' || typeof st.hpMax !== 'number'
+    || st.hpCurrent <= 0 || st.hpCurrent < st.hpMax * floor;
+  // Порог проверяем ДО дороги: гонять коня туда-обратно при низком HP бессмысленно.
+  if (low(stats)) return false;
+
+  if (!isMolegLocation(await getBodyText(page))) {
+    await goRouteToMoleg(page).catch((e) => console.log('Moleg farm: дорога не пройдена:', e.message));
+  }
+  if (!isMolegLocation(await getBodyText(page))) {
+    console.log('Moleg farm: на Гору Вейлия не попал - пропускаю круг.');
+    return false;
+  }
+  stats = parseStats(await getBodyText(page));
+  if (low(stats)) return false;
+
+  // Пещера = экран охоты. Пока не отдохнули, она отвечает «Вы слишком устали, приходите через N мин».
+  await page.goto('http://lbast.ru/location_boi.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const caveText = await getBodyText(page);
+  const tired = caveText.match(/приходите через\s+(\d+)\s*мин/i);
+  if (tired) {
+    console.log(`Moleg farm: ещё не отдохнул (${tired[1]} мин) -> попробую в следующем круге`);
+    noteFarmCooldown(Number(tired[1]));
+    return false;
+  }
+
+  const hpBefore = stats.hpCurrent;
+  await page.goto('http://lbast.ru/location_boi.php?go=1', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  let won;
+  try {
+    won = await fightLoop(page);
+  } catch (e) {
+    const waitMinutes = parseCooldownError(e);
+    if (waitMinutes !== null) {
+      console.log(`Moleg farm: молег ещё на кулдауне (${waitMinutes} мин) -> попробую в следующем круге`);
+      noteFarmCooldown(waitMinutes);
+      return false;
+    }
+    console.log('Moleg farm: fightLoop error:', e.message);
+    won = null;
+  }
+
+  const statsAfter = parseStats(await getBodyText(page));
+  const hpAfter = typeof statsAfter.hpCurrent === 'number' ? statsAfter.hpCurrent : null;
+  const delta = hpAfter !== null ? hpBefore - hpAfter : null;
+  console.log(`Moleg farm: fight result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
+  return true;
+}
+
 // по дню недели больше НЕ применяется к фарму - вызывается каждый цикл как обычный
 // repeat-farm (1 бой за вызов, как Подвалы раньше).
 async function runBisonFarmRound(page, buffed = false) {

@@ -84,7 +84,7 @@ const {
   runThursdayDailiesIfAvailable, runWeekdayHuntsIfDue,
 } = require('./lib/weekday_dailies');
 const {
-  runBisonFarmRound, runBoarFarmRound, runHarpyFarmRound, runPodvalyFarmRound, runSawmillGuardRound,
+  runBisonFarmRound, runBoarFarmRound, runHarpyFarmRound, runMolegFarmRound, runPodvalyFarmRound, runSawmillGuardRound,
 } = require('./lib/farm');
 const {
   CHAT_ROOMS, chatMessageAgeMinutes, detectChatTriggers, extractChatMessagesSection,
@@ -119,6 +119,7 @@ module.exports = {
   runHarpyFarmRound,
   runBisonFarmRound,
   runBoarFarmRound,
+  runMolegFarmRound,
   runSawmillGuardRound,
   runDemonLakeQuestIfAvailable,
   runShipwreckQuestIfAvailable,
