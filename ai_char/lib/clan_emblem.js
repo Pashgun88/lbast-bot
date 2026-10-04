@@ -34,10 +34,12 @@ const PROGRESS_URL = 'http://lbast.ru/zamok.php?mod=active_progress';
 const CHECK_EVERY_MS = 60 * 60 * 1000;
 // «inv.php» без invMod - отдельный список страниц, не то же, что invMod=2/3 (на нём нашёлся
 // Жертвенный кинжал, которого поиск по invMod не видел).
-const INV_PAGES = [
-  'http://lbast.ru/inv.php', 'http://lbast.ru/inv.php?cpage=2',
-  'http://lbast.ru/inv.php?invMod=2', 'http://lbast.ru/inv.php?invMod=2&cpage=2',
-  'http://lbast.ru/inv.php?invMod=3', 'http://lbast.ru/inv.php?invMod=3&cpage=2',
+// Три вида инвентаря (обычный, invMod=2, invMod=3): герб может лежать в любом. Страницы внутри
+// каждого вида добираются по ссылкам пагинации, а не угадываются номерами.
+const INV_VIEWS = [
+  'http://lbast.ru/inv.php',
+  'http://lbast.ru/inv.php?invMod=2',
+  'http://lbast.ru/inv.php?invMod=3',
 ];
 
 function flat(text, limit = 300) {
@@ -68,6 +70,9 @@ async function takeClanEmblemIfDue(page) {
     return false;
   }
 
+  // Сначала смотрим в сумке: герб могли выдать раньше, а надеть не получиться. В замок за новым
+  // идти бессмысленно - он выдаётся раз в неделю.
+  if (await equipEmblemFromBag(page)) return true;
   console.log('Клановый герб: слот клан-вещи пуст -> иду в замок, активный прогресс.');
   // 04.10.2026, Паша: «а почему ты клановый герб не берешь в замке?» Потому что приходил в ЧУЖОЙ
   // замок. zamok.php показывает замок ТОЙ локации, где стоишь, а стоял AI__ где попало после
@@ -104,7 +109,31 @@ async function takeClanEmblemIfDue(page) {
   }
   console.log('Клановый герб: получен, ищу в сумке и надеваю.');
 
-  for (const url of INV_PAGES) {
+  return await equipEmblemFromBag(page);
+}
+
+// Найти герб в сумке и надеть. Отдельно от получения: герб выдают раз в неделю, и если его уже
+// выдали, а надеть не удалось (так вышло 04.10.2026), второй раз игра не даст - значит надевать
+// надо из сумки, не ходя в замок.
+async function equipEmblemFromBag(page) {
+  // 04.10.2026: герб ВЗЯТ, но надеть не вышло - «в сумке ссылки Экипировать для герба не нашёл».
+  // Причина: в INV_PAGES перебирались только cpage=2, а инвентарь разросся до 207 предметов и пяти
+  // страниц. Теперь страницы берём не из списка наугад, а по ССЫЛКАМ пагинации самой игры -
+  // сколько бы их ни стало.
+  const pages = [];
+  for (const base of INV_VIEWS) {
+    const ok = await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 }).then(() => true).catch(() => false);
+    if (!ok) continue;
+    pages.push(base);
+    const nums = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .filter((a) => /^[0-9]+$/.test((a.textContent || '').trim()))
+      .map((a) => a.getAttribute('href')).filter(Boolean), []).catch(() => []);
+    for (const h of nums) {
+      const abs = new URL(h, 'http://lbast.ru/').href;
+      if (!pages.includes(abs)) pages.push(abs);
+    }
+  }
+  for (const url of pages) {
     const ok = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).then(() => true).catch(() => false);
     if (!ok) continue;
     const equipHref = await page.evaluate(() => {
@@ -123,6 +152,6 @@ async function takeClanEmblemIfDue(page) {
     await pause(page, 500, 900);
     return true;
   }
-  console.log('Клановый герб: получен, но в сумке ссылки «Экипировать» для герба не нашёл.');
+  console.log(`Клановый герб: ссылки «Экипировать» для герба в сумке нет (просмотрено страниц: ${pages.length}).`);
   return false;
 }
