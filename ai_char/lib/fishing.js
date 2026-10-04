@@ -10,6 +10,7 @@ module.exports = {
 };
 
 const { tanHidesInHouse, tanningPaused } = require('./tanning');
+const { brewBragaInHouse, brewingPaused, BRAGA_RESERVE_COST } = require('./brewing');
 const { S, FISHING_DAILY_CATCH_LIMIT, persistDailyQuestState } = require('./state');
 const { getBodyText, pause, snapshotText, parseStats } = require('./core');
 const { canRunFishingNow, syncFishingDayState } = require('./daily_quests');
@@ -136,9 +137,16 @@ const TAN_RESERVE_COST = 15;
 // свежего карася, кухня съедает излишек первой, и до 25 (запас + пара кож) резерв не доживает.
 // Поэтому дела ходят по очереди: пожарили - следующий излишек уходит на кожи, и на «кожаном» ходу
 // рыбу не трогаем, даём резерву дорасти до 25. Если сырых кож нет, очередь пропускается и жарим.
+// Дел теперь три (04.10.2026 Паша поставил самогонный аппарат: «там ты можешь делать брагу из
+// хмеля»). Ходят по кругу рыба -> кожи -> брага: так ни одно не голодает, а резерв максимум 30 и
+// на всё сразу его никогда не хватает. Дело, которому нечего делать (кож нет, хмеля нет), из
+// очереди выпадает, иначе круг вставал бы на нём.
+const CHORES = ['fry', 'tan', 'brew'];
 function choreOrder() {
-  const tanTurn = S.houseChoreLastWasFry === true && !tanningPaused();
-  return tanTurn ? ['tan', 'fry'] : ['fry', 'tan'];
+  const last = CHORES.includes(S.houseChoreLast) ? S.houseChoreLast : 'brew';
+  const from = (CHORES.indexOf(last) + 1) % CHORES.length;
+  const order = [...CHORES.slice(from), ...CHORES.slice(0, from)];
+  return order.filter((c) => (c === 'tan' ? !tanningPaused() : c === 'brew' ? !brewingPaused() : true));
 }
 
 // Запас резерва на квесты нужен только живому персонажу. Паша, 01.10.2026: «но сейчас минус хп,
@@ -155,9 +163,10 @@ async function fryFishWhileHealing(page, stats) {
   const fryMin = floor + FRY_RESERVE_COST;
   const tanMin = floor + TAN_RESERVE_COST;
   const order = choreOrder();
-  // Порог входа - по тому делу, чей ход: на «кожаном» ходу нужно на пару кож, иначе на рыбу.
-  const minNeed = order[0] === 'tan' ? tanMin : fryMin;
-  if (reserve < minNeed) return false;
+  if (!order.length) return false;
+  const need = { fry: fryMin, tan: tanMin, brew: floor + BRAGA_RESERVE_COST };
+  // Порог входа - по тому делу, чей ход: у кож он выше (пара стоит 15), у рыбы и браги по 10.
+  if (reserve < need[order[0]]) return false;
   if (floor === 0) console.log(`Хозяйство: HP ${stats.hpCurrent} - в минусе бои недоступны, трачу резерв (${reserve}) без запаса на квесты.`);
   let fried = false;
   try {
@@ -191,7 +200,7 @@ async function fryFishWhileHealing(page, stats) {
           const t = await getBodyText(page);
           if (/поджарили/i.test(t)) {
             fried = true;
-            S.houseChoreLastWasFry = true;
+            S.houseChoreLast = 'fry';
             const after = parseStats(t);
             const r = typeof after.reserveMinutes === 'number' ? after.reserveMinutes : after.cooldown;
             console.log(`Кухня: поджарил рыбу (резерв был ${left}${typeof r === 'number' ? `, стал ${r}` : ''}).`);
@@ -208,6 +217,15 @@ async function fryFishWhileHealing(page, stats) {
             break;
           }
         }
+      } else if (chore === 'brew') {
+        if (left >= need.brew) {
+          const leftAfter = await brewBragaInHouse(page, `http://lbast.ru/dom.php?mod=inhouse&dom_id=${HOUSE_ID}`, left, need.brew);
+          if (leftAfter < left) {
+            fried = true;
+            S.houseChoreLast = 'brew';
+            left = leftAfter;
+          }
+        }
       } else if (left >= tanMin) {
         // 22.09.2026, Паша: дубить «по тому же принципу», рыба в приоритете. Пара кож стоит 15,
         // значит нужно иметь запас квестов + 15. Дубильный набор живёт на странице дома.
@@ -215,7 +233,7 @@ async function fryFishWhileHealing(page, stats) {
         const leftAfter = await tanHidesInHouse(page, left, tanMin);
         if (leftAfter < left) {
           fried = true;
-          S.houseChoreLastWasFry = false;
+          S.houseChoreLast = 'tan';
           left = leftAfter;
         }
       }

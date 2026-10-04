@@ -416,7 +416,22 @@ function isMolegLocation(text) {
   return /Гора Вейлия|ПЕЩЕРА/i.test(String(text || ''));
 }
 
+// Паша, 04.10.2026: «на бой и на дом ты можешь возвращаться последним порталом в амулете, после
+// того как первый раз сходишь и туда и туда». Пробуем сначала портал - он мгновенный, конь едет
+// несколько секунд. Но портал ведёт на ПРЕДЫДУЩИЙ прыжок, а амулетом пользуются ещё и квестовые
+// маршруты: проверено 04.10 - портал увёл в «Городские кварталы», потому что перед этим драйвер
+// прыгал в город по квесту. Поэтому после портала обязательно смотрим, где оказались, и если не на
+// горе - едем конём. Промах портала ничего не стоит: конь работает из любого места.
+const MOLEG_PORTAL_URL = 'http://lbast.ru/location.php?mod=fastway&lway=1';
+
 async function goRouteToMoleg(page) {
+  await page.goto(MOLEG_PORTAL_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 600, 1200);
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  if (isMolegLocation(await getBodyText(page))) {
+    console.log('Moleg farm: вернулся последним порталом, конь не понадобился.');
+    return;
+  }
   await page.goto(MOLEG_KONJ_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await pause(page, 900, 1500);
   await waitOutHorseTravel(page, 'http://lbast.ru/location.php');
