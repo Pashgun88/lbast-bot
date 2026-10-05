@@ -537,6 +537,7 @@ async function equipOrdoGear(page) {
 // инвентаре есть предметы, ходим докладывать и обменивать медали. Живьём 23.09: 20 докладов подряд,
 // мораль 30 -> 90, две вещи (Боевой посох, Кираса).
 const ORDO_ITEM_RE = /(Медальон бандита|Костяная цепь бандита)/i;
+const ORDO_REPORTS_ENABLED = false; // 05.10.2026: кольцо мастера собрано, предметы идут на продажу
 let ordoMedalRunAt = 0;
 async function runOrdoMedalTurnIn(page) {
   if (Date.now() - ordoMedalRunAt < 20 * 60 * 1000) return false;
@@ -547,12 +548,18 @@ async function runOrdoMedalTurnIn(page) {
     inv += await getBodyText(page).catch(() => '');
   }
   const medals = Number((inv.match(/Медаль Ордо экзекуторс\s+(\d+)/) || [])[1] || (/Медаль Ордо экзекуторс/.test(inv) ? 1 : 0));
-  if (!ORDO_ITEM_RE.test(inv) && medals < 8) return false;
+  // 05.10.2026, Паша: «кольцо мастера ордо собрано, тебе не нужно теперь менять предметы на медали,
+  // предметы теперь можно продать». Доклады предметов прекращены: цель, ради которой они собирались,
+  // достигнута, а каждый предмет теперь стоит денег в лавке. Остаток МЕДАЛЕЙ по-прежнему меняем:
+  // медаль в магазине стоит 1 дин, а вещь Ордо из восьми медалей - 220-247, выбрасывать глупо.
+  if (medals < 8) return false;
   ordoMedalRunAt = Date.now();
 
   await walkToOrdoTower(page);
   let reports = 0;
-  for (let i = 0; i < 30; i++) {
+  // Доклады предметов выключены вместе с их сбором (см. выше): цикл оставлен, но не запускается -
+  // вернуть, если Паша снова скажет копить медали.
+  for (let i = 0; ORDO_REPORTS_ENABLED && i < 30; i++) {
     if (!(await existsAnyText(page, ['Доложить о выполнении задания']))) break;
     await clickByTexts(page, ['Доложить о выполнении задания'], 'Ордо: доклад предмета');
     await pause(page, 600, 1100);
