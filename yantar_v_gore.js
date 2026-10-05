@@ -437,6 +437,16 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+const PAUSE_FLAG_PATH = path.join(__dirname, 'pause.flag');
+
+function isPausedByManager() {
+  try {
+    return fs.existsSync(PAUSE_FLAG_PATH);
+  } catch (e) {
+    return false;
+  }
+}
+
 async function pause(page, min = 500, max = 2000) {
   const scaledMin = Math.max(0, Math.round(min * PAUSE_SPEED_FACTOR));
   const scaledMax = Math.max(scaledMin, Math.round(max * PAUSE_SPEED_FACTOR));
@@ -1449,7 +1459,26 @@ async function doScenario(page) {
 
   console.log('Browser opened. Start loop.');
 
+  let pauseNoticed = false;
+
   while (true) {
+    // Пауза из Telegram (флаг pause.flag ставит manager_bot.js). Раньше её проверял только
+    // daily_quests_piraty.js, а Янтарная гора флаг не читала и 01.10.2026 продолжила фармить на
+    // паузе. Цикл здесь короткий (десятки секунд), поэтому проверяем между циклами и страницу на
+    // паузе не трогаем вовсе.
+    if (isPausedByManager()) {
+      if (!pauseNoticed) {
+        console.log('Пауза (кнопка в Telegram): встал, страницу не трогаю -- браузер в вашем распоряжении. Жду "Продолжить".');
+        pauseNoticed = true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20 * 1000));
+      continue;
+    }
+    if (pauseNoticed) {
+      console.log('Пауза снята -> продолжаю сценарий.');
+      pauseNoticed = false;
+    }
+
     try {
       console.log('==============================');
       console.log('New cycle:', new Date().toLocaleString());
@@ -1490,6 +1519,9 @@ async function doScenario(page) {
       console.log('Retry after ' + delayMinutes + ' min.');
       await fixedPause(page, delayMs);
     }
+
+    // Пауза могла прийти во время сна между циклами -- тогда страницу не трогаем.
+    if (isPausedByManager()) continue;
 
     try {
       await page.goto('http://lbast.ru/location.php', {
