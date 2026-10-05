@@ -169,6 +169,13 @@ async function sellFriedFishIfDue(page) {
 // Сырые кожи НЕ продаём: они сырьё дубления, где цена вырастает с 2 до 60 за штуку. Если понадобится
 // продавать и их - добавить сюда же «кожа дикого».
 const TANNED_HIDE_RE = /выделанн[аоы][яе]\s+кожа/i;
+// 05.10.2026, Паша: «кольцо мастера ордо собрано... предметы теперь можно продать». Лавка боевых
+// ресурсов их не берёт (её страница продажи отвечала «На продажу ничего нет», пока предметы лежали
+// в сумке) - значит продаём там же, где кожи, в обычном магазине Стоунгарда.
+const ORDO_TASK_ITEM_RE = /(медальон бандита|костяная цепь)/i;
+// Что продаём в обычном магазине: выделанные кожи и предметы задания Ордо. Кольца и вещи комплекта
+// сюда НЕ попадают - проверка идёт по этим двум образцам, а не «всё подряд».
+const GENERAL_SHOP_SELL_RE = new RegExp(`(${TANNED_HIDE_RE.source})|(${ORDO_TASK_ITEM_RE.source})`, 'i');
 const HIDE_SALE_INTERVAL_MS = 60 * 60 * 1000;
 let lastHideSaleAt = 0;
 // Сбросить таймер вручную: нужен, когда правишь маршрут и хочешь увидеть продажу сразу.
@@ -210,7 +217,7 @@ async function sellHidesInGeneralShop(page) {
       const text = await getBodyText(page);
       if (!/Инвентарь:/i.test(text)) break;
       const rows = text.split(String.fromCharCode(10)).map((x) => x.trim());
-      const line = rows.find((x) => TANNED_HIDE_RE.test(x) && new RegExp(String.raw`-\s*\d+\s*дин`).test(x));
+      const line = rows.find((x) => GENERAL_SHOP_SELL_RE.test(x) && new RegExp(String.raw`-\s*\d+\s*дин`).test(x));
       if (line) {
         const mm = line.match(new RegExp(String.raw`^(.*?)\s*-\s*(\d+)\s*дин`));
         found = { name: (mm ? mm[1] : line).trim(), price: mm ? Number(mm[2]) : 0, cpage };
@@ -253,7 +260,7 @@ async function sellHidesInGeneralShop(page) {
     const money = (await getBodyText(page)).match(/Деньги:\s*(\d+)/);
     console.log(`Продажа кож: итого ${soldTotal} шт. примерно на ${earned} дин${money ? `, денег теперь ${money[1]}` : ''}.`);
   } else {
-    console.log('Продажа кож: выделанных кож в списке магазина нет.');
+    console.log('Продажа в магазине: ни выделанных кож, ни предметов задания Ордо в списке нет.');
   }
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return soldTotal > 0;
