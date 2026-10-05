@@ -3508,6 +3508,7 @@ async function waitForReserveAtLeast(page, threshold, { waitMs = 7 * 60 * 1000, 
       }
     } catch (e) {
       if (/^hp_big_negative/.test(String(e?.message || ''))) throw e;
+      if (isScenarioPausedError(e)) throw e;
       // ignore other errors
     }
 
@@ -3745,6 +3746,18 @@ async function progressShtolniQuest(page) {
     nextTexts: [...WHAT_HAPPENED, ...WHAT_HAPPENED.map((t) => t.toLowerCase())],
   });
   if (talkOk) progressedIntroOnly = true;
+
+  // Занятый слот игра показывает не сразу, а только после "Поговорить с женщиной". Проверка выше
+  // (до диалога) этого не видела: 01.10.2026 слот держал Рыбный ресторан, и Штольни с 04:33 до 09:00
+  // каждые 3 минуты получали "откажитесь от текущего в анкете", считались "в процессе" и по 30 минут
+  // держали эксклюзивный фокус, не давая циклу делать ничего другого.
+  if (/Вы еще не выполнили другое задание/i.test(await getBodyText(page))) {
+    console.log('Shtolni quest is blocked by another active quest (after talk) -> backoff and do not mark as in-progress');
+    shtolniTakenToday = false;
+    shtolniSuppressedUntil = Date.now() + EXCLUSIVE_QUEST_CONFLICT_BACKOFF_MS;
+    shtolniFocusStartedAt = 0;
+    return false;
+  }
 
   // Some accounts/branches show only the "У ДОРОГИ" description after talking to the woman:
   // "Женщина напряженно всматривается вдаль..." with just an "Уйти" button.
@@ -4558,6 +4571,9 @@ async function runIncomingAttackPvpLoop(page) {
   const ZONES_RE = /(голов|тулов|корпус|ног|живот|рук|плеч|шея)/i;
 
   for (let i = 0; i < 200; i++) {
+    // Пауза из Telegram: ход раз в ~110 сек, бой тянется минутами -- 04.10.2026 на паузе бот
+    // сделал ещё один ход в бою с Пиратом. Проверяем перед каждым ходом.
+    throwIfPausedByManager('входящий бой: ход');
     const text = await getBodyText(page);
     if (DONE_RE.test(text)) {
       return;
@@ -4585,7 +4601,11 @@ async function runIncomingAttackPvpLoop(page) {
 
     const waitSec = randInt(100, 115);
     console.log(`Incoming attack: next random turn in ${waitSec}s`);
-    await fixedPause(page, waitSec * 1000);
+    // Ждём кусками, чтобы пауза сработала сразу, а не после следующего хода.
+    for (let waited = 0; waited < waitSec * 1000; waited += 5000) {
+      throwIfPausedByManager('входящий бой: ожидание хода');
+      await fixedPause(page, Math.min(5000, waitSec * 1000 - waited));
+    }
   }
 }
 
@@ -4626,7 +4646,7 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
 
   if (!isRealAttacker) {
     console.log(`"В бой" -> противник "${opponentName}" (не игрок) -> это бой с ${FARM_LABEL}, не атака`);
-    await runIncomingAttackPvpLoop(page).catch(() => {});
+    await runIncomingAttackPvpLoop(page).catch((e) => { if (isScenarioPausedError(e)) throw e; });
     try {
       await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
       await pause(page, 800, 1600);
@@ -4651,7 +4671,7 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   }
 
   // If the incoming attack leads to a PvP-like fight UI, do random block+hit turns.
-  await runIncomingAttackPvpLoop(page).catch(() => {});
+  await runIncomingAttackPvpLoop(page).catch((e) => { if (isScenarioPausedError(e)) throw e; });
 
   // After handling an incoming attack, immediately check HP and recover in the same cycle instead
   // of silently ending the cycle and leaving the character at negative HP for a full random sleep
@@ -6692,11 +6712,49 @@ const PLAYER_NICK = 'Tsunami';
 async function runSchoolTempleQuest(page) {
   console.log('Квест (школа/казарма/храм): маршрут Амулет -> Дорожный крест -> Север x2 -> школа -> 3 боя -> отказ от задания на странице персонажа');
 
+  // Три боя подряд съедают резерв, и если до школы в том же цикле были лук, лось и демон, игра
+  // посреди маршрута отвечает "Вы слишком устали. Требуется отдых еще N мин." (29.09.2026: после
+  // казармы, на "Идти дальше по дорожке"). Раньше это обрывало маршрут и сжигало попытку дня, хотя
+  // сцена никуда не делась -- надо просто переждать усталость, вернуться на экран сцены и повторить.
+  const MAX_REST_MIN = 10;
+  async function withRest(label, fn) {
+    for (let rest = 0; ; rest++) {
+      try {
+        return await fn();
+      } catch (e) {
+        if (isScenarioPausedError(e) || rest >= 3) throw e;
+        const text = await getBodyText(page).catch(() => '');
+        const tired = text.match(/(?:устали|отдохнуть|отдых)[^0-9]{0,40}?(\d+)\s*мин/i);
+        const fightCd = /^fight_target_cooldown:(\d+)/.exec(e.message || '');
+        const minutes = tired ? Number(tired[1]) : fightCd ? Number(fightCd[1]) : null;
+        if (minutes === null || minutes > MAX_REST_MIN) throw e;
+        const waitMin = Math.max(1, minutes);
+        console.log(`Квест (школа/казарма/храм): устал на шаге "${label}", жду ${waitMin} мин и повторяю`);
+        await sleepPlain(waitMin * 60 * 1000 + 20 * 1000);
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        await pause(page, 800, 1600);
+      }
+    }
+  }
+
   async function click(text, label) {
-    await performStep(page, {
+    await withRest(label || text, () => performStep(page, {
       stepName: label || text,
       currentTexts: [text, text.toLowerCase()],
       retries: 3,
+    }));
+  }
+
+  // "В бой" + сам бой: усталость может всплыть и на входе в бой (fightLoop бросает
+  // fight_target_cooldown), тогда после отдыха заново жмём "В бой".
+  async function fight(label) {
+    await withRest(`В бой (${label})`, async () => {
+      await performStep(page, {
+        stepName: `В бой (${label})`,
+        currentTexts: ['В бой', 'в бой'],
+        retries: 3,
+      });
+      await fightLoop(page);
     });
   }
 
@@ -6719,8 +6777,7 @@ async function runSchoolTempleQuest(page) {
     // Бой 1: тренажёрный зал.
     await click('Войти в тренажерный зал', 'Войти в тренажерный зал');
     await click('Принять бой', 'Принять бой (тренажёрный зал)');
-    await click('В бой', 'В бой (тренажёрный зал)');
-    await fightLoop(page);
+    await fight('тренажёрный зал');
     await click('Продолжить квест', 'Продолжить квест (тренажёрный зал)');
 
     // Бой 2: казарма.
@@ -6729,8 +6786,7 @@ async function runSchoolTempleQuest(page) {
     await click('Открыть дверь ключом', 'Открыть дверь ключом');
     await click('Зайти во вторую комнату', 'Зайти во вторую комнату');
     await click('Принять бой', 'Принять бой (казарма)');
-    await click('В бой', 'В бой (казарма)');
-    await fightLoop(page);
+    await fight('казарма');
     await click('Продолжить квест', 'Продолжить квест (казарма)');
 
     // Бой 3: храм.
@@ -6739,8 +6795,7 @@ async function runSchoolTempleQuest(page) {
     await click('Войти в храм', 'Войти в храм');
     await click('Опустить белый рычаг', 'Опустить белый рычаг');
     await click('Напасть на степняка', 'Напасть на степняка');
-    await click('В бой', 'В бой (храм)');
-    await fightLoop(page);
+    await fight('храм');
     await click('Продолжить квест', 'Продолжить квест (храм)');
 
     await click('Выйти из храма', 'Выйти из храма');
@@ -9312,6 +9367,14 @@ async function doScenario(page) {
   // считается использованной независимо от исхода -- см. runSchoolTempleQuest и
   // canRunSchoolTempleQuestNow.
   if (canRunSchoolTempleQuestNow()) {
+    // `stats` -- снимок с начала цикла: лук, лось и демон к этому моменту уже потратили резерв
+    // (29.09.2026: было 30, до школы дошли почти пустыми и встали на усталости после казармы).
+    const schoolRead = await goToLocationAndReadStats(page, 'stats before school quest');
+    if (schoolRead.attackHandled) return;
+    if (schoolRead.stats) {
+      stats = schoolRead.stats;
+      lastCycleStats = stats;
+    }
     const schoolReserveMinutes = typeof stats?.reserveMinutes === 'number' ? stats.reserveMinutes : stats?.cooldown;
     if (typeof schoolReserveMinutes !== 'number' || schoolReserveMinutes < 20) {
       console.log(`Квест (школа/казарма/храм): пропускаю сегодня (нужно >=20 резервных минут, есть=${schoolReserveMinutes ?? 'n/a'})`);
