@@ -52,6 +52,15 @@ const MAX_SCREENS = 60;
 // Сцена длиннее и дороже галереи: два-три боя в худших ветках плюс два десятка переходов.
 const DEFAULT_MIN_RESERVE = 25;
 const DEFAULT_MIN_HP = 1300;
+// Возврат в недоигранную ветку (после проигранного боя): Паша, 01.10.2026 -- «возвращаемся на
+// квест с 1500 хп».
+const RESUME_MIN_HP = 1500;
+
+// HP персонажа на экране после боя: «Tsunami (-1200/3210)». null -- не нашли.
+function ownHp(text) {
+  const m = String(text || '').match(/Tsunami[^(]{0,20}\((-?\d+)\s*\/\s*(\d+)\)/);
+  return m ? Number(m[1]) : null;
+}
 
 // Ветки из гайда. steps -- короткие однозначные подстроки ссылок по порядку; всё, что между ними
 // (пересказ, «Далее», «Продолжить квест», экраны без выбора), проходчик кликает сам.
@@ -68,7 +77,9 @@ const BRANCHES = [
     steps: ['опушка леса', 'проигнорировать и молча пойти', 'дай-ка и я съем гриб',
       'встретимся на островах'] },
   { n: 5, reward: 'Амулет гнома Таргрина',
-    steps: ['на болота', 'вперед', 'осмотреть еще пару островов'] },
+    // На экране «- Осмотрим еще пару островов.», а не «осмотреть» (гайд): 03.10.2026 ветка встала
+    // тут после боя с вараном, и задание висело до 04.10.
+    steps: ['на болота', 'вперед', 'осмотрим еще пару островов'] },
   { n: 6, reward: 'Ярость Гретхис',
     steps: ['опушка леса', 'понюхать цветок', 'расскажешь про мамы и отца', 'вернуть на форт',
       'обратиться к оркам', 'что это за шары', 'меня там гретхис'] },
@@ -85,8 +96,10 @@ const BRANCHES = [
   { n: 11, reward: 'Лека на 900',
     steps: ['опушка леса', 'понюхать цветок', 'расскажешь про мамы и отца', 'вернуть на форт',
       'идти к ресторану'] },
-  { n: 12, reward: 'Эликсир регенерации', danger: true,
-    // Бой с Доминантным медведем (80000 HP) по гайду загоняет в минус и выкидывает в город.
+  { n: 12, reward: 'Эликсир регенерации',
+    // Бой с Доминантным медведем (80000 HP) по гайду загоняет в минус и выкидывает в город. Ветку
+    // всё равно берём (Паша, 01.10.2026): проиграли -- лечимся в Кулаке хаоса (это делает общий
+    // разбор отрицательного HP в цикле) и возвращаемся на квест с RESUME_MIN_HP.
     steps: ['опушка леса', 'проигнорировать и молча пойти', 'пойдем дальше'] },
   { n: 13, reward: 'Амулет Даэр Тора',
     steps: ['на болота', 'вперед', 'разделяю твое нежелание'] },
@@ -261,6 +274,13 @@ async function approachGretkhis(page, deps) {
   let journal = null;
   for (const step of ['здравствуйте', 'насчет работы']) {
     if (!journal) journal = await readJournal(page);
+    // «Я насчет работы» ВЫДАЁТ задание, и оно занимает слот «Текущее задание». Если по журналу идти
+    // некуда, задание брать нельзя: 01.10.2026 в журнале был только «Эликсир регенерации» (ветка 12,
+    // исключена), бот взял задание и бросил -- и оно до утра держало слот, а Штольни и Ордо
+    // получали «откажитесь от текущего в анкете».
+    if (step === 'насчет работы' && journal && !pickBranch(journal)) {
+      return { ok: true, journal, untaken: true };
+    }
     const l = findLink(await linksOf(page), step);
     if (!l) break;
     await click(page, l.h);
@@ -271,7 +291,7 @@ async function approachGretkhis(page, deps) {
 
 // Проходчик сцены: идёт по steps ветки, а промежуточные экраны (пересказ, «Далее», «Продолжить
 // квест») проходит сам. Бои отдаёт fightLoop. Возврат true -- дошли до конца квеста.
-async function walkBranch(page, branch, deps) {
+async function walkBranch(page, branch, deps, { resume = false } = {}) {
   const { fightLoop, throwIfPaused } = deps;
   let i = 0;
   let fillerStreak = 0;
@@ -285,6 +305,14 @@ async function walkBranch(page, branch, deps) {
     if (/Ударить/.test(text) && /VS\./.test(text)) {
       await fightLoop(page);
       await sleep(1500);
+      // Проигрыш (медведь в ветке 12): дальше по сцене идти нельзя -- выкинуло в город с HP в
+      // минусе. Ветка остаётся в RUN_STATE, следующий заход после лечения продолжит именно её.
+      const after = await getBodyText(page);
+      const hp = ownHp(after);
+      if ((hp !== null && hp <= 0) || /Восстановите здоровье/i.test(after)) {
+        console.log(`Ресторан[${branch.n}]: бой проигран (HP ${hp ?? 'n/a'}) -- лечусь и вернусь на квест с >=${RESUME_MIN_HP} HP`);
+        return false;
+      }
       continue;
     }
 
@@ -297,6 +325,13 @@ async function walkBranch(page, branch, deps) {
     let hit = -1;
     for (let j = i; j < branch.steps.length; j++) {
       if (findLink(links, branch.steps[j])) { hit = j; break; }
+    }
+    // Доигрываем начатую ветку, а на экране самый ПЕРВЫЙ выбор (холмы/болота/опушка) -- значит сцена
+    // свежая: ту ветку уже закончили (например, вручную). Идти по ней в новом задании нельзя --
+    // ветка нового задания должна выбираться по журналу.
+    if (resume && hit === 0 && i === 0) {
+      console.log(`Ресторан[${branch.n}]: сцена начинается с начала -- начатая ветка уже не висит, забываю её`);
+      return 'stale';
     }
     if (hit >= 0) {
       const want = findLink(links, branch.steps[hit]);
@@ -346,6 +381,17 @@ async function walkBranch(page, branch, deps) {
   return false;
 }
 
+// Сданная ветка НЕ освобождает слот «Текущее задание»: в анкете так и висит «Вы выполняете
+// ответственное задание», пока его не снять. 05.10.2026 ветка 3 сдана в 03:42 («завтра приходи»),
+// а Штольни и Ордо (банда) весь день получали «слот занят»; так же было 29.09, 01.10, 03.10, 04.10.
+// Награда к этому моменту уже выдана (30.09 слот снял отказ школы -- Волчий корень остался), а
+// дневная попытка отказом не тратится, так что снимать безопасно.
+async function releaseSlotAfterTurnIn(page, declineCurrentTask) {
+  if (typeof declineCurrentTask !== 'function') return;
+  console.log('Ресторан: ветка сдана -- снимаю «ответственное задание» в анкете, чтобы освободить слот для Штольней и Ордо');
+  await declineCurrentTask(page, 'Рыбный ресторан (после сдачи)', 'ответственное задание');
+}
+
 async function runFishRestaurantQuest(page, deps = {}) {
   const {
     fightLoop, throwIfPaused, hpCurrent = null, reserveMinutes = null,
@@ -363,6 +409,16 @@ async function runFishRestaurantQuest(page, deps = {}) {
   }
   if (minHp && (typeof hpCurrent !== 'number' || hpCurrent < minHp)) {
     console.log(`Ресторан: пропускаю (нужно >=${minHp} HP, есть=${hpCurrent ?? 'n/a'})`);
+    return false;
+  }
+
+  // Журнал сегодня уже показал, что идти не за чем -- до завтра не ездим (раньше бот ездил к
+  // Гретхис каждые 3-5 минут ради одного и того же «Эликсир регенерации»).
+  const today = new Date().toDateString();
+  const pending = loadRun();
+  if (pending.idleDay === today) return false;
+  if (typeof pending.branch === 'number' && typeof hpCurrent === 'number' && hpCurrent < RESUME_MIN_HP) {
+    console.log(`Ресторан: ветка ${pending.branch} не доиграна, возвращаюсь с >=${RESUME_MIN_HP} HP (есть ${hpCurrent})`);
     return false;
   }
 
@@ -405,9 +461,43 @@ async function runFishRestaurantQuest(page, deps = {}) {
   }
 
   console.log(`Ресторан: в журнале доступно: ${available.join(', ') || '(пусто)'}`);
+
+  // Начатую ветку доигрываем ПЕРВОЙ, что бы ни показывал журнал сейчас: ветку выбрал журнал в момент
+  // взятия задания, а на следующий день он показывает уже другое. 04.10.2026 из-за этого задание
+  // ветки 5 висело сутки: журнал «требовал» ветку 21, а сшивать их нельзя -- и бот только пропускал.
+  const pendingRun = loadRun();
+  const pendingBranch = typeof pendingRun.branch === 'number'
+    ? BRANCHES.find((x) => x.n === pendingRun.branch) : null;
+  if (pendingBranch) {
+    console.log(`Ресторан: доигрываю начатую ветку ${pendingBranch.n} «${pendingBranch.reward}»`);
+    const res = await walkBranch(page, pendingBranch, deps, { resume: true });
+    if (res === true || res === 'stale') saveRun({});
+    if (res === true) await releaseSlotAfterTurnIn(page, declineCurrentTask);
+    await goto(page, 'location.php');
+    return res === true;
+  }
+
   const branch = pickBranch(available);
   if (!branch) {
-    console.log('Ресторан: ни одна доступная награда не описана в таблице веток, пропускаю');
+    // Называем ветку и причину: «не описана в таблице» вводило в заблуждение -- Эликсир
+    // регенерации в таблице есть (ветка 12), его просто нельзя брать.
+    const why = available.map((a) => {
+      const b = BRANCHES.find((x) => norm(a).includes(norm(x.reward))
+        || (x.alias || []).some((y) => norm(a).includes(norm(y))));
+      if (!b) return `«${SHORT(a).slice(0, 40)}» -- нет в таблице веток`;
+      const reason = b.danger ? 'опасный бой' : b.manual ? 'уводит с карты, только вручную' : 'путь не описан';
+      return `«${b.reward}» -- ветка ${b.n}, не беру (${reason})`;
+    });
+    console.log(`Ресторан: брать нечего: ${why.join('; ')}`);
+    const run = loadRun();
+    // Задание уже было взято (журнал читали изнутри) -- снимаем, чтобы не держало слот. Только если
+    // это не недоигранная ветка: её сцену бросать нельзя.
+    if (!approach.untaken && typeof run.branch !== 'number' && typeof declineCurrentTask === 'function') {
+      console.log('Ресторан: задание уже взято, а идти некуда -- снимаю его в анкете, чтобы освободить слот');
+      await declineCurrentTask(page, 'Рыбный ресторан', 'ответственное задание');
+    }
+    saveRun({ ...run, idleDay: today });
+    console.log('Ресторан: до завтра не захожу');
     return false;
   }
   // Незаконченная сцена от ДРУГОЙ ветки: дожимать её своими шагами нельзя -- получится сшивка и
@@ -425,7 +515,10 @@ async function runFishRestaurantQuest(page, deps = {}) {
   const ok = await walkBranch(page, branch, deps);
   // Ветка доиграна -- сцены больше нет, память о ней не нужна. Если нет, оставляем: следующий
   // прогон продолжит ЭТУ ветку, а чужую не начнёт.
-  if (ok) saveRun({});
+  if (ok) {
+    saveRun({});
+    await releaseSlotAfterTurnIn(page, declineCurrentTask);
+  }
   await goto(page, 'location.php');
   return ok;
 }
