@@ -121,6 +121,8 @@ function parseArgs() {
   // Защита от петли: 28.09.2026 на экране «Бунгало "Назвать"» исследователь двадцать раз нажал
   // «Назвать» - экран не менялся. Считаем отпечаток экрана; три повтора подряд - стоп.
   const seen = new Map();
+  let backInARow = 0; // сколько раз подряд выходили по «Назад» из тупиковой реплики
+  let hintPos = 0; // указатель в списке подсказок: гайд читается по порядку, а не вразнобой
   for (let step = 1; step <= opt.max; step += 1) {
     let body = await m.getBodyText(page);
     // Пережидаем игровые паузы.
@@ -169,13 +171,38 @@ function parseArgs() {
       continue;
     }
 
-    if (!scene.length) { console.log('СТОП: сюжетных ссылок нет.'); break; }
+    // 06.10.2026, «Передвижная ярмарка»: на экране ответа артиста единственная ссылка - «Назад», и
+    // она же законный выход к списку вопросов. Запрет на «назад» (NEVER_RE) ставился против петель,
+    // но здесь он остановил запись на 37-м экране из 86. Правило точнее: «Назад»/«Вернуться» жмём
+    // ТОЛЬКО когда других сюжетных ссылок нет вовсе, и не больше трёх раз подряд - петля всё равно
+    // упрётся в отпечаток экрана ниже.
+    if (!scene.length) {
+      const back = (await links()).find((x) => /^(назад|вернуться)$/i.test(x.t));
+      if (back && backInARow < 3) {
+        backInARow += 1;
+        console.log('тупик: жму «' + back.t + '» (единственный выход), подряд ' + backInARow);
+        record(back.t, 'возврат из реплики - других ссылок на экране не было');
+        await go(back.h);
+        continue;
+      }
+      console.log('СТОП: сюжетных ссылок нет.');
+      break;
+    }
+    backInARow = 0;
 
     // НА КАРТЕ УГАДЫВАТЬ НЕЛЬЗЯ. Страница локации всегда содержит «Кто здесь?» - и там первая ссылка
     // это просто соседняя клетка, а не выбор в сцене (28.09.2026 первый прогон так ушёл гулять по
     // Стоунгарду). В сцене же служебных ссылок нет вовсе. Поэтому на карте идём только по подсказке.
     const onMap = /Кто здесь\?/i.test(body);
-    const hinted = hints.find((h) => scene.some((x) => norm(x.t).startsWith(norm(h))));
+    // Подсказки - это ПОСЛЕДОВАТЕЛЬНОСТЬ шагов гайда, а не список разрешённых слов. Раньше искали
+    // первую подходящую с начала списка - и 06.10.2026 на ярмарке запись закрутилась: «Спросить про
+    // Блейма» подходила всегда, её и выбирали, 250 экранов вместо 86. Теперь ищем ближайшую
+    // НЕИСПОЛЬЗОВАННУЮ, начиная с текущей позиции, и после клика сдвигаем указатель.
+    let hintIdx = -1;
+    for (let i = hintPos; i < hints.length; i += 1) {
+      if (scene.some((x) => norm(x.t).startsWith(norm(hints[i])))) { hintIdx = i; break; }
+    }
+    const hinted = hintIdx >= 0 ? hints[hintIdx] : null;
     if (onMap && !hinted) {
       console.log('СТОП: я на карте (' + (body.split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean)[1] || '') + '), а подсказки на этот экран нет.');
       console.log('Добавь в --hints нужную ссылку из вариантов выше и запусти снова.');
@@ -187,7 +214,8 @@ function parseArgs() {
       if (scene.length === 1) pick = scene[0];
       else { pick = scene[0]; branch = scene.map((x) => x.t).join(' | '); }
     }
-    console.log('жму: ' + pick.t + (branch ? '   (ВЕТКА)' : ''));
+    if (hintIdx >= 0 && pick && norm(pick.t).startsWith(norm(hints[hintIdx]))) hintPos = hintIdx + 1;
+    console.log('жму: ' + pick.t + (branch ? '   (ВЕТКА)' : '') + (hintIdx >= 0 ? `   [подсказка ${hintIdx + 1}/${hints.length}]` : ''));
     const before = await readHp();
     await go(pick.h);
     const now = await readHp();
