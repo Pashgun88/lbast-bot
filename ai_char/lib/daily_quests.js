@@ -137,6 +137,7 @@ async function runDailyQuests(page, stats) {
   const menuText = await getBodyText(page);
   let listedQuests = parseQuestNamesFromQMenuText(menuText);
   console.log('Q menu quest names:', JSON.stringify(listedQuests));
+  reportQuestsWithoutRoute(listedQuests);
   // Запоминаем последний НЕПУСТОЙ список: драйвер по нему решает, может ли квест по гайду вообще
   // начаться. 28.09.2026 без этого фарм стоял из-за «Галереи искусств», которой в меню нет вовсе:
   // по календарю она «созрела», а запуститься не могла - и обычный фарм не начинался никогда.
@@ -406,4 +407,45 @@ async function runNonQQuestSafe(page, label, fn, { keepPlace = false } = {}) {
     noteHpFromPageText(await getBodyText(page), label);
     return null; // indicates recovery happened
   }
+}
+
+// Паша, 06.10.2026: «ты многие квесты не делаешь... давай сделаем правило: если квест есть в меню
+// квестов, значит надо его выполнить». Выполнить это правило целиком машина пока не может: у части
+// квестов маршрута нет вовсе. Но МОЛЧАТЬ про них нельзя - именно это и было не так: 15 квестов в
+// меню, драйвер брался за восемь, и узнать об этом можно было только вычитав журнал. Теперь раз в
+// сутки печатаем, за что драйвер не берётся и почему; строка уходит в Telegram.
+const QUEST_ROUTE_STATUS = new Map([
+  // умеем
+  ['Харчевня', null], ['Дерево жизни', null], ['Штольни', null], ['Камни Драбаса', null],
+  ['Кузница Рума', null], ['Еда для рыбака', null], ['Грабим корованы', null], ['Варьете', null],
+  ['Довольствие', null], ['Шепот', null], ['Премия Ордена', null],
+  ['Ордо экзекуторс: Уничтожить главаря банды', null], ['Ордо экзекуторс: Уничтожить банду', null],
+  ['Орден Тригмагистров: Охота на демона', null], ['Смерть ростовщика', null],
+  ['Неожиданная встреча', null], ['Галерея искусств', null], ['Вспышки прошлого', null],
+  ['Рыбацкая деревня', null], ['Колодец Страха', null], ['Жертвоприношение', null],
+  // известны, но не делаются - с причиной
+  ['Магическая башня', 'выключен по слову Паши 29.09'],
+  ['Заброшенный замок', 'только командой, одному не пройти'],
+  ['Унесенные ветром', 'маршрут устарел, нужна перезапись explore.js'],
+  ['Задание в бунгало', 'маршрут не дописан: не найдена «поляна с дикарями»'],
+  ['Рыбный ресторан', 'награда №1 не по силам, Паша отложил'],
+  ['Остров героев', 'маршрута нет: сегменты случайные, Паша обещал путь'],
+]);
+function reportQuestsWithoutRoute(listed) {
+  if (!Array.isArray(listed) || !listed.length) return;
+  const day = getDayKeyNow();
+  if (S.questGapReportedDay === day) return;
+  const gaps = [];
+  for (const name of listed) {
+    if (!QUEST_ROUTE_STATUS.has(name)) { gaps.push(`${name} (маршрута нет)`); continue; }
+    const why = QUEST_ROUTE_STATUS.get(name);
+    if (why) gaps.push(`${name} (${why})`);
+  }
+  S.questGapReportedDay = day;
+  persistDailyQuestState();
+  if (!gaps.length) {
+    console.log('Квесты: за все, что в меню, драйвер берётся - без пропусков.');
+    return;
+  }
+  console.log(`КВЕСТЫ БЕЗ МАРШРУТА (${gaps.length} из ${listed.length} в меню): ${gaps.join('; ')}`);
 }

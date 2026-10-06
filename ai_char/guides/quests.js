@@ -422,6 +422,26 @@ async function runGuideQuestIfDue(page, q) {
     saveState(st);
   }
 
+  // Паша, 06.10.2026: «возможно квест берется но идет срыв в пути и он не выполнен, а у тебя
+  // считается выполнен». Так и было: маршрут дошёл до последнего шага - значит «пройден», и квест
+  // запирался на periodDays. Проверять надо не по своему маршруту, а по игре: ЕСЛИ КВЕСТ ОСТАЛСЯ В
+  // МЕНЮ, ОН НЕ ПРОЙДЕН. Тогда не запираем на дни, а повторяем через час и говорим об этом громко.
+  const stillListed = await questStillInMenu(page, q.name);
+  if (stillListed === true) {
+    qs.notClosedCount = (qs.notClosedCount || 0) + 1;
+    // Третий раз подряд - перестаём ходить по кругу: ждём обычный срок и ждём человека.
+    const giveUp = qs.notClosedCount >= 3;
+    qs.suppressedUntil = Date.now() + (giveUp ? 12 * 60 : 60) * 60000;
+    delete qs.part;
+    st[q.name] = qs;
+    saveState(st);
+    clearProgress(q);
+    if (q.takesSlot || q.needsSlot) require('../lib/task_slot').forgetSlotOwner();
+    console.log(`КВЕСТ НЕ ЗАКРЫЛСЯ: ${q.name} - маршрут дошёл до конца, а квест остался в меню (подряд ${qs.notClosedCount}). Не считаю пройденным, повтор через ${giveUp ? '12 ч' : 'час'}.`);
+    return true;
+  }
+
+  qs.notClosedCount = 0;
   qs.lastDone = Date.now();
   delete qs.part;
   delete qs.suppressedUntil;
@@ -453,3 +473,19 @@ async function runGuideQuestsIfDue(page, { singleMode = false } = {}) {
 }
 
 module.exports = { runGuideQuestsIfDue, GUIDE_QUESTS, STATE_FILE };
+
+// Остался ли квест в меню Q. null - прочитать не удалось (тогда ничему не мешаем и верим маршруту).
+// Правило Паши от 06.10.2026: меню - источник истины, а не наш маршрут.
+async function questStillInMenu(page, name) {
+  try {
+    // module.js разборщик меню не реэкспортирует - берём его прямо из lib/quest_menu.
+    const { parseQuestNamesFromQMenuText } = require('../lib/quest_menu');
+    if (!(await m.resetToQuestMenu(page))) return null;
+    const names = parseQuestNamesFromQMenuText(await m.getBodyText(page));
+    if (!Array.isArray(names) || !names.length) return null;
+    return names.some((n) => String(n).trim().toLowerCase() === String(name).trim().toLowerCase());
+  } catch (e) {
+    console.log(`${name}: не смог перечитать меню квестов (${e.message}) - верю маршруту.`);
+    return null;
+  }
+}

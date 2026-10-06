@@ -153,6 +153,8 @@ S.levelUpReported = false;
 S.charLevel = 0;
 // Когда последний раз отправляли черепа в казну клана (lib/skulls.js, раз в 2 дня по слову Паши).
 S.skullsSentAt = 0;
+// День, в который уже докладывали про квесты из меню без маршрута (lib/daily_quests.js).
+S.questGapReportedDay = '';
 // Скорость лечения из анкеты («Лечение: N hp/мин») и когда её прочли. Паша, 03.10.2026: «лечение
 // смотри в Кулаке Хаоса в профиле, я тебе дом купил максимальный» - реген зависит от места, а в
 // коде стояла константа 16. Ноль значит «не читали, берём константу».
@@ -373,6 +375,7 @@ function restoreDailyQuestState() {
   if (typeof s.levelUpReported === 'boolean') S.levelUpReported = s.levelUpReported;
   if (Number.isFinite(s.charLevel)) S.charLevel = s.charLevel;
   if (Number.isFinite(s.skullsSentAt)) S.skullsSentAt = s.skullsSentAt;
+  if (typeof s.questGapReportedDay === 'string') S.questGapReportedDay = s.questGapReportedDay;
   if (Number.isFinite(s.healRatePerMin)) S.healRatePerMin = s.healRatePerMin;
   if (Number.isFinite(s.healRateAt)) S.healRateAt = s.healRateAt;
 
@@ -461,7 +464,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, skullsSentAt: S.skullsSentAt, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, skullsSentAt: S.skullsSentAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,
