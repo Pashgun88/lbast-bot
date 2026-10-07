@@ -11,7 +11,7 @@ module.exports = {
 };
 
 const {
-  DEMON_LAKE_FASTWAY_URL, getDayKeyNow, getWeekday, parseCooldownError, persistedState,
+  DEMON_LAKE_FASTWAY_URL, TAVERN_PIGS_FASTWAY_URL, getDayKeyNow, getWeekday, parseCooldownError, persistedState,
   saveStateToDisk, THURSDAY_WEEKDAY,
 } = require('./state');
 const { getBodyText, parseStats, pause } = require('./core');
@@ -447,11 +447,26 @@ async function weekdayHuntRoute(page, target) {
     return 'Спуститься в тоннель';
   }
   if (target === 'hyena') {
-    // Амулет -> Таверна -> юг -> запад -> Выслеживать гиен
-    await performStep(page, { stepName: 'Амулет', currentTexts: ['Амулет', 'амулет'], nextTexts: ['Таверна'], retries: 3 });
-    await performStep(page, { stepName: 'Таверна', currentTexts: ['Таверна'], nextTexts: ['Юг'], retries: 3 });
-    await performStep(page, { stepName: 'Юг', currentTexts: ['Юг', 'юг'], nextTexts: ['Запад'], retries: 3, skipIfNextVisible: false });
-    await performStep(page, { stepName: 'Запад', currentTexts: ['Запад', 'запад'], nextTexts: ['Выслеживать гиен'], retries: 3 });
+    // Таверна «Три поросенка» (амулет) -> Идти на юг (Южный тракт) -> Идти на запад
+    // (Восточная часть озера) -> Выслеживать гиен. Проверено живьём 07.10.2026.
+    //
+    // Старый маршрут жал «Амулет» и «Таверна» ПО ТЕКСТУ и срывался каждый день. Две ошибки в
+    // одном шаге: ссылка амулета пишется латинской A («Aмулет»), а на локации Кулака Хаоса есть
+    // здание «Таверна "У старого Тролля"» - его и нажимали, после чего персонаж стоял внутри
+    // корчмы, а шаг ждал улицу. В логе это выглядело как «не выполнен шаг "Юг"», и я искал
+    // ошибку в юге, хотя юга там и не было. Поэтому телепорт - по URL.
+    //
+    // И направления на дороге зовутся «Идти на юг» / «Идти на запад», а не «Юг» / «Запад».
+    await page.goto(TAVERN_PIGS_FASTWAY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 800, 1400);
+    await performStep(page, {
+      stepName: 'Идти на юг', currentTexts: ['Идти на юг'], nextTexts: ['Идти на запад'],
+      retries: 3, skipIfNextVisible: false,
+    });
+    await performStep(page, {
+      stepName: 'Идти на запад', currentTexts: ['Идти на запад'], nextTexts: ['Выслеживать гиен'],
+      retries: 3, skipIfNextVisible: false,
+    });
     return 'Выслеживать гиен';
   }
   // varan: Дорожный крест (fastway lway=9; «Амулет» текстом не кликаем - латинская A) -> юг -> Устроиться на привал

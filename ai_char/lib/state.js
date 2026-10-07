@@ -620,6 +620,11 @@ const HP_FLOOR_WITH_BUFF = 0.4;
 
 // (из lib/quests_story.js)
 const DEMON_LAKE_FASTWAY_URL = 'http://lbast.ru/location.php?mod=fastway&lway=9'; // Дорожный крест
+// Таверна «Три поросенка» - точка амулета для дейлика на гиен. Ходим по URL, а не кликом по
+// тексту: ссылка амулета на локации пишется с ЛАТИНСКОЙ A («Aмулет»), а слово «Таверна» на
+// локации Кулака Хаоса занято зданием «Таверна "У старого Тролля"» - клик по тексту уводил
+// внутрь него (живьём 07.10.2026, дейлик на гиен срывался дважды в день).
+const TAVERN_PIGS_FASTWAY_URL = 'http://lbast.ru/location.php?mod=fastway&lway=17';
 
 // (из lib/fish_restaurant_quest.js)
 // Паша, 17.09.2026: "Рыбный ресторан настроим как закончишь с дейликами". До тех пор квест
@@ -699,5 +704,5 @@ module.exports = {
   EXCLUSIVE_QUEST_CONFLICT_BACKOFF_MS, AI_SELF_NICK, AI_SELF_NICK_RE, QUEST_FIGHT_HP_FLOOR,
   LAST_HOUSE_HP_THRESHOLD, DEVTOWN_FASTWAY_URL, HEALING_ELIXIR_HP_FRACTION, HP_FLOOR_WITH_BUFF,
   WEAK_FIGHT_QUESTS, TOO_STRONG_SINGLE_BOTS, GEAR_WAIT_HP_FRACTION, fightHpFraction,
-  DEMON_LAKE_FASTWAY_URL, FISH_RESTAURANT_ENABLED,
+  DEMON_LAKE_FASTWAY_URL, TAVERN_PIGS_FASTWAY_URL, FISH_RESTAURANT_ENABLED,
 };
