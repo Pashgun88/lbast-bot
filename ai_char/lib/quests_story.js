@@ -356,6 +356,11 @@ async function progressOrdoQuest(page, q) {
     // перезапускается, цикл идёт заново, и брошенное нами задание выглядит как «чужое, не трогать».
     S.ordoTaskTakenLabel = q.label;
     S.ordoTaskTakenAt = Date.now();
+    // И в ОБЩУЮ запись слота тоже. До 07.10.2026 здесь был только ordoTaskTakenLabel - свой
+    // учёт, отдельный от taskSlotOwner, который смотрит lib/task_slot.js. Из-за двух учётов на
+    // один слот взятое нами Ордо выглядело как задание без владельца, и правило «сироту снять по
+    // сроку» снимало наше же задание через 40 минут. Запись слота одна - она и ведётся.
+    require('./task_slot').rememberSlotTaken(q.label);
     persistDailyQuestState(); // переживает перезапуск драйвера - иначе брошенное своё снова «чужое»
   }
   if (alreadyHasTask) {
@@ -430,6 +435,7 @@ async function progressOrdoQuest(page, q) {
       await dropCurrentAssignment(page, `${q.label}: миссия не прошла, слот не держим`);
       S.ordoTaskTakenLabel = null;
       S.ordoTaskTakenAt = 0;
+      require('./task_slot').forgetSlotOwner();
       persistDailyQuestState();
     } else {
       console.log(`${q.label}: до боя не дошёл, задание в слоте не моё - не трогаю (решение Паши).`);
@@ -458,6 +464,11 @@ async function reportOrdoTaskHere(page, label) {
   }
   const m = text.match(/Задание выполнено[^\n]*/i);
   console.log(`Ордо: доклад принят - ${m ? m[0] : 'задание выполнено'}`);
+  // Доклад принят - слот свободен. Чистим ОБА учёта, иначе запись о владельце живёт дальше и
+  // врёт следующему квесту, которому слот понадобится.
+  S.ordoTaskTakenLabel = null;
+  S.ordoTaskTakenAt = 0;
+  require('./task_slot').forgetSlotOwner();
   await clickByTexts(page, ['Назад'], 'Ордо: назад в башню').catch(() => {});
   await pause(page, 600, 1200);
   await exchangeOrdoMedalsHere(page);
