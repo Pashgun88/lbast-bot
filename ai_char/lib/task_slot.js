@@ -28,6 +28,9 @@ const { getBodyText } = require('./core');
 const { sendTelegram } = require('../telegram_alerts');
 
 const DROP_ORDER_FLAG = path.join(__dirname, '..', 'drop_task.flag');
+// Задание-сирота: когда впервые увидели висящее задание, владельца которого не знаем (см. 3b).
+let unknownLine = '';
+let unknownSince = 0;
 // Сколько минут задание должно висеть без движения, чтобы считаться брошенным.
 const STUCK_MINUTES = Number(process.env.AI_TASK_STUCK_MINUTES || 40);
 // Чтобы не частить в Telegram про одно и то же.
@@ -176,6 +179,24 @@ async function ensureSlotFreeFor(page, questName) {
   const idleMin = owner ? Math.round((Date.now() - owner.at) / 60000) : null;
   if (owner && idleMin >= STUCK_MINUTES && !questInProgress(owner.label)) {
     return dropAssignmentByOrder(page, `${owner.label} держит слот ${idleMin} мин и не двигается, слот нужен «${questName}»`, { quiet: true });
+  }
+
+  // 3b) Задание, владельца которого мы НЕ ЗНАЕМ. 07.10.2026: драйвер пролежал 13 часов, в игре
+  // осталось висеть взятое задание, а наша запись о владельце пропала - и слот заклинило намертво:
+  // случай 4 только докладывает и ждёт, а ждать было некого. Такое задание - сирота: даём ему срок
+  // (как и всему остальному: у каждого гейта должен быть предел) и снимаем. Сюжетную миссию отказ
+  // не тронет - это проверяется внутри dropAssignmentByOrder, так что потерять длинный квест нельзя.
+  if (!owner) {
+    const line = String(slot.line || '');
+    if (unknownLine !== line) { unknownLine = line; unknownSince = Date.now(); }
+    const unknownMin = Math.round((Date.now() - unknownSince) / 60000);
+    if (unknownMin >= STUCK_MINUTES) {
+      unknownLine = '';
+      unknownSince = 0;
+      return dropAssignmentByOrder(page, `задание-сирота ${ownerLine} висит ${unknownMin} мин, владельца мы не знаем, слот нужен «${questName}»`, { quiet: true });
+    }
+    console.log(`Слот задания: ${ownerLine} - владельца не знаем, наблюдаю ${unknownMin} из ${STUCK_MINUTES} мин, потом сниму.`);
+    return false;
   }
 
   // 4) Всё остальное - только доклад. Чужое и своё в работе не снимаем.
