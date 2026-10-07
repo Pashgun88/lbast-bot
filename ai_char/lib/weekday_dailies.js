@@ -368,11 +368,22 @@ const DAILY_TASK_TARGETS = [
   { re: /дух(?:а|ом|у)? гор/i, target: 'spirit' },
   { re: /гиен/i, target: 'hyena' },
   { re: /варан/i, target: 'varan' },
-  { re: /кабан/i, target: 'boar' },   // закрывается фармом кабанов
-  { re: /бизон/i, target: 'bison' },  // закрывается фармом бизонов
+  { re: /кабан/i, target: 'boar' },
+  { re: /бизон/i, target: 'bison' },
 ];
-// Свои маршруты есть только у первых трёх; кабан и бизон и так фармятся каждый цикл.
-const HUNT_ROUTED = new Set(['spirit', 'hyena', 'varan']);
+// Кабан и бизон раньше считались «закрываются фармом» и своей цели не имели. 07.10.2026 стало
+// видно, чего это стоит: Варьете заклинило, драйвер начал беречь HP под незакрытый квест с боями,
+// фарм встал - и оба дейлика остались 0/2 на весь день, хотя маршрут к ним есть и работает.
+// Побочный эффект - не способ выполнять задание. Теперь это полноценные цели: идут своим ходом,
+// даже когда фарм запрещён. Маршрут не новый - зовём те же проверенные раунды из lib/farm.js.
+const HUNT_ROUTED = new Set(['spirit', 'hyena', 'varan', 'boar', 'bison']);
+// Цели, у которых вместо «дойти и нажать кнопку боя» есть готовый раунд целиком (маршрут + бой +
+// кулдаун + возврат). require внутри функции: lib/* ходят друг к другу по кругу, и farm.js в
+// верхнем require отдал бы undefined (на этом уже стояли в fishing.js/brewing.js).
+const HUNT_BY_FARM_ROUND = {
+  boar: (page, buffed) => require('./farm').runBoarFarmRound(page, buffed),
+  bison: (page, buffed) => require('./farm').runBisonFarmRound(page, buffed),
+};
 // «Дух гор» утром 23.09.2026 снял 2300 урона за один бой (HP 500 -> -1840, персонаж выбыл на
 // 148 мин). Я предложил его не трогать, но Паша в тот же день, после полного комплекта Ордо, руны
 // 7 уровня, перекидки статов и бонуса крепости: «ты усилен, иди бей». Решение его - цель включена.
@@ -458,6 +469,33 @@ async function runWeekdayHuntTarget(page, target, count) {
   if (!(await weekdayHuntHpOk(page, name))) return false;
 
   console.log(`Дейлик: ${name} - выезжаю (сделано ${done}/${count}).`);
+
+  // Кабан и бизон: готовый раунд сам доходит до места, бьёт и разбирается с кулдауном.
+  // Равновесие кож (hideBalanceAllows в driver.js) здесь НЕ применяем: это правило фарма, чтобы
+  // кожи шли парами, а дейлик даёт награду вне зависимости от того, каких кож больше.
+  const round = HUNT_BY_FARM_ROUND[target];
+  if (round) {
+    for (let i = done; i < count; i++) {
+      let ok;
+      try {
+        ok = await round(page, false);
+      } catch (e) {
+        console.log(`Дейлик: ${name} - раунд не прошёл: ${e.message}`);
+        break;
+      }
+      // false здесь - это «сейчас нельзя» (мало HP, цель на кулдауне), а не провал: цель НЕ
+      // помечаем потерянной, счётчик игры покажет в следующем цикле, сколько осталось.
+      if (!ok) {
+        console.log(`Дейлик: ${name} - раунд не состоялся (сделано ${i}/${count}) -> в следующем цикле.`);
+        break;
+      }
+      s.done[target] = i + 1;
+      saveStateToDisk(persistedState);
+      await pause(page, 800, 1400);
+    }
+    return true;
+  }
+
   let fightText;
   try {
     fightText = await weekdayHuntRoute(page, target);
@@ -533,7 +571,7 @@ async function runWeekdayHuntsIfDue(page) {
 
   for (const t of pending) {
     const hit = DAILY_TASK_TARGETS.find((x) => x.re.test(t.title));
-    if (!hit || !HUNT_ROUTED.has(hit.target)) continue; // кабан и бизон закрывает фарм
+    if (!hit || !HUNT_ROUTED.has(hit.target)) continue; // цель из меню, которой мы не умеем ходить
     if (HUNT_DISABLED.has(hit.target)) continue;
     const s = weekdayHuntState();
     if (s.lost[hit.target]) continue;
