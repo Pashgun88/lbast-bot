@@ -7,7 +7,7 @@ module.exports = {
   detectPvpFromText, notifyIfPvpDetected, detectIncomingAttack, getFightOpponentName,
   emitAttackAlert, isBattleScreenText, safeFilenamePart, formatTimestampForFilename,
   takeAttackScreenshot, emitAttackAlertWithScreenshot, randInt, clickRandomActionByRegex,
-  runIncomingAttackPvpLoop, handleIncomingAttackIfAny,
+  runIncomingAttackPvpLoop, handleIncomingAttackIfAny, isPvpFightScreen, runPvpFightLoop, pvpTurnSignature,
 };
 
 const path = require('path');
@@ -150,8 +150,18 @@ function emitAttackAlert(payload) {
   }
 }
 
+// Экран ПВП устроен иначе, чем бой с ботом: вместо «Ударить» - три пары зон (Г/К/Н: куда бью
+// и чем закрываюсь) и кнопка «Бить», плюс «Сбр.пары». 07.10.2026 этого не знал ни один кусок
+// кода: нападение драйвер весь цикл видел как «экран боя без Ударить и без итога - не понимаю,
+// что это», ходил вслепую со статами null/null и не сделал в бою ни одного удара. Бой вытянул
+// соклан. Признак экрана - кнопка «Сбр.пары» либо «Бить» рядом с «VS.».
+function isPvpFightScreen(text) {
+  const t = String(text || '');
+  return /Сбр\.?\s*пары/i.test(t) || (/(^|[^а-яё])Бить([^а-яё]|$)/i.test(t) && /VS\.?/i.test(t));
+}
+
 function isBattleScreenText(text) {
-  return /Ударить/i.test(text) || /Бой завершен!/i.test(text);
+  return /Ударить/i.test(text) || /Бой завершен!/i.test(text) || isPvpFightScreen(text);
 }
 
 const ATTACK_SCREENSHOT_DIR = path.join(__dirname, '..', 'logs');
@@ -286,6 +296,104 @@ async function clickRandomActionByRegex(page, regex, stepName) {
   }
 }
 
+
+// ============================== БОЙ С ЖИВЫМ ИГРОКОМ ==============================
+// Экран (скриншот logs/2026-10-07_16-33-28__attack__yasnovidec.png):
+//
+//   AI__ [8] (460/460) урон: 0        Г: o - o
+//   VS.                               К: o - o   [Бить]
+//   yasnovidec [8] (480/480) (тайм: 70)   Н: o - o
+//   [Обновить] [Умение] [Сбр.пары]    [Инвентарь 0 из 2] [>>]
+//
+// Г/К/Н - голова, корпус, ноги. Два столбца радиокнопок: куда бью и чем закрываюсь. Выбрать
+// надо ПО ОДНОЙ в каждом столбце и нажать «Бить». Ход длится 70 секунд.
+//
+// Зоны выбираются СЛУЧАЙНО, и это не лень: противник - человек, он подстраивается под того,
+// кого можно прочитать. Равномерный случайный выбор из трёх зон ничем не выдаёт себя, его
+// нельзя переиграть наблюдением. Если Паша захочет тактику умнее - её надо строить на чтении
+// лога боя, а не на привычке бить в одну точку.
+//
+// Столбцы различаем по имени радиогруппы (их ровно две), а не по виду: разметка может
+// поменяться, а пара групп останется. Из каждой группы берём одну случайную кнопку.
+const PVP_TURN_WAIT_MS = 7000;      // как часто перечитываем экран, ожидая итог хода
+const PVP_TURN_LIMIT_MS = 95000;    // ход 70 сек; ждём чуть дольше и бьём снова
+const PVP_MAX_TURNS = 60;
+
+// Подпись хода: пока она та же, ход ещё не разошёлся. Время и таймер из неё выкидываем -
+// они тикают каждую секунду и сделали бы каждую проверку «новым ходом».
+function pvpTurnSignature(text) {
+  return String(text || '')
+    .replace(/\d{1,2}:\d{2}(:\d{2})?/g, '')
+    .replace(/\(тайм:\s*\d+\)/gi, '')
+    .replace(/\(\d+\)\s*сек/gi, '')
+    .replace(/\d+\s*сек\./gi, '')
+    .replace(/Обновить\s*\(\d+\)/gi, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 400);
+}
+
+async function pvpPickZonesAndHit(page) {
+  return page.evaluate(() => {
+    const radios = Array.from(document.querySelectorAll('input[type="radio"]'))
+      .filter((r) => !r.disabled);
+    if (!radios.length) return { ok: false, why: 'нет радиокнопок' };
+    const groups = new Map();
+    for (const r of radios) {
+      const name = r.getAttribute('name') || '';
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(r);
+    }
+    const picked = [];
+    for (const [name, list] of groups) {
+      const r = list[Math.floor(Math.random() * list.length)];
+      r.checked = true;
+      r.dispatchEvent(new Event('change', { bubbles: true }));
+      picked.push(`${name}=${r.value}`);
+    }
+    const hit = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"], button'))
+      .find((b) => /^\s*Бить\s*$/i.test(String(b.value || b.textContent || '')));
+    if (!hit) return { ok: false, why: 'нет кнопки «Бить»', picked };
+    hit.click();
+    return { ok: true, picked };
+  }).catch((e) => ({ ok: false, why: e.message }));
+}
+
+// Доводит бой с живым игроком до конца. Возвращает true, если бой закрыт.
+async function runPvpFightLoop(page, label = 'ПВП') {
+  for (let turn = 1; turn <= PVP_MAX_TURNS; turn++) {
+    const text = await getBodyText(page);
+    if (/Бой\s*завершен/i.test(text)) {
+      console.log(`${label}: бой завершён (ходов ${turn - 1}).`);
+      await clickByTexts(page, ['Бой завершен!', 'Бой завершен'], `${label}: подтверждаю итог`).catch(() => {});
+      return true;
+    }
+    if (!isPvpFightScreen(text)) {
+      console.log(`${label}: экран уже не боевой - выхожу (ходов ${turn - 1}).`);
+      return turn > 1;
+    }
+
+    const before = pvpTurnSignature(text);
+    const res = await pvpPickZonesAndHit(page);
+    if (!res.ok) {
+      console.log(`${label}: не смог ударить (${res.why}) - экран: ${String(text).replace(/\s+/g, ' ').slice(0, 300)}`);
+      return false;
+    }
+    console.log(`${label}: ход ${turn}, пары ${(res.picked || []).join(' ')}`);
+
+    // Ждём, пока ход разойдётся. Фиксированная пауза тут неверна: соперник может ответить
+    // сразу, а может тянуть все 70 секунд - в первом случае мы бы просто стояли.
+    const deadline = Date.now() + PVP_TURN_LIMIT_MS;
+    while (Date.now() < deadline) {
+      await fixedPause(page, PVP_TURN_WAIT_MS);
+      const now = await getBodyText(page);
+      if (/Бой\s*завершен/i.test(now) || pvpTurnSignature(now) !== before) break;
+    }
+  }
+  console.log(`${label}: ${PVP_MAX_TURNS} ходов - выхожу, чтобы не висеть вечно.`);
+  return false;
+}
+
+
 async function runIncomingAttackPvpLoop(page) {
   // When defending against an incoming attack, the fight UI can offer "where to hit" and
   // "where to block". We do random actions on a slow timer to look human-like.
@@ -328,6 +436,10 @@ async function runIncomingAttackPvpLoop(page) {
 
 async function handleIncomingAttackIfAny(page, bodyText = null) {
   const text = bodyText || await getBodyText(page);
+  // Уже идёт бой с живым игроком - значит, нас не «позвали в бой», а бьют прямо сейчас:
+  // доводим его сами. Проверка стоит ДО isBattleScreenText, иначе ПВП-экран (он теперь тоже
+  // «боевой») молча отсюда уходил бы, как 07.10.2026.
+  if (isPvpFightScreen(text)) return runPvpFightLoop(page, 'ПВП');
   if (isBattleScreenText(text)) return false;
 
   if (!/В\s*бой/i.test(text)) return false;
@@ -404,7 +516,9 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   }
 
   // If the incoming attack leads to a PvP-like fight UI, do random block+hit turns.
-  await runIncomingAttackPvpLoop(page).catch(() => {});
+  // Бой с игроком ведём новым циклом: старый жал случайную радиокнопку и пытался нажать
+  // «Ударить», которой на ПВП-экране нет, - за весь бой ни одного удара (07.10.2026).
+  await runPvpFightLoop(page, 'ПВП').catch(() => {});
 
   // After handling an incoming attack, immediately check HP and recover in the same cycle instead
   // of silently ending the cycle and leaving the character at negative HP for a full random sleep

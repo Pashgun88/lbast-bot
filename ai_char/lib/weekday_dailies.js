@@ -295,6 +295,12 @@ async function resolvePendingFightIfAny(page) {
     await clickByTexts(page, ['Бой завершен!', 'Бой завершен'], 'Бой завершен (подтверждение итога)').catch(() => {});
     return true;
   }
+  // Нападение живого игрока: экран ПВП («Бить», пары зон Г/К/Н), «Ударить» там нет. Раньше
+  // код сдавался здесь и весь цикл ходил со статами null/null, пока нас били (07.10.2026).
+  if (require('./pvp').isPvpFightScreen(text)) {
+    console.log('Висящий бой: это ПВП с живым игроком - дерусь.');
+    return require('./pvp').runPvpFightLoop(page, 'ПВП');
+  }
   if (!/Ударить/i.test(text)) {
     console.log('Висящий бой: экран боя без "Ударить" и без итога - не понимаю, что это, не трогаю.');
     return false;
