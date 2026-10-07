@@ -144,7 +144,15 @@ const GUIDE_QUESTS = [
     // Квест повторяется раз в сутки, поэтому в день идёт ОДНА ветка.
     name: 'Огни Девтауна',
     needsSlot: true,
-    files: ['devtaun_myaso.steps'],
+    // Три ветки по кругу, по одной в день (запрет на повторное выполнение ЛЮБОГО задания Огней -
+    // 24 часа). Карим идёт первым: его финал 1 без боя и без слов в окошко, значит самый дешёвый.
+    // Мясо краба - тоже без боя и улучшает карму. Заточка требует брагу в сумке.
+    variants: [
+      ['karim_gramoty.steps'],
+      ['devtaun_myaso.steps'],
+      ['devtaun_zatochka.steps'],
+    ],
+    files: ['devtaun_myaso.steps'], // на случай, если variants когда-нибудь уберут
     periodDays: 1,
     minReserveMinutes: 0,
   },
@@ -335,7 +343,19 @@ async function runGuideQuestIfDue(page, q) {
   }
 
   const localDayKey = (t) => new Date(t).toLocaleDateString('sv-SE');
-  for (let p = qs.part; p < q.files.length; p++) {
+  // ЧЕРЕДОВАНИЕ ВЕТОК. «Огни Девтауна» - это несколько разных заданий (городская тюрьма, купец
+  // Карим), а запрет на повторное выполнение ЛЮБОГО из них - 24 часа, то есть в день идёт одна
+  // ветка. Паша, 06.10.2026: «купец карим делай все, а городская тюрьма - только ветки за мясо,
+  // регу и заточку». Поэтому у квеста может быть список вариантов, и каждый день берётся
+  // следующий по кругу. Указатель сдвигается и при успехе, и при отказе от попытки - иначе
+  // сломанная ветка держала бы очередь каждый день.
+  const files = Array.isArray(q.variants) && q.variants.length
+    ? q.variants[(qs.variant || 0) % q.variants.length]
+    : q.files;
+  if (Array.isArray(q.variants)) {
+    console.log(`${q.name}: ветка ${((qs.variant || 0) % q.variants.length) + 1} из ${q.variants.length} (${files.join(', ')}).`);
+  }
+  for (let p = qs.part; p < files.length; p++) {
     // dayGatedParts: части = игровые ДНИ, между ними игра сама говорит «расследование лучше начать
     // завтра» («Жертвоприношение»). Вторую часть в тот же календарный день начинать бессмысленно -
     // маршрут упрётся в отсутствующую реплику и спалит счётчик срывов.
@@ -343,8 +363,8 @@ async function runGuideQuestIfDue(page, q) {
       console.log(`${q.name}: часть ${p + 1} - это следующий игровой день, сегодня часть ${p} уже пройдена. Жду завтра.`);
       return false;
     }
-    const file = path.join(__dirname, q.files[p]);
-    console.log(`${q.name}: часть ${p + 1}/${q.files.length} (${q.files[p]})`);
+    const file = path.join(__dirname, files[p]);
+    console.log(`${q.name}: часть ${p + 1}/${files.length} (${files[p]})`);
     const r = await runGuide(page, file, undefined, { quietDone: q.quietDone });
     if (r.status === 'lost' && q.lostEndsDay) {
       qs.lastDone = Date.now();
@@ -408,6 +428,10 @@ async function runGuideQuestIfDue(page, q) {
         qs.suppressedUntil = Date.now() + pauseMin * 60000;
         st[q.name] = qs;
         saveState(st);
+        if (Array.isArray(q.variants)) {
+          qs.variant = ((qs.variant || 0) + 1) % q.variants.length;
+          console.log(`${q.name}: ветка срывается второй раз подряд - следующий заход пробую другую.`);
+        }
         console.log(`${q.name}: срыв на шаге ${r.index} второй раз подряд - стираю прогресс, следующий заход начну с начала маршрута (пауза ${pauseMin} мин).`);
         return true;
       }
@@ -456,6 +480,11 @@ async function runGuideQuestIfDue(page, q) {
     qs.notClosedCount = (qs.notClosedCount || 0) + 1;
     // Третий раз подряд - перестаём ходить по кругу: ждём обычный срок и ждём человека.
     const giveUp = qs.notClosedCount >= 3;
+    if (giveUp && Array.isArray(q.variants)) {
+      qs.variant = ((qs.variant || 0) + 1) % q.variants.length;
+      qs.notClosedCount = 0;
+      console.log(`${q.name}: ветка не закрывается третий раз - следующий заход пробую другую.`);
+    }
     qs.suppressedUntil = Date.now() + (giveUp ? 12 * 60 : 60) * 60000;
     delete qs.part;
     st[q.name] = qs;
@@ -467,6 +496,7 @@ async function runGuideQuestIfDue(page, q) {
   }
 
   qs.notClosedCount = 0;
+  if (Array.isArray(q.variants)) qs.variant = ((qs.variant || 0) + 1) % q.variants.length;
   qs.lastDone = Date.now();
   delete qs.part;
   delete qs.suppressedUntil;
