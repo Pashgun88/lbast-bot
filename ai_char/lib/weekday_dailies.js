@@ -592,7 +592,13 @@ async function runWeekdayHuntsIfDue(page) {
     if (s.lost[hit.target]) continue;
     // Счётчик игры - истина: сколько уже сделано, знает она, а не наш файл состояния.
     s.done[hit.target] = t.done;
-    return runWeekdayHuntTarget(page, hit.target, t.total);
+    const did = await runWeekdayHuntTarget(page, hit.target, t.total);
+    // Меню дейликов кешируется на 10 минут, а мы только что изменили его счётчик. Без сброса
+    // кеша следующий круг прочитает старое «0/2» и поедет бить цель заново: 07.10.2026 так
+    // случилось с гиенами - 2/2 уже стояло, а драйвер всё равно выехал. Счётчик игры -
+    // источник истины, поэтому не правим кеш руками, а заставляем перечитать.
+    if (did) dailyMenuAt = 0;
+    return did;
   }
   return false;
 }
