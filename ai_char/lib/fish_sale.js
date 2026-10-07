@@ -69,6 +69,15 @@ async function sellFriedFishIfDue(page) {
   // 05.10.2026: «медальон бандита» и «костяная цепь» из защиты УБРАНЫ - кольцо мастера Ордо
   // собрано, предметы задания больше не нужны и продаются. Сами вещи Ордо и кольца защищены
   // по-прежнему («ордо», «кольцо»): комплект на персонаже, мастер-кольцо в сумке.
+  // НИКОГДА не продаём, что бы ни совпало по имени. Паша, 07.10.2026: «эти предметы продать можно
+  // но не медали». Герб тут же по другой причине: сейчас он надет и в список продажи не попадает,
+  // но как только истечёт и ляжет в сумку, прежние правила продали бы его - проверено разбором
+  // имён, PROTECTED_RE слова «герб» не содержал вовсе.
+  // ВНИМАНИЕ: не просто «медаль» - эта подстрока совпадает с «МЕДАЛЬон бандита», то есть с тем
+  // самым предметом задания, который продавать РАЗРЕШЕНО. Поймал своей же проверкой имён 07.10.2026.
+  // Нужен пробел после слова: предмет называется «Медаль Ордо экзекуторс», а «медальон» - одно слово.
+  // Кириллица и  в JS не дружат (на этом я уже обжигался с гербом), поэтому проверяем явно.
+  const NEVER_SELL_RE = /(медаль\s|медали\s|герб)/i;
   const PROTECTED_RE = /(кольцо|ордо|руна|эликсир|амулет|эль\b|грамота|свиток|карась|камень|камни|кинжал|тесак|меч|щит|шлем|доспех|сапоги|броня|пояс|подсумок|набор|четки|чётки|картина|часы)/i;
   const ITEM_RE = /([^\n\[]{3,60}?)\s*\[(\d+)\]\s*-\s*(\d+)\s*дин/g;
   // Паша, 28.09.2026: «выделаные кожи не забывай тоже продавать». Они и не продавались: список лавки
@@ -109,8 +118,8 @@ async function sellFriedFishIfDue(page) {
     persistDailyQuestState();
     return true;
   }
-  const toSell = offered.filter((it) => !PROTECTED_RE.test(it.name));
-  const kept = offered.filter((it) => PROTECTED_RE.test(it.name));
+  const toSell = offered.filter((it) => !PROTECTED_RE.test(it.name) && !NEVER_SELL_RE.test(it.name));
+  const kept = offered.filter((it) => PROTECTED_RE.test(it.name) || NEVER_SELL_RE.test(it.name));
   if (kept.length) {
     console.log(`Продажа в лавке: не продаю (нужны нам): ${kept.map((k) => `${k.name} x${k.qty}`).join(', ').slice(0, 200)}`);
   }
@@ -217,7 +226,8 @@ async function sellHidesInGeneralShop(page) {
       const text = await getBodyText(page);
       if (!/Инвентарь:/i.test(text)) break;
       const rows = text.split(String.fromCharCode(10)).map((x) => x.trim());
-      const line = rows.find((x) => GENERAL_SHOP_SELL_RE.test(x) && new RegExp(String.raw`-\s*\d+\s*дин`).test(x));
+      const line = rows.find((x) => GENERAL_SHOP_SELL_RE.test(x) && !/(медаль\s|медали\s|герб)/i.test(x)
+        && new RegExp(String.raw`-\s*\d+\s*дин`).test(x));
       if (line) {
         const mm = line.match(new RegExp(String.raw`^(.*?)\s*-\s*(\d+)\s*дин`));
         found = { name: (mm ? mm[1] : line).trim(), price: mm ? Number(mm[2]) : 0, cpage };
