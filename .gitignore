@@ -49,6 +49,7 @@ ai_char/no_fight.flag
 ai_char/no_fight.flag.off
 ai_char/shtolni_no_ale.flag
 ai_char/pause.flag
+ai_char/recon.flag
 ai_char/lore/*.bak
 
 # Пульс главного цикла драйвера (внешний сторож keep_driver_alive.ps1) - только локальный

@@ -6,6 +6,7 @@
 //   # comment            ignored
 //   @url path            open a game URL (e.g. location.php?mod=konj&lway=7 - horse to Рыбацкая деревня) and wait out travel
 //   @city N              fastway to city N (1 Последний портал, 2 Стоунгард, 3 Эвилгард, 4 Кулак, 8 Девтаун, 9 Дорожный крест)
+//   @word слово           вписать слово в окошко сцены и отправить (квесты Девтауна: окно, щель, лом)
 //   @fight               HP gate (>= HP_GATE of max, waits in place exactly as long as needed) + "В бой!" + fightLoop
 //   @stop text           stop here on purpose (write a letter with the text)
 //   ?text                optional click (skip if absent)
@@ -383,6 +384,26 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         await goto(page, step.slice(5).trim());
         await travelWait(page);
         await goto(page, 'location.php');
+      } else if (step.startsWith('@word ')) {
+        // «Впиши слово в окошко» - механика квестов Девтауна (Купец Карим, 9 финалов; гайд Кейт
+        // st_id=189055). Кейт про неё: «в окошке можно написать слово, которое так или иначе может
+        // изменить ход квеста... в остальных локациях оно присутствует просто чтобы вы не
+        // расслаблялись». То есть поле есть почти всегда, но смысл имеет только нужное слово.
+        // Ищем первое текстовое поле на экране сцены, вписываем слово и отправляем.
+        const word = step.slice(6).trim();
+        const box = page.locator('input[type="text"]:visible, input:not([type]):visible').first();
+        if ((await box.count().catch(() => 0)) === 0) {
+          await dump(page, `@word «${word}»: поля для ввода на экране нет`);
+          fs.writeFileSync(PROG, String(i));
+          result = { status: 'mismatch', index: i };
+          break;
+        }
+        await box.fill(word);
+        const submit = page.locator('input[type="submit"]:visible, button[type="submit"]:visible').first();
+        if ((await submit.count().catch(() => 0)) > 0) await submit.click().catch(() => {});
+        else await box.press('Enter').catch(() => {});
+        await sleep(1200);
+        console.log(`вписал слово «${word}»`);
       } else if (step.startsWith('@qinfo')) {
         // Взять квест формально: Q -> [инфо] -> "К месту выполнения" (без этого сценарий не поднимается).
         const qn = step.slice(6).trim();
