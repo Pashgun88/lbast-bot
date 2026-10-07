@@ -332,6 +332,32 @@ function pvpTurnSignature(text) {
     .slice(0, 400);
 }
 
+// Применение вещи с пояса прямо в бою. На экране это выпадающий список «Инвентарь N из 2»
+// и кнопка «>>». Пояс - это «Избранное» (inv.php?mod=starred), туда 07.10.2026 положены
+// Зелье отравления (3) и Свиток ледяного удара (1): Паша «тебе нужны зелья отравления и
+// свиток как у Фростика на пояс», «яд используется из инвентаря в бою».
+// Список в списке ищем по названию, а не по номеру: порядок строк меняется вместе с поясом.
+async function pvpUseFromBelt(page, pattern, label) {
+  const res = await page.evaluate((pat) => {
+    const re = new RegExp(pat, 'i');
+    const sel = Array.from(document.querySelectorAll('select'))
+      .find((s) => Array.from(s.options).some((o) => re.test(o.textContent || '')));
+    if (!sel) return { ok: false, why: 'списка инвентаря на экране нет' };
+    const opt = Array.from(sel.options).find((o) => re.test(o.textContent || ''));
+    sel.value = opt.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    const btn = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"], button'))
+      .find((b) => /^\s*>>\s*$/.test(String(b.value || b.textContent || '')));
+    if (!btn) return { ok: false, why: 'кнопки «>>» рядом со списком нет' };
+    btn.click();
+    return { ok: true, item: (opt.textContent || '').trim() };
+  }, pattern).catch((e) => ({ ok: false, why: e.message }));
+  if (res.ok) console.log(`${label}: применяю «${res.item}» с пояса.`);
+  else console.log(`${label}: не вышло применить вещь с пояса (${res.why}).`);
+  return res.ok;
+}
+
+
 async function pvpPickZonesAndHit(page) {
   return page.evaluate(() => {
     const radios = Array.from(document.querySelectorAll('input[type="radio"]'))
@@ -360,6 +386,11 @@ async function pvpPickZonesAndHit(page) {
 
 // Доводит бой с живым игроком до конца. Возвращает true, если бой закрыт.
 async function runPvpFightLoop(page, label = 'ПВП') {
+  // В бою доступно ровно два применения («Инвентарь 0 из 2») - тратим их осознанно:
+  // сначала яд (совет Galla 07.10.2026: кинуть отравление в напавшего), потом свиток.
+  // Каждое - один раз за бой, иначе второй клик съел бы лимит впустую.
+  let usedPoison = false;
+  let usedScroll = false;
   for (let turn = 1; turn <= PVP_MAX_TURNS; turn++) {
     const text = await getBodyText(page);
     if (/Бой\s*завершен/i.test(text)) {
@@ -372,6 +403,13 @@ async function runPvpFightLoop(page, label = 'ПВП') {
       return turn > 1;
     }
 
+    if (!usedPoison) {
+      usedPoison = true; // одна попытка: если пояс пуст, второй клик ничего не изменит
+      await pvpUseFromBelt(page, 'отравлен', label);
+    } else if (!usedScroll) {
+      usedScroll = true;
+      await pvpUseFromBelt(page, 'ледяного удара', label);
+    }
     const before = pvpTurnSignature(text);
     const res = await pvpPickZonesAndHit(page);
     if (!res.ok) {
