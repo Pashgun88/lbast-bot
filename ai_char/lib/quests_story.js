@@ -539,7 +539,20 @@ async function equipOrdoGear(page) {
 const ORDO_ITEM_RE = /(Медальон бандита|Костяная цепь бандита)/i;
 const ORDO_REPORTS_ENABLED = false; // 05.10.2026: кольцо мастера собрано, предметы идут на продажу
 let ordoMedalRunAt = 0;
+// 07.10.2026, Паша: «не меняй больше квестовые предметы ордо на медали». 05.10 он уже сказал, что
+// кольцо мастера собрано и предметы идут в продажу - тогда я выключил ДОКЛАДЫ предметов, но обмен
+// остатка медалей оставил по своему усмотрению и честно об этом сказал. Это ответ: в башню не ходим
+// ВООБЩЕ. Весь поход выключен одним флагом, ни одной страницы не открываем.
+const ORDO_TOWER_ENABLED = false;
+let ordoTowerOffLogged = false;
 async function runOrdoMedalTurnIn(page) {
+  if (!ORDO_TOWER_ENABLED) {
+    if (!ordoTowerOffLogged) {
+      ordoTowerOffLogged = true;
+      console.log('Ордо: в башню не ходим - предметы задания больше не меняем на медали (Паша, 07.10.2026). Предметы продаются в магазине.');
+    }
+    return false;
+  }
   if (Date.now() - ordoMedalRunAt < 20 * 60 * 1000) return false;
   await page.goto('http://lbast.ru/inv.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   let inv = await getBodyText(page).catch(() => '');
