@@ -1,4 +1,5 @@
-# Возврат драйвера после разведки: снять recon.flag и поднять процесс.
+﻿# Возврат драйвера после разведки: снять recon.flag и поднять процесс.
+# Файл обязан храниться в UTF-8 С BOM (PowerShell 5.1 иначе читает .ps1 как ANSI).
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Remove-Item (Join-Path $dir 'recon.flag') -Force -Confirm:$false -ErrorAction SilentlyContinue
 $bash = "C:\Program Files\Git\bin\bash.exe"

@@ -322,6 +322,9 @@ async function clickRandomActionByRegex(page, regex, stepName) {
 // Столбцы различаем по имени радиогруппы (их ровно две), а не по виду: разметка может
 // Имена групп, увиденные живьём 07.10.2026: ud - куда бью, bl - чем закрываюсь.
 // поменяться, а пара групп останется. Из каждой группы берём одну случайную кнопку.
+// id предметов = oid из магазина (виден в ссылках log_infa_or.php?oid=NNN).
+const POISON_ITEM_ID = '1038';     // Зелье отравления, клановый магазин
+const ICE_SCROLL_ITEM_ID = '1026'; // Свиток ледяного удара, надет в подсумок
 const PVP_TURN_WAIT_MS = 7000;      // как часто перечитываем экран, ожидая итог хода
 const PVP_TURN_LIMIT_MS = 95000;    // ход 70 сек; ждём чуть дольше и бьём снова
 const PVP_MAX_TURNS = 60;
@@ -350,24 +353,30 @@ function pvpTurnSignature(text) {
 // эти кнопки открывают отдельный экран со списком. На экране ПВП со скриншота список был
 // подписан «Инвентарь 0 из 2» - возможно, это та же кнопка в другом оформлении. Разобрать
 // надо на живом экране; пока функция просто честно сообщает, что не нашла список.
-async function pvpUseFromBelt(page, pattern, label) {
-  const res = await page.evaluate((pat) => {
-    const re = new RegExp(pat, 'i');
-    const sel = Array.from(document.querySelectorAll('select'))
-      .find((s) => Array.from(s.options).some((o) => re.test(o.textContent || '')));
-    if (!sel) return { ok: false, why: 'списка инвентаря на экране нет' };
-    const opt = Array.from(sel.options).find((o) => re.test(o.textContent || ''));
-    sel.value = opt.value;
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
-    const btn = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"], button'))
-      .find((b) => /^\s*>>\s*$/.test(String(b.value || b.textContent || '')));
-    if (!btn) return { ok: false, why: 'кнопки «>>» рядом со списком нет' };
-    btn.click();
-    return { ok: true, item: (opt.textContent || '').trim() };
-  }, pattern).catch((e) => ({ ok: false, why: e.message }));
-  if (res.ok) console.log(`${label}: применяю «${res.item}» с пояса.`);
-  else console.log(`${label}: не вышло применить вещь с пояса (${res.why}).`);
-  return res.ok;
+async function pvpUseFromBelt(page, itemId, name, label) {
+  // Вещи в бою применяются НЕ через выпадающий список (его на экране нет - проверено живьём
+  // 07.10.2026), а переходом arena_go.php?poyas=1&zapoyasom=<id> - это та самая кнопка «Пояс».
+  // Механизм не новый: им с 14.09.2026 пьётся эликсир лечения (lib/recovery.tryUseHealingElixir),
+  // и я зря выдумывал свой. Страница ответа - тупик без «Ударить», поэтому возвращаемся на бой.
+  const back = page.url();
+  try {
+    await page.goto(`http://lbast.ru/arena_go.php?poyas=1&zapoyasom=${itemId}`, {
+      waitUntil: 'domcontentloaded', timeout: 60000,
+    });
+    const text = await getBodyText(page);
+    if (/Предмет не найден/i.test(text)) {
+      console.log(`${label}: ${name} в поясе не нашёлся - бой без него.`);
+      await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      return false;
+    }
+    console.log(`${label}: применил ${name}.`);
+    await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return true;
+  } catch (e) {
+    console.log(`${label}: не вышло применить ${name}: ${e.message}`);
+    await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    return false;
+  }
 }
 
 
@@ -418,10 +427,10 @@ async function runPvpFightLoop(page, label = 'ПВП') {
 
     if (!usedPoison) {
       usedPoison = true; // одна попытка: если пояс пуст, второй клик ничего не изменит
-      await pvpUseFromBelt(page, 'отравлен', label);
+      await pvpUseFromBelt(page, POISON_ITEM_ID, 'Зелье отравления', label);
     } else if (!usedScroll) {
       usedScroll = true;
-      await pvpUseFromBelt(page, 'ледяного удара', label);
+      await pvpUseFromBelt(page, ICE_SCROLL_ITEM_ID, 'Свиток ледяного удара', label);
     }
     const before = pvpTurnSignature(text);
     const res = await pvpPickZonesAndHit(page);
