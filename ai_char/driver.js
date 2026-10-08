@@ -386,6 +386,7 @@ const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
 const { checkLevelUpIfDue, readHealRateHere } = require('./lib/levelup');
 const { sendSkullsIfDue } = require('./lib/skulls');
+const { runCitizenWorkIfDue } = require('./lib/citizen_work');
 const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendingFightQuestsNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 const { acceptPendingLeasesIfAny } = require('./lib/lease');
@@ -921,6 +922,12 @@ async function loginIfNeeded(page) {
 
       // Черепа с молега - в казну клана раз в 2 дня (Паша, 04.10.2026: «отправляй раз в 2 дня»).
       r = await runCycleStep(page, 'Черепа в казну', () => sendSkullsIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Работа гражданина (камнетёс): каменоломня в Ущелье призраков + сдача в ратуше Стоунгарда.
+      // Раз в сутки, 210 дин. Боёв нет, поэтому шаг идёт и в режиме без боёв.
+      r = await runCycleStep(page, 'Работа гражданина', () => runCitizenWorkIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
