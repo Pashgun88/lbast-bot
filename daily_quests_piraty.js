@@ -242,6 +242,8 @@ const GALLERY_MIN_HP = 1300;
 // 26.09.2026 (мой замер давал 25: за прогон резерв ушёл с 23 до -4 с отдыхом 5 мин посреди сцены,
 // но раннер умеет ждать отдых на месте, так что порог -- вопрос того, когда начинать).
 // HP -- как у Кораблекрушения: в худших ветках два-три боя подряд.
+// Когда Варьете в последний раз упёрся в «Вы выполняете другую миссию» -- до этого момента не ходим.
+let varieteOtherMissionUntil = 0;
 // Варьете: 7 минут (правило Паши, 26.09.2026) -- сцена почти целиком диалоговая.
 const VARIETE_MIN_RESERVE_MINUTES = 7;
 // Пороги ниже -- правила Паши от 26.09.2026, а не оценки по расходу: он играет этот квест руками
@@ -1644,6 +1646,28 @@ async function runDailyQuests(page, stats) {
   const menuText = await getBodyText(page);
   let listedQuests = parseQuestNamesFromQMenuText(menuText);
 
+  // Правило Паши (07.10.2026): квест висит в меню квестов -- значит НЕ сделан. Свои отметки «сделано
+  // сегодня» бот ставит сам и может ошибиться (сбой на последнем шаге, перезапуск со старым
+  // состоянием), а меню показывает правду. Поэтому отметка, которая спорит с меню, сбрасывается.
+  // Интервалы между заходами (Дерево жизни, Драбас) не трогаем -- это кулдауны самой игры.
+  {
+    const inMenu = (name) => isQuestInMenu(listedQuests, name);
+    const fixed = [];
+    if (tavernDoneToday && inMenu('Харчевня')) { tavernDoneToday = false; tavernTakenToday = false; fixed.push('Харчевня'); }
+    if (shtolniDoneToday && inMenu('Штольни')) { shtolniDoneToday = false; shtolniTakenToday = false; fixed.push('Штольни'); }
+    if (rumaForgeDoneToday && inMenu('Кузница Рума')) { rumaForgeDoneToday = false; fixed.push('Кузница Рума'); }
+    if (fisherFoodDoneToday && inMenu('Еда для рыбака')) { fisherFoodDoneToday = false; fixed.push('Еда для рыбака'); }
+    if (caravanRobberyDoneToday && inMenu('Грабим корованы')) { caravanRobberyDoneToday = false; fixed.push('Грабим корованы'); }
+    syncDrabasDayState();
+    if (drabasRunsToday >= DRABAS_DAILY_LIMIT && inMenu('Камни Драбаса')) { drabasRunsToday = DRABAS_DAILY_LIMIT - 1; fixed.push('Камни Драбаса'); }
+    canRunLifeTreeNow();
+    if (lifeTreeRunsToday >= LIFE_TREE_DAILY_LIMIT && inMenu('Дерево жизни')) { lifeTreeRunsToday = LIFE_TREE_DAILY_LIMIT - 1; fixed.push('Дерево жизни'); }
+    if (fixed.length) {
+      console.log(`Квесты висят в меню, значит не сделаны -- сбрасываю отметку «сделано»: ${fixed.join(', ')}`);
+      persistDailyQuestState();
+    }
+  }
+
   // Exclusive quests: while one of these is in progress, do not start any other Q-quests.
   const exclusiveInProgress = [];
   const now = Date.now();
@@ -1791,11 +1815,11 @@ async function runDailyQuests(page, stats) {
   // дню недели). Сцена почти вся в диалогах, переходов по карте мало -- поэтому порог низкий:
   // 7 минут (правило Паши, 26.09.2026). До этого стояло 15, и 26.09 квест простоял весь день,
   // отсеиваясь гейтом, хотя резерва на него хватало.
-  if (isQQuestAllowed('Варьете') && isQuestInMenu(listedQuests, 'Варьете')) {
+  if (isQQuestAllowed('Варьете') && isQuestInMenu(listedQuests, 'Варьете') && Date.now() >= varieteOtherMissionUntil) {
     if (typeof reserveMinutes !== 'number' || reserveMinutes < VARIETE_MIN_RESERVE_MINUTES) {
       console.log(`Quest step skip: Варьете (need >=${VARIETE_MIN_RESERVE_MINUTES} reserve minutes, have=${reserveMinutes ?? 'n/a'})`);
     } else {
-      if (await runQuestStepSafe(page, 'Варьете', () => progressVarieteQuest(page, { questCount }))) {
+      if (await runQuestStepSafe(page, 'Варьете', () => progressVarieteQuest(page, { questCount, exclusiveBusy: exclusiveInProgress.length > 0 }))) {
         didAnything = true;
       }
     }
@@ -1874,6 +1898,7 @@ async function runDailyQuests(page, stats) {
           // Нужен шагу @sapper в «Жертвоприношении»: мини-игра 6x6 решается здесь, в раннере
           // своего решателя нет.
           solveSapper: (p, o) => solveSapperUntilDone(p, o),
+          releaseOtherMission: (name) => releaseForeignMission(page, name, { exceptGuide: name }),
         });
         if (didGuide) didAnything = true;
       } catch (e) {
@@ -2205,8 +2230,11 @@ const MINER_FULL_ENUM_MAX_CELLS = 20;
 const MINER_MAX_SOLUTIONS = 300000;
 const HERB_QUEST_NAMES = [
   'Дикий пустолист',
-  'Трава арайя',
+  // В меню: «Травы: Арайя» и «Травы: Хмель» (меню 06.10.2026). Раньше тут стояло «Трава арайя» --
+  // такой строки в меню нет, и Арайю бот не собирал ни разу; Хмеля в списке не было вовсе.
+  'Арайя',
   'Кустарник травии',
+  'Хмель',
   'Семя винограда',
 ];
 
@@ -2435,6 +2463,13 @@ async function playHerbBoard(page) {
     if (/укололись о ядовитый шип/i.test(text)) {
       console.log('Искать травы: наступили на шип, попытка окончена (игровой кулдаун)');
       return { outcome: 'thorn' };
+    }
+
+    // Усталость -- не сбор. 08.10.2026 все три травы получили «Вы слишком устали. Приходите через
+    // 5 мин.», а бот записал их как собранные («-> done», «Quest step OK»), хотя не нажал ни клетки.
+    if (/слишком\s+устали|нужно\s+отдохнуть|Требуется\s+отдых/i.test(text)) {
+      console.log(`Искать травы: устал, доска не открылась -- трава НЕ собрана (${text.replace(/\s+/g, ' ').slice(0, 120)})`);
+      return { outcome: 'tired', text };
     }
 
     const board = await parseMinerBoard(page);
@@ -2870,7 +2905,51 @@ async function runDrabasQuest(page) {
 // шага" для проверки. Реплики выбора (варианты с "—") матчатся по короткой уникальной подстроке
 // без начального тире и знаков пунктуации на конце -- сам тире, скорее всего, лишь маркер списка
 // в описании квеста, а не часть текста кнопки в игре.
-async function progressVarieteQuest(page, { questCount } = {}) {
+// «Вы выполняете другую миссию»: сцена не пускает, пока в слоте висит задание. Если сами мы сейчас
+// ничего не ведём, это задание брошенное или чужое -- снимаем его в анкете (Паша, 06.10.2026:
+// «если ты не выполняешь никакого квеста можешь нажать отказаться, но внимательно, там есть
+// отказаться от статуи и есть отказаться от текущего задания»). Отказ идёт через
+// declineCurrentTask, а он кликает «отказаться» ТОЛЬКО в строке «Текущее задание», не у статуи.
+// Не трогаем задания, которые бот сам ведёт и бросил намеренно: Харчевню (собранные предметы
+// пропали бы), Ордо (миссию оставляют взятой при нехватке резерва), недоигранную ветку ресторана
+// и другие начатые цепочки по маршрутам.
+const OWN_TASK_PATTERNS = [/харчевню/i, /уничтожить/i];
+
+async function releaseForeignMission(page, label, { busy = false, exceptGuide = null } = {}) {
+  if (busy) {
+    console.log(`${label}: висит другая миссия, но идёт эксклюзивный квест -- не отказываюсь`);
+    return false;
+  }
+  if (hasGuideQuestInProgress(exceptGuide)) {
+    console.log(`${label}: висит другая миссия, а у бота начата цепочка по маршруту -- не отказываюсь`);
+    return false;
+  }
+  try {
+    const run = JSON.parse(fs.readFileSync(path.join(__dirname, 'guides', 'fish_restaurant_run.json'), 'utf8'));
+    if (typeof run.branch === 'number') {
+      console.log(`${label}: висит другая миссия, а в ресторане недоиграна ветка ${run.branch} -- не отказываюсь`);
+      return false;
+    }
+  } catch (e) { /* файла нет -- ветки нет */ }
+
+  const line = await readCurrentTaskLine(page);
+  if (!line) {
+    console.log(`${label}: висит другая миссия, но строку «Текущее задание» в анкете прочитать не удалось`);
+    return false;
+  }
+  if (/Текущее задание:?\s*нет/i.test(line)) {
+    console.log(`${label}: висит другая миссия, а «Текущее задание» в анкете пустое -- отказываться не от чего`);
+    return false;
+  }
+  if (OWN_TASK_PATTERNS.some((re) => re.test(line))) {
+    console.log(`${label}: висит наше же задание (${snapshotText(line, 120)}) -- не отказываюсь, бот его доведёт`);
+    return false;
+  }
+  console.log(`${label}: висит другая миссия, сами ничего не ведём -- отказываюсь от «${snapshotText(line, 120)}»`);
+  return await declineCurrentTask(page, `${label}: освободить слот`);
+}
+
+async function progressVarieteQuest(page, { questCount, exclusiveBusy = false } = {}) {
   const QUEST = 'Варьете'; // "Варьете"
 
   if (!await existsAnyText(page, [QUEST])) {
@@ -2997,6 +3076,18 @@ async function progressVarieteQuest(page, { questCount } = {}) {
   for (let screen = 0; screen < 140 && si < VARIETE_STEPS.length; screen++) {
     throwIfPausedByManager('Варьете');
     const screenText = await getBodyText(page);
+
+    // Зал не пускает, пока висит другая миссия. Раньше проходчик жал «Вернуться» и падал с ошибкой
+    // маршрута, а цикл вызывал recoverToCity -- и так 23 раза за 06.10.2026.
+    if (/выполняете\s+другую\s+миссию/i.test(screenText)) {
+      if (await releaseForeignMission(page, 'Варьете', { busy: exclusiveBusy })) {
+        console.log('Варьете: слот освобождён, зайду снова в следующем проходе.');
+        return false;
+      }
+      varieteOtherMissionUntil = Date.now() + 60 * 60 * 1000;
+      console.log('Варьете: игра отвечает «Вы выполняете другую миссию» -- висит другая миссия; откладываю Варьете на час. Проверь «Дневник».');
+      return false;
+    }
 
     // Бой в середине сцены: ждать его отдельным шагом не нужно, он узнаётся по экрану боя.
     if (/Ударить/.test(screenText) && /VS\./i.test(screenText)) {

@@ -97,11 +97,17 @@ function clearProgress(q) {
 }
 
 // Возвращает true, если что-то делали (начали/продолжили квест).
+// Пока висит чужая миссия, все сцены-миссии отвечают «Вы выполняете другую миссию». Ходить к ним
+// каждые 3-5 минут бессмысленно (06.10.2026: 16 заходов за вечер) -- ждём час.
+const OTHER_MISSION_BACKOFF_MS = 60 * 60 * 1000;
+let otherMissionUntil = 0;
+
 async function runGuideQuestIfDue(page, q, deps = {}) {
   const { isInMenu, reserveMinutes, hpCurrent } = deps;
   const st = loadState();
   const qs = st[q.name] || {};
   const now = Date.now();
+  if (now < otherMissionUntil) return false;
 
   // Часть пройдена в эти же сутки -- следующая будет только завтра, ходить незачем.
   if (q.partsOnSeparateDays && qs.part !== undefined && qs.partDoneAt) {
@@ -162,6 +168,36 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
     console.log(`${q.name}: часть ${p + 1}/${q.files.length} (${q.files[p]})`);
     const r = await runGuide(page, file, undefined, deps);
 
+    if (r.status === 'other_mission') {
+      // Сначала пробуем освободить слот: если сами мы ничего не ведём, висящее задание чужое или
+      // брошенное, и его можно снять в анкете (Паша, 06.10.2026). Тогда в следующем проходе
+      // сцена откроется -- откладывать на час не нужно.
+      if (typeof deps.releaseOtherMission === 'function' && await deps.releaseOtherMission(q.name)) {
+        if (p === 0) {
+          delete qs.part;
+          clearProgress(q);
+        } else {
+          qs.part = p;
+        }
+        st[q.name] = qs;
+        saveState(st);
+        console.log(`${q.name}: слот освобождён, зайду снова в следующем проходе.`);
+        return true;
+      }
+      otherMissionUntil = Date.now() + OTHER_MISSION_BACKOFF_MS;
+      // Первая часть так и не открылась -- цепочка не начата, как и при остановке на дороге.
+      if (p === 0) {
+        delete qs.part;
+        clearProgress(q);
+      } else {
+        qs.part = p;
+      }
+      st[q.name] = qs;
+      saveState(st);
+      console.log(`${q.name}: висит другая миссия -- сцена не открывается; сценарии-миссии отложены на час. Проверь «Дневник»: какая миссия взята и не доиграна.`);
+      return false;
+    }
+
     if (r.status !== 'done') {
       // Маршрут не вышел за дорогу: сцены квеста мы так и не увидели, значит квест не взят и
       // цепочка НЕ начата. Признак начала снимаем, иначе qs.part обходит все гейты, включая гейт по
@@ -219,9 +255,9 @@ async function runGuideQuestsIfDue(page, deps = {}) {
 
 // Есть ли незавершённая цепочка: основной цикл по этому признаку не уходит на ферму, пока квест
 // не доигран (сцена квеста живёт на локации и её нельзя бросать надолго).
-function hasGuideQuestInProgress() {
+function hasGuideQuestInProgress(exceptName = null) {
   const st = loadState();
-  return GUIDE_QUESTS.some((q) => st[q.name] && st[q.name].part !== undefined);
+  return GUIDE_QUESTS.some((q) => q.name !== exceptName && st[q.name] && st[q.name].part !== undefined);
 }
 
 module.exports = { runGuideQuestsIfDue, hasGuideQuestInProgress, GUIDE_QUESTS, STATE_FILE };
