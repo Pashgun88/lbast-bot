@@ -436,7 +436,7 @@ async function runGuideQuestIfDue(page, q) {
   // его: «Восстановлено предыдущее задание»). Пустую запись заполняем собой; чужую не трогаем.
   if (q.needsSlot || q.takesSlot) {
     const { slotOwner, rememberSlotTaken } = require('../lib/task_slot');
-    if (!slotOwner()) rememberSlotTaken(q.name);
+    if (!(slotOwner() || {}).label) rememberSlotTaken(q.name);
   }
   for (let p = qs.part; p < files.length; p++) {
     // dayGatedParts: части = игровые ДНИ, между ними игра сама говорит «расследование лучше начать
@@ -500,7 +500,7 @@ async function runGuideQuestIfDue(page, q) {
         const { dropAssignmentByOrder, forgetSlotOwner, slotOwner } = require('../lib/task_slot');
         // Отказываемся только от СВОЕГО: 09.10.2026 такой отказ снял чужое задание - квест до
         // слота даже не дошёл, его держал другой, уже начатый квест.
-        const owner = slotOwner();
+        const owner = (slotOwner() || {}).label || null; // slotOwner() отдаёт {label, at}, а не строку
         if (owner && owner !== q.name) {
           console.log(`${q.name}: слот держит «${owner}» - отказываться не мне.`);
         } else {
@@ -571,7 +571,7 @@ async function runGuideQuestIfDue(page, q) {
         // весь пройденный квест, как чуть не вышло с «Вспышками прошлого» 28.09.2026.
         // И только СВОЁ: 09.10.2026 здесь снялось задание «Колодца Страха», который уже шёл, -
         // «Огни Девтауна» сорвались на входе, слота в руках не держали, а отказ отдали.
-        const owner = slotOwner();
+        const owner = (slotOwner() || {}).label || null; // slotOwner() отдаёт {label, at}, а не строку
         if (owner && owner !== q.name) {
           console.log(`${q.name}: слот держит «${owner}» - отказываться не мне.`);
         } else {
