@@ -155,6 +155,10 @@ S.charLevel = 0;
 S.skullsSentAt = 0;
 S.skullsTriedAt = 0; // когда последний раз ПЫТАЛИСЬ отправить черепа (переживает перезапуск)
 S.citizenWorkDayKey = null; // работа гражданина (камнетёс) - раз в сутки
+// Квест, который круг за кругом не двигается, не должен держать ферму. 09.10.2026: Варьете,
+// Ордо и ростовщик ломались на своих шагах, а ферма при полных HP стояла «берегу под них».
+S.questStuckStreak = {}; // метка квеста -> сколько кругов подряд без прогресса
+S.questStuckUntil = {};  // метка квеста -> до какого времени он не держит ферму
 // День, в который уже докладывали про квесты из меню без маршрута (lib/daily_quests.js).
 S.questGapReportedDay = '';
 // Скорость лечения из анкеты («Лечение: N hp/мин») и когда её прочли. Паша, 03.10.2026: «лечение
@@ -379,6 +383,8 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.skullsSentAt)) S.skullsSentAt = s.skullsSentAt;
   if (Number.isFinite(s.skullsTriedAt)) S.skullsTriedAt = s.skullsTriedAt;
   if (typeof s.citizenWorkDayKey === 'string' || s.citizenWorkDayKey === null) S.citizenWorkDayKey = s.citizenWorkDayKey;
+  if (s.questStuckStreak && typeof s.questStuckStreak === 'object') S.questStuckStreak = s.questStuckStreak;
+  if (s.questStuckUntil && typeof s.questStuckUntil === 'object') S.questStuckUntil = s.questStuckUntil;
   if (typeof s.questGapReportedDay === 'string') S.questGapReportedDay = s.questGapReportedDay;
   if (Number.isFinite(s.healRatePerMin)) S.healRatePerMin = s.healRatePerMin;
   if (Number.isFinite(s.healRateAt)) S.healRateAt = s.healRateAt;
@@ -468,7 +474,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,

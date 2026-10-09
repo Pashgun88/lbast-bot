@@ -4,6 +4,7 @@
 // Экспорт стоит ДО require: файлы lib/ вызывают друг друга по кругу, а объявления функций
 // всплывают (hoisting), поэтому к моменту любого встречного require все функции уже здесь.
 module.exports = {
+  questStuckNow,
   hpFractionForGate, noteHpFromPageText, questFightHpGate, preTripHpGate, lowHpBeforeFightQuest,
   runQuestStepSafe, readHpFromLocationInNewTab, readReserveFromLocationInNewTab, getHpCurrentSafe,
   getReserveMinutesSafe, waitForReserveAtLeast, waitForHpAbove, tryPerformStepOptional,
@@ -173,6 +174,34 @@ async function lowHpBeforeFightQuest(page, label) {
   return true;
 }
 
+// Квест без прогресса не держит ферму. 09.10.2026: Варьете, Ордо и «Смерть ростовщика» ломались
+// каждый круг на своих шагах, а ферма при 460/460 стояла с надписью «HP берегу под них» - то есть
+// персонаж не делал ни квест, ни фарм. Три пустых круга подряд - и квест на QUEST_STUCK_PAUSE_MS
+// перестаёт держать ферму. Сам он при этом пробуется по-прежнему каждый круг: вдруг сцена
+// сбросится. Гейт снимается при первом же успешном шаге.
+const QUEST_STUCK_STREAK_LIMIT = 3;
+const QUEST_STUCK_PAUSE_MS = 3 * 60 * 60 * 1000;
+
+function noteQuestNoProgress(label) {
+  const streak = (S.questStuckStreak[label] || 0) + 1;
+  S.questStuckStreak[label] = streak;
+  if (streak === QUEST_STUCK_STREAK_LIMIT) {
+    S.questStuckUntil[label] = Date.now() + QUEST_STUCK_PAUSE_MS;
+    console.log(`${label}: ${streak} круга подряд без прогресса - 3 часа не держу из-за него ферму (пробовать буду всё равно).`);
+  }
+}
+
+// Метка шага («Ордо экзекуторс») и имя в Q-меню («Ордо экзекуторс: Уничтожить банду») не совпадают,
+// поэтому сравниваем по началу строки в обе стороны.
+function questStuckNow(questName) {
+  const now = Date.now();
+  for (const [label, until] of Object.entries(S.questStuckUntil || {})) {
+    if (!(until > now)) continue;
+    if (questName.startsWith(label) || label.startsWith(questName)) return true;
+  }
+  return false;
+}
+
 async function runQuestStepSafe(page, label, fn) {
   // Боевой режим (приказы Паши 20.09.2026): 'none' - только мирные квесты; 'single' - всё, кроме
   // квестов с цепочкой боёв (между ними не полечиться, там он и ложился).
@@ -212,8 +241,11 @@ async function runQuestStepSafe(page, label, fn) {
       }
       if (label === 'Харчевня') S.tavernFailStreak = 0;
       if (label === 'Штольни') S.shtolniFailStreak = 0;
+      S.questStuckStreak[label] = 0;
+      delete S.questStuckUntil[label];
     } else {
       console.log(`Quest step skip: ${label}`);
+      noteQuestNoProgress(label);
     }
     noteHpFromPageText(await getBodyText(page), label);
     return ok;

@@ -17,7 +17,7 @@ const {
   LIFE_TREE_INTERVAL_MS,
 } = require('./state');
 const { appendDebugSnapshot, checkExclusiveQuestTimeouts, getBodyText, pause } = require('./core');
-const { lowHpBeforeFightQuest, noteHpFromPageText, runQuestStepSafe } = require('./hp');
+const { lowHpBeforeFightQuest, noteHpFromPageText, questStuckNow, runQuestStepSafe } = require('./hp');
 const {
   isQuestInMenu, openQuestsMenu, parseQuestNamesFromQMenuText, resetToQuestMenu,
 } = require('./quest_menu');
@@ -99,7 +99,9 @@ function hasPendingFightQuests() {
     // Драбас висит в Q весь день; без питомца или на кулдауне (2 раза в сутки, раз в 3-4 ч) держать
     // ради него ферму - значит не фармить весь день.
     || (q === 'Камни Драбаса' && !canRunDrabasNow())
-    || (q === 'Трактир «Рыбий глаз»' && !canRunFishEyeFightNow());
+    || (q === 'Трактир «Рыбий глаз»' && !canRunFishEyeFightNow())
+    // Квест, который три круга подряд не сдвинулся, ферму не держит (см. questStuckNow в hp.js).
+    || questStuckNow(q);
   const held = IMPLEMENTED_FIGHT_QUESTS
     .filter((q) => !skip(q))
     .filter((q) => isQuestInMenu(S.lastListedQuestNames, q));
