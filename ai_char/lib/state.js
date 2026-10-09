@@ -153,6 +153,7 @@ S.levelUpReported = false;
 S.charLevel = 0;
 // Когда последний раз отправляли черепа в казну клана (lib/skulls.js, раз в 2 дня по слову Паши).
 S.skullsSentAt = 0;
+S.skullsTriedAt = 0; // когда последний раз ПЫТАЛИСЬ отправить черепа (переживает перезапуск)
 S.citizenWorkDayKey = null; // работа гражданина (камнетёс) - раз в сутки
 // День, в который уже докладывали про квесты из меню без маршрута (lib/daily_quests.js).
 S.questGapReportedDay = '';
@@ -376,6 +377,7 @@ function restoreDailyQuestState() {
   if (typeof s.levelUpReported === 'boolean') S.levelUpReported = s.levelUpReported;
   if (Number.isFinite(s.charLevel)) S.charLevel = s.charLevel;
   if (Number.isFinite(s.skullsSentAt)) S.skullsSentAt = s.skullsSentAt;
+  if (Number.isFinite(s.skullsTriedAt)) S.skullsTriedAt = s.skullsTriedAt;
   if (typeof s.citizenWorkDayKey === 'string' || s.citizenWorkDayKey === null) S.citizenWorkDayKey = s.citizenWorkDayKey;
   if (typeof s.questGapReportedDay === 'string') S.questGapReportedDay = s.questGapReportedDay;
   if (Number.isFinite(s.healRatePerMin)) S.healRatePerMin = s.healRatePerMin;
@@ -466,7 +468,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, skullsSentAt: S.skullsSentAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,
