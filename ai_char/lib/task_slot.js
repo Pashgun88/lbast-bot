@@ -29,8 +29,6 @@ const { sendTelegram } = require('../telegram_alerts');
 
 const DROP_ORDER_FLAG = path.join(__dirname, '..', 'drop_task.flag');
 // Задание-сирота: когда впервые увидели висящее задание, владельца которого не знаем (см. 3b).
-let unknownLine = '';
-let unknownSince = 0;
 // Сколько минут задание должно висеть без движения, чтобы считаться брошенным.
 const STUCK_MINUTES = Number(process.env.AI_TASK_STUCK_MINUTES || 40);
 // Чтобы не частить в Telegram про одно и то же.
@@ -188,11 +186,12 @@ async function ensureSlotFreeFor(page, questName) {
   // не тронет - это проверяется внутри dropAssignmentByOrder, так что потерять длинный квест нельзя.
   if (!owner) {
     const line = String(slot.line || '');
-    if (unknownLine !== line) { unknownLine = line; unknownSince = Date.now(); }
-    const unknownMin = Math.round((Date.now() - unknownSince) / 60000);
+    if (S.slotUnknownLine !== line) { S.slotUnknownLine = line; S.slotUnknownSince = Date.now(); persistDailyQuestState(); }
+    const unknownMin = Math.round((Date.now() - S.slotUnknownSince) / 60000);
     if (unknownMin >= STUCK_MINUTES) {
-      unknownLine = '';
-      unknownSince = 0;
+      S.slotUnknownLine = '';
+      S.slotUnknownSince = 0;
+      persistDailyQuestState();
       return dropAssignmentByOrder(page, `задание-сирота ${ownerLine} висит ${unknownMin} мин, владельца мы не знаем, слот нужен «${questName}»`, { quiet: true });
     }
     console.log(`Слот задания: ${ownerLine} - владельца не знаем, наблюдаю ${unknownMin} из ${STUCK_MINUTES} мин, потом сниму.`);
