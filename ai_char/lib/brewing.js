@@ -33,10 +33,22 @@ async function countInInventory(page, name) {
   await page.goto('http://lbast.ru/inv.php?pack=1', { waitUntil: 'domcontentloaded', timeout: 60000 });
   const t = await getBodyText(page);
   if (/Восстановите здоровье/i.test(t)) return null;
-  const re = new RegExp(`^\s*${name}\s*(?:\[i\])?\s*(\d+)?\s*$`, 'im');
-  const m = t.match(re);
-  if (!m) return 0;
-  return m[1] ? Number(m[1]) : 1;
+  // Без регулярки нарочно. 09.10.2026: здесь стояло
+  //   new RegExp(`^\s*${name}\s*(?:\[i\])?\s*(\d+)?\s*$`, 'im')
+  // в ШАБЛОННОЙ строке, а в ней \s и \d - не спецсимволы регулярки, а просто буквы s и d.
+  // Получалось `^s*Хмельs*(?:[i])?s*(d+)?s*$` и не совпадало ни с чем: варка честно писала
+  // «хмеля нет», хотя хмеля в сумке было 11, браги не было ни одной - и из-за этого стоял
+  // «Колодец Страха», которому брага нужна на входе. Строки сумки читаем построчно.
+  const needle = String(name).toLowerCase();
+  for (const raw of t.split(/\r?\n/)) {
+    const cut = raw.trim().toLowerCase().replace(/\[i\]/g, ' ').trim();
+    if (!cut.startsWith(needle)) continue;
+    const tail = cut.slice(needle.length).trim();
+    if (tail === '') return 1;
+    const num = tail.match(/^(\d+)$/);
+    if (num) return Number(num[1]);
+  }
+  return 0;
 }
 
 // Стоим в доме (dom.php?mod=inhouse). Варит одну брагу, если есть хмель и браги меньше запаса.
