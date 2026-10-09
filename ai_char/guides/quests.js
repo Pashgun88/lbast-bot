@@ -261,6 +261,44 @@ function loadState() {
 function saveState(st) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(st, null, 2));
 }
+// Где мы на самом деле. 09.10.2026: «Смерть ростовщика» весь день падала на одном шаге. Запись
+// говорила «часть 1», а игра показывала хаб части 3 («Вы СНОВА в городских кварталах»: нищий,
+// мясная лавка, ломбард, мать гончара). Маршрут - линейный повтор, и при расхождении он стирал
+// прогресс и начинал с начала, то есть упирался в то же место снова и снова.
+// Тот же урок, что с каменоломней: правду говорит игра, а не наши записи. Ищем себя по экрану -
+// шаг, который на экране есть и встречается во ВСЕЙ цепочке один раз, однозначно называет часть;
+// внутри этой части встаём на САМЫЙ РАННИЙ шаг, который сейчас на экране (ранний безопаснее:
+// пропустить нужный разговор хуже, чем наткнуться на уже пройденный).
+const RESYNC_MIN_LEN = 12; // короткие реплики («Далее», «Уйти») ничего не определяют
+function resyncNorm(s) {
+  return String(s || '').replace(/^[\s\-–—*•?]+/, '').replace(/[«»"'.,!?…:;()]/g, '')
+    .replace(/ё/g, 'е').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function chainSteps(q) {
+  const out = [];
+  q.files.forEach((f, pi) => {
+    let lines = [];
+    try { lines = fs.readFileSync(path.join(__dirname, f), 'utf8').split(/\r?\n/); } catch { return; }
+    lines.map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+      .forEach((st, i) => { if (!st.startsWith('@')) out.push({ part: pi, index: i, norm: resyncNorm(st), raw: st }); });
+  });
+  return out;
+}
+function resyncPartFromScreen(q, screenTexts) {
+  if (!Array.isArray(q.files) || q.files.length < 2) return null;
+  const onScreen = new Set(screenTexts.map(resyncNorm).filter((t) => t));
+  const all = chainSteps(q);
+  const counts = new Map();
+  for (const st of all) counts.set(st.norm, (counts.get(st.norm) || 0) + 1);
+  const unique = all.filter((st) => st.norm.length >= RESYNC_MIN_LEN && counts.get(st.norm) === 1 && onScreen.has(st.norm));
+  if (!unique.length) return null;
+  const part = unique.reduce((a, b) => (b.part < a.part ? b : a)).part;
+  const here = all.filter((st) => st.part === part && onScreen.has(st.norm));
+  if (!here.length) return null;
+  const index = here.reduce((a, b) => (b.index < a.index ? b : a)).index;
+  return { part, index, by: unique.find((st) => st.part === part).raw };
+}
+
 function clearProgress(q) {
   for (const f of q.files) {
     try { fs.unlinkSync(path.join(__dirname, f) + '.progress'); } catch { /* none */ }
@@ -423,6 +461,25 @@ async function runGuideQuestIfDue(page, q) {
       // стоял где угодно. Пауза 3 часа, и то же самое заново. Теперь считаем срывы на ОДНОМ шаге:
       // второй подряд - стираем прогресс и следующий заход начинаем с начала маршрута (@qinfo),
       // а не с середины.
+      // Прежде чем считать срывы, спросим у экрана, где мы на самом деле (см. resyncPartFromScreen).
+      if (r.status === 'mismatch') {
+        const screenTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+          .map((a) => (a.innerText || '').trim().replace(/\s+/g, ' '))).catch(() => []);
+        const at = resyncPartFromScreen(q, screenTexts);
+        if (at && (at.part !== p || at.index !== r.index)) {
+          qs.part = at.part;
+          qs.failCount = 0;
+          delete qs.failIndex;
+          delete qs.failPart;
+          qs.suppressedUntil = Date.now() + 2 * 60000;
+          st[q.name] = qs;
+          saveState(st);
+          clearProgress(q);
+          try { fs.writeFileSync(path.join(__dirname, q.files[at.part]) + '.progress', String(at.index)); } catch { /* не критично */ }
+          console.log(`${q.name}: маршрут шёл частью ${p + 1}, а игра показывает часть ${at.part + 1} (узнал по «${at.by}») - встаю на её шаг ${at.index} и продолжаю оттуда.`);
+          return true;
+        }
+      }
       const sameStep = qs.failIndex === r.index && qs.failPart === p;
       qs.failCount = sameStep ? (qs.failCount || 1) + 1 : 1;
       qs.failIndex = r.index;
