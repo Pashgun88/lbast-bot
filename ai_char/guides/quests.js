@@ -156,6 +156,10 @@ const GUIDE_QUESTS = [
       ['devtaun_myaso.steps'],
       ['devtaun_zatochka.steps'],
     ],
+    // Брага нужна ТОЛЬКО ветке заточки: заключённому в первой камере даём флягу. 09.10.2026 без
+    // этого ветка жгла суточный запрет впустую - доходила до шага «Дать браги», получала «У вас
+    // нет браги» и роняла весь квест на сутки. Нет браги - берём следующую ветку, их три.
+    variantNeedsItem: { 'devtaun_zatochka.steps': 'Брага' },
     files: ['devtaun_myaso.steps'], // на случай, если variants когда-нибудь уберут
     periodDays: 1,
     minReserveMinutes: 0,
@@ -405,6 +409,18 @@ async function runGuideQuestIfDue(page, q) {
   // регу и заточку». Поэтому у квеста может быть список вариантов, и каждый день берётся
   // следующий по кругу. Указатель сдвигается и при успехе, и при отказе от попытки - иначе
   // сломанная ветка держала бы очередь каждый день.
+  // Ветка, которой не хватает предмета, не должна жечь суточный запрет: перебираем по кругу.
+  if (Array.isArray(q.variants) && q.variantNeedsItem) {
+    for (let tries = 0; tries < q.variants.length; tries++) {
+      const pick = q.variants[(qs.variant || 0) % q.variants.length];
+      const need = pick.map((f) => q.variantNeedsItem[f]).find(Boolean);
+      if (!need || (await hasItemInBag(page, need))) break;
+      console.log(`${q.name}: ветке «${pick.join(', ')}» нужен «${need}», а его в сумке нет - беру следующую.`);
+      qs.variant = ((qs.variant || 0) + 1) % q.variants.length;
+      st[q.name] = qs;
+      saveState(st);
+    }
+  }
   const files = Array.isArray(q.variants) && q.variants.length
     ? q.variants[(qs.variant || 0) % q.variants.length]
     : q.files;

@@ -64,6 +64,10 @@ async function brewBragaInHouse(page, houseUrl, reserve, minReserve) {
     return reserve;
   }
   const braga = await countInInventory(page, 'Брага');
+  // Считаем вслух каждый заход. 09.10.2026: две браги сварились в 16:26, а в 17:14 игра сказала
+  // «у вас нет браги», и ни одна наша строка их не касалась - по журналу было не понять даже,
+  // когда они исчезли. Теперь у каждой проверки есть отметка времени и число.
+  console.log(`Самогон: в сумке браги ${braga === null ? '?' : braga}, хмеля ${hops}.`);
   if (braga !== null && braga >= BRAGA_KEEP) {
     console.log(`Самогон: браги уже ${braga} (держим ${BRAGA_KEEP}) - не варю, резерв нужнее рыбе и кожам.`);
     return reserve;
