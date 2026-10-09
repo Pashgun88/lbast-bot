@@ -89,3 +89,19 @@ async function brewBragaInHouse(page, houseUrl, reserve, minReserve) {
   console.log(`Самогон: не вышло: "${t.replace(/\s+/g, ' ').slice(0, 200)}"`);
   return reserve;
 }
+
+// Замер запаса браги раз в 10 минут. 09.10.2026 брага исчезала трижды за вечер (две бутылки за
+// 48 минут, третья за полчаса), и ни один наш модуль её не знает: варка - единственное место,
+// где она вообще упоминается. Без отметок времени виновник не сузится, а квестов на ней двое:
+// «Колодец Страха» и ветка заточки «Огней Девтауна». Отдельный шаг цикла, одна страница сумки.
+let stockLoggedAt = 0;
+async function logBragaStock(page) {
+  if (Date.now() - stockLoggedAt < 10 * 60000) return;
+  stockLoggedAt = Date.now();
+  try {
+    const braga = await countInInventory(page, 'Брага');
+    const hops = await countInInventory(page, 'Хмель');
+    console.log(`Запас браги: ${braga === null ? '?' : braga} (хмеля ${hops === null ? '?' : hops}).`);
+  } catch (e) { console.log(`Запас браги: не прочитал - ${e.message}`); }
+}
+module.exports.logBragaStock = logBragaStock;
