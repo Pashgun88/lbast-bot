@@ -285,7 +285,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       console.log(`\n--- [${i}/${steps.length}] ${step}`);
       // «Вам нужно отдохнуть еще N мин» - кончился резерв (19.09 «Крыша» дважды): ждём и возвращаемся в сцену.
       for (let r = 0; r < 5; r++) {
-        const rm = (await m.getBodyText(page)).match(/отдохнуть еще (\d+) мин/i);
+        const rm = (await m.getBodyText(page)).match(/отдохнуть(?:\s+еще)?\s+(\d+)\s*мин/i);
         if (!rm) break;
         console.log(`reserve: rest ${rm[1]} min`);
         await sleep((Number(rm[1]) * 60 + 20) * 1000);
@@ -495,7 +495,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           // «Вам нужно отдохнуть еще N мин» - кончился резерв, и СЦЕНА НЕ ОТКРЫВАЕТСЯ (27.09.2026,
           // Болота Агнессы: чулан отвечал именно так, а шаг рапортовал «кнопки боя нет»). Ждём и
           // повторяем тот же шаг - обычная проверка в начале шага сюда не попадала.
-          const restM = t.match(/отдохнуть еще (\d+) мин/i);
+          const restM = t.match(/отдохнуть(?:\s+еще)?\s+(\d+)\s*мин/i);
           if (!b && restM && restWaits < 4) {
             restWaits += 1;
             console.log(`бой не открылся: нужно отдохнуть ${restM[1]} мин - жду и повторяю шаг ${i}.`);
@@ -558,6 +558,18 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           hit = findLink(l, want);
         }
         if (!hit) {
+          // Экран отдыха нажимать нечего, и до этой проверки мы доходили только ПОСЛЕ удачного
+          // клика. 09.10.2026 «Колодец Страха»: после обеда игра ответила «Вам нужно отдохнуть
+          // 1 мин. Вернуться», необязательный шаг на этом экране «пропустился», а следующий не
+          // нашёлся - и проход объявил расхождение на ровном месте. Отдых - не поломка: ждём.
+          const restHere = (await m.getBodyText(page).catch(() => '')).match(/нужно отдохнуть(?:\s+еще)?\s+(\d+)\s*мин/i);
+          if (restHere && (tiredWaits += 1) <= 5) {
+            console.log(`шаг ${i}: игра просит отдохнуть ${restHere[1]} мин - жду и повторяю.`);
+            await sleep((Number(restHere[1]) * 60 + 25) * 1000);
+            await backToScene(page);
+            i -= 1;
+            continue;
+          }
           if (optional) { console.log('optional, skipped'); fs.writeFileSync(PROG, String(i + 1)); continue; }
           // Игра ответила «Здесь вам делать уже нечего, загляните в дневник» - это не поломка, а знак, что
           // квест ушёл дальше записанного маршрута. 29.09.2026 «Унесенные ветром» сам запустился ночью,
@@ -581,7 +593,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         // (дубление/кухня тратят резерв). Ждём и повторяем тот же шаг с экрана, где он был.
         // «Вам нужно отдохнуть еще N мин» КАК ОТВЕТ на клик: действие не выполнилось вовсе (28.09.2026,
         // «Положить свитки» в Мёртвом лесу - шаг считался сделанным, а стадия квеста не закрылась).
-        const mustRest = (await m.getBodyText(page)).match(/нужно отдохнуть еще\s+(\d+)\s*мин/i);
+        const mustRest = (await m.getBodyText(page)).match(/нужно отдохнуть(?:\s+еще)?\s+(\d+)\s*мин/i);
         if (mustRest && (tiredWaits += 1) <= 5) {
           console.log(`шаг ${i} не выполнился: нужно отдохнуть ${mustRest[1]} мин - жду и повторяю.`);
           await sleep((Number(mustRest[1]) * 60 + 25) * 1000);
