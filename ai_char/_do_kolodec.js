@@ -9,7 +9,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(800);
   const t = (await m.getBodyText(page)).replace(/\s+/g, ' ');
   console.log('слот:', (t.match(/Текущее задание:[^»]{0,70}/) || ['?'])[0]);
-  const r = await runGuide(page, 'kolodec.steps', Number(process.env.FROM || 0));
+  const r = await runGuide(page, 'guides/kolodec.steps', Number(process.env.FROM || 0));
   console.log('ИТОГ Колодец:', JSON.stringify(r));
   await ctx.close();
 })();

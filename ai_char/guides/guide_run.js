@@ -411,12 +411,18 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         await sleep(1200);
         console.log(`вписал слово «${word}»`);
       } else if (step.startsWith('@qinfo')) {
-        // Взять квест формально: Q -> [инфо] -> "К месту выполнения" (без этого сценарий не поднимается).
-        const qn = step.slice(6).trim();
+        // Взять квест формально: Q -> [инфо] -> «К месту выполнения» (без этого сценарий не поднимается).
+        // Форма «@qinfo Квест > Ссылка» нажимает на странице инфо другую ссылку. 09.10.2026,
+        // «Колодец Страха»: гайд 2013 года ведёт в Дреймвилль пешком (1 юг, 3 запада, 1 север),
+        // но пешком приходишь на КРАЙ деревни, где только «Вернуться на тракт» - сцены там нет.
+        // У квеста есть свой телепорт «В Дреймвилль» на странице инфо, он и есть нынешний вход.
+        const [qnRaw, linkRaw] = step.slice(6).split('>');
+        const qn = (qnRaw || '').trim();
+        const linkWant = (linkRaw || 'К месту выполнения').trim();
         await m.resetToQuestMenu(page);
         const infoOk = await m.clickInfoForQuest(page, qn);
         const l0 = await links(page);
-        const go = l0.find((x) => /^К месту выполнения$/i.test(x.t));
+        const go = l0.find((x) => norm(x.t) === norm(linkWant)) || l0.find((x) => norm(x.t).startsWith(norm(linkWant)));
         if (!infoOk || !go) { await dump(page, 'QINFO FAILED'); fs.writeFileSync(PROG, String(i)); result = { status: 'mismatch', index: i }; break; }
         await goto(page, go.h);
         await sleep(6500);
