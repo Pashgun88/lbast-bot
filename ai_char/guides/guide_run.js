@@ -534,7 +534,18 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           const lone = real[0].t;
           const isNext = /^Далее$/i.test(lone);
           const forbidden = /^(в\s*бой!?|принять\s+бой!?|напасть|атаковать|ударить|вступить\s+в\s+бой|уйти|отказаться)/i.test(lone.replace(/^[-\s]+/, ''));
-          if (!isNext && !(autoLone && !forbidden)) break;
+          // «Уйти» стоит в forbidden не напрасно: обычно это выход из сцены, то есть отказ. Но
+          // когда сцена УЖЕ пройдена (квест ушёл вперёд записанного маршрута), «Уйти» - её
+          // единственный выход, и без него маршрут бьётся в стену. 09.10.2026, «Смерть
+          // ростовщика», шаг 17: экран «Все спокойно, мужичок ждет под охраной Тары. / Уйти»,
+          // печатка уже забрана. Разрешаем ровно тогда, когда «Уйти» сам есть шагом ДАЛЬШЕ по
+          // этому же маршруту - то есть маршрут и так собирался его нажать. Боевые ссылки
+          // остаются запрещёнными всегда: гейт HP ставится до входа в бой, а не после.
+          const laterStep = steps.slice(i + 1)
+            .filter((st) => !st.startsWith('@'))
+            .some((st) => { const n = norm(st.replace(/^[?*]+/, '')); return n && norm(lone).startsWith(n); });
+          const exitAllowed = /^уйти$/i.test(norm(lone)) && laterStep;
+          if (!isNext && !exitAllowed && !(autoLone && !forbidden)) break;
           console.log(isNext ? 'auto Далее' : `auto lone link: ${lone}`);
           await goto(page, real[0].h);
           ({ l } = await dump(page, `STEP ${i} after auto Далее`));

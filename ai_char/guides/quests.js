@@ -294,7 +294,7 @@ function chainSteps(q) {
   });
   return out;
 }
-function resyncPartFromScreen(q, screenTexts) {
+function resyncPartFromScreen(q, screenTexts, fromPart = -1, fromIndex = -1) {
   if (!Array.isArray(q.files) || q.files.length < 2) return null;
   // Сравнивать строки ЦЕЛИКОМ нельзя: маршрут жмёт ссылку, которая НАЧИНАЕТСЯ с текста шага
   // (guide_run), и шаг «Тара, покарауль пока мужчину» живёт на экране как «Тара, покарауль пока
@@ -307,7 +307,11 @@ function resyncPartFromScreen(q, screenTexts) {
   const unique = all.filter((st) => st.norm.length >= RESYNC_MIN_LEN && counts.get(st.norm) === 1 && onScreen.has(st.norm));
   if (!unique.length) return null;
   const part = unique.reduce((a, b) => (b.part < a.part ? b : a)).part;
-  const here = all.filter((st) => st.part === part && onScreen.has(st.norm));
+  // Внутри ТОЙ ЖЕ части смотрим только ВПЕРЁД. Хаб квеста показывает и уже пройденные двери
+  // («Поговорить с нищим», «Зайти в ломбард»), и по «самому раннему видимому шагу» маршрут
+  // откатывался бы на них по кругу. В другой части floor не нужен: там мы ещё не были.
+  const floor = part === fromPart ? fromIndex : -1;
+  const here = all.filter((st) => st.part === part && st.index > floor && onScreen.has(st.norm));
   if (!here.length) return null;
   const index = here.reduce((a, b) => (b.index < a.index ? b : a)).index;
   return { part, index, by: unique.find((st) => st.part === part).raw };
@@ -479,7 +483,7 @@ async function runGuideQuestIfDue(page, q) {
       if (r.status === 'mismatch') {
         const screenTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
           .map((a) => (a.innerText || '').trim().replace(/\s+/g, ' '))).catch(() => []);
-        const at = resyncPartFromScreen(q, screenTexts);
+        const at = resyncPartFromScreen(q, screenTexts, p, r.index);
         if (at && (at.part !== p || at.index !== r.index)) {
           qs.part = at.part;
           qs.failCount = 0;
