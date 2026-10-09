@@ -296,7 +296,11 @@ function chainSteps(q) {
 }
 function resyncPartFromScreen(q, screenTexts) {
   if (!Array.isArray(q.files) || q.files.length < 2) return null;
-  const onScreen = new Set(screenTexts.map(resyncNorm).filter((t) => t));
+  // Сравнивать строки ЦЕЛИКОМ нельзя: маршрут жмёт ссылку, которая НАЧИНАЕТСЯ с текста шага
+  // (guide_run), и шаг «Тара, покарауль пока мужчину» живёт на экране как «Тара, покарауль пока
+  // мужчину, - вернуть печатку.». 09.10.2026 из-за равенства опознание промолчало на явном шаге.
+  const screen = screenTexts.map(resyncNorm).filter((t) => t);
+  const onScreen = { has: (n) => screen.some((t) => t.startsWith(n)) };
   const all = chainSteps(q);
   const counts = new Map();
   for (const st of all) counts.set(st.norm, (counts.get(st.norm) || 0) + 1);
