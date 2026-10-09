@@ -431,6 +431,7 @@ async function progressOrdoQuest(page, q) {
     // означает, что задание было чужим/прежним - его не трогаем, это решение Паши).
     const takenByUs = !alreadyHasTask || S.ordoTaskTakenLabel === q.label;
     if (takenByUs) {
+      S.ordoForeignSlotStreak = 0;
       console.log(`${q.label}: до боя не дошёл, а задание в слоте взято мной же${alreadyHasTask ? ' (в одном из прошлых циклов)' : ''} - снимаю, чтобы не держать слот.`);
       await dropCurrentAssignment(page, `${q.label}: миссия не прошла, слот не держим`);
       S.ordoTaskTakenLabel = null;
@@ -438,7 +439,17 @@ async function progressOrdoQuest(page, q) {
       require('./task_slot').forgetSlotOwner();
       persistDailyQuestState();
     } else {
-      console.log(`${q.label}: до боя не дошёл, задание в слоте не моё - не трогаю (решение Паши).`);
+      // 09.10.2026: так простояли сутки. Слот держало задание Ордо, взятое в прошлом запуске (учёт
+      // владельца до него не дожил), миссия была непроходима - пещера бандитов отвечала одним
+      // «Вернуться». Снять чужое по этому правилу нельзя, поэтому раньше драйвер каждые полчаса
+      // молча пробовал снова, а вместе со слотом стояли Варьете, Бунгало и Штольни. Молчать тут
+      // нельзя: через три круга зову Пашу - решение за ним.
+      S.ordoForeignSlotStreak = (S.ordoForeignSlotStreak || 0) + 1;
+      console.log(`${q.label}: до боя не дошёл, задание в слоте не моё - не трогаю (решение Паши). Кругов подряд: ${S.ordoForeignSlotStreak}.`);
+      if (S.ordoForeignSlotStreak >= 3) {
+        console.log('КВЕСТ ЗАСТРЯЛ: слот задания держит чужое задание Ордо, миссия не проходится. Пока слот занят, стоят Варьете, Бунгало и Штольни. Снять сам не могу - реши, отказываться ли от задания в башне Ордо.');
+      }
+      persistDailyQuestState();
     }
     // Каждые две минуты гонять коня к пустой миссии бессмысленно - полчаса тишины.
     S.ordoDeadRideUntil = Date.now() + 30 * 60 * 1000;
@@ -464,6 +475,7 @@ async function reportOrdoTaskHere(page, label) {
   }
   const m = text.match(/Задание выполнено[^\n]*/i);
   console.log(`Ордо: доклад принят - ${m ? m[0] : 'задание выполнено'}`);
+  S.ordoForeignSlotStreak = 0;
   // Доклад принят - слот свободен. Чистим ОБА учёта, иначе запись о владельце живёт дальше и
   // врёт следующему квесту, которому слот понадобится.
   S.ordoTaskTakenLabel = null;
