@@ -42,9 +42,12 @@ async function links(page) {
 }
 
 async function goLink(page, re, label, waitMs = 1000) {
-  const hit = (await links(page)).find((l) => re.test(l.t));
+  const all = await links(page);
+  const hit = all.find((l) => re.test(l.t));
   if (!hit) {
-    console.log(`Работа гражданина: не нашёл «${label}» - прерываю, доделаю в следующем круге.`);
+    // Печатаем экран: без него «не нашёл Каменоломню» ничего не объясняет, и 09.10.2026 я
+    // четыре круга подряд видел одну и ту же строку, не понимая, где стоит персонаж.
+    console.log(`Работа гражданина: не нашёл «${label}». Экран: ${all.map((l) => l.t).join(' | ').slice(0, 300)}`);
     return false;
   }
   await page.goto(new URL(hit.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -57,14 +60,26 @@ async function goLink(page, re, label, waitMs = 1000) {
 async function collectStones(page) {
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await pause(page, 500, 900);
-  // Уже в ущелье? Тогда не ехать заново.
-  if (!/Ущелье призраков/i.test(await getBodyText(page))) {
+  // «Мы уже на месте?» проверяем по ССЫЛКЕ «Каменоломня», а не по тексту.
+  // 09.10.2026: проверка искала слова «Ущелье призраков» в тексте страницы - и срабатывала на
+  // СОСЕДНЕЙ локации «Горы», в описании которой написано «Дальше на запад начинается ущелье
+  // призраков». Персонаж застревал там: код считал, что доехал, не находил каменоломню и
+  // прерывался - и так каждый круг, потому что с «Гор» он никуда не уходил.
+  const here = await links(page);
+  if (!here.some((l) => /^Каменоломня$/.test(l.t))) {
     if (!(await goLink(page, /^Конь$|^конь$/, 'Конь'))) return false;
     if (!(await goLink(page, DARII_HORSE_RE, 'Горы Дарии', 9000))) return false;
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await pause(page, 600, 1000);
-    if (!(await goLink(page, /^Идти на восток$/, 'Идти на восток'))) return false;
-    if (!(await goLink(page, /^Идти на запад$/, 'Идти на запад'))) return false;
+    // ВНИМАНИЕ: порядок именно такой. 08.10.2026 я записал его как «восток → запад» и ошибся:
+    // в разведке я возвращался на location.php, считая, что это Горное плато, а location.php
+    // показывает ТЕКУЩЕЕ место - и замеры склеились из разных точек. Живой прогон 09.10.2026:
+    //   Горное плато --запад--> Кровавый пик --юг--> Горы --запад--> Ущелье призраков.
+    // С плато «Идти на восток» ведёт на Западный тракт, оттуда «запад» возвращает на плато -
+    // ровно такое кольцо и крутилось весь день.
+    if (!(await goLink(page, /^Идти на запад$/, 'Идти на запад (Кровавый пик)'))) return false;
+    if (!(await goLink(page, /^Идти на юг$/, 'Идти на юг (Горы)'))) return false;
+    if (!(await goLink(page, /^Идти на запад$/, 'Идти на запад (Ущелье призраков)'))) return false;
   }
   if (!(await goLink(page, /^Каменоломня$/, 'Каменоломня'))) return false;
   if (!(await goLink(page, /Поверхностные выработки/, 'Поверхностные выработки'))) return false;
@@ -73,7 +88,10 @@ async function collectStones(page) {
     console.log('Работа гражданина: набрал полный рюкзак камней.');
     return true;
   }
-  console.log(`Работа гражданина: в выработках ответ непонятный: ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
+  // Паша, 09.10.2026: «там не каждый поход удачный». Пустая ходка - обычное дело, а не поломка:
+  // день не закрываем, в следующем круге сходим снова. Ответ печатаем целиком, чтобы со временем
+  // узнать неудачу в лицо и не путать её с настоящим сбоем.
+  console.log(`Работа гражданина: ходка впустую или ответ незнакомый: ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
   return false;
 }
 
