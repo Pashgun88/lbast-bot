@@ -427,6 +427,14 @@ async function runGuideQuestIfDue(page, q) {
   if (Array.isArray(q.variants)) {
     console.log(`${q.name}: ветка ${((qs.variant || 0) % q.variants.length) + 1} из ${q.variants.length} (${files.join(', ')}).`);
   }
+  // Владелец слота отмечался ТОЛЬКО при старте квеста. При возобновлении (qs.part уже стоит)
+  // запись не восстанавливалась - и идущий квест выглядел сиротой: 09.10.2026 «Огни Девтауна»
+  // сорвались на входе и сняли из слота задание КОЛОДЦА, который уже шёл (игра потом вернула
+  // его: «Восстановлено предыдущее задание»). Пустую запись заполняем собой; чужую не трогаем.
+  if (q.needsSlot || q.takesSlot) {
+    const { slotOwner, rememberSlotTaken } = require('../lib/task_slot');
+    if (!slotOwner()) rememberSlotTaken(q.name);
+  }
   for (let p = qs.part; p < files.length; p++) {
     // dayGatedParts: части = игровые ДНИ, между ними игра сама говорит «расследование лучше начать
     // завтра» («Жертвоприношение»). Вторую часть в тот же календарный день начинать бессмысленно -
@@ -486,9 +494,16 @@ async function runGuideQuestIfDue(page, q) {
       saveState(st);
       clearProgress(q);
       if (q.needsSlot || q.takesSlot) {
-        const { dropAssignmentByOrder, forgetSlotOwner } = require('../lib/task_slot');
-        await dropAssignmentByOrder(page, `${q.name}: маршрут устарел, слот нужен другим`, { quiet: true }).catch(() => false);
-        forgetSlotOwner();
+        const { dropAssignmentByOrder, forgetSlotOwner, slotOwner } = require('../lib/task_slot');
+        // Отказываемся только от СВОЕГО: 09.10.2026 такой отказ снял чужое задание - квест до
+        // слота даже не дошёл, его держал другой, уже начатый квест.
+        const owner = slotOwner();
+        if (owner && owner !== q.name) {
+          console.log(`${q.name}: слот держит «${owner}» - отказываться не мне.`);
+        } else {
+          await dropAssignmentByOrder(page, `${q.name}: маршрут устарел, слот нужен другим`, { quiet: true }).catch(() => false);
+          forgetSlotOwner();
+        }
       }
       console.log(`КВЕСТ ЗАСТРЯЛ: ${q.name} - игра говорит «делать уже нечего» на шаге ${r.index}: квест ушёл дальше записанного маршрута, нужна перезапись. Слот отпустил, пауза 12 ч.`);
       return true;
@@ -548,11 +563,18 @@ async function runGuideQuestIfDue(page, q) {
       // отказ снял задание - и квест откатился в начало, семь пройденных стадий пропали. Дальше по
       // маршруту задание не трогаем: пусть висит, его снимет либо сам квест, либо правило 40 минут.
       if ((q.needsSlot || q.takesSlot) && r.index <= 3) {
-        const { dropAssignmentByOrder, forgetSlotOwner } = require('../lib/task_slot');
+        const { dropAssignmentByOrder, forgetSlotOwner, slotOwner } = require('../lib/task_slot');
         // Сюжетную миссию отказ не тронет (проверка внутри dropAssignmentByOrder) - иначе теряется
         // весь пройденный квест, как чуть не вышло с «Вспышками прошлого» 28.09.2026.
-        await dropAssignmentByOrder(page, `${q.name}: маршрут встал на шаге ${r.index}, слот не держим`, { quiet: true }).catch(() => false);
-        forgetSlotOwner();
+        // И только СВОЁ: 09.10.2026 здесь снялось задание «Колодца Страха», который уже шёл, -
+        // «Огни Девтауна» сорвались на входе, слота в руках не держали, а отказ отдали.
+        const owner = slotOwner();
+        if (owner && owner !== q.name) {
+          console.log(`${q.name}: слот держит «${owner}» - отказываться не мне.`);
+        } else {
+          await dropAssignmentByOrder(page, `${q.name}: маршрут встал на шаге ${r.index}, слот не держим`, { quiet: true }).catch(() => false);
+          forgetSlotOwner();
+        }
       }
       qs.part = p;
       qs.suppressedUntil = Date.now() + pauseMin * 60000;
