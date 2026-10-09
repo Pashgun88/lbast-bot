@@ -422,7 +422,6 @@ async function runGuideQuestIfDue(page, q) {
     const file = path.join(__dirname, files[p]);
     console.log(`${q.name}: часть ${p + 1}/${files.length} (${files[p]})`);
     let r = await runGuide(page, file, undefined, { quietDone: q.quietDone });
-    let resyncedHere = false;
     // Сразу после прохода спрашиваем у ЭКРАНА, где мы на самом деле (см. resyncPartFromScreen).
     if (r.status === 'mismatch') {
       const screenTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
@@ -432,8 +431,7 @@ async function runGuideQuestIfDue(page, q) {
       // 09.10.2026 без этого вышла петля: опознание ставило шаг 20, возобновление откатывало к
       // @city, маршрут снова доходил до пройденного 17, снова опознавался на 20 - и шаг 20 не
       // выполнялся ни разу. Один повтор за круг: если и он сорвётся, идём обычным путём.
-      if (at && at.part === p && at.index > r.index && !resyncedHere) {
-        resyncedHere = true;
+      if (at && at.part === p && at.index > r.index) {
         console.log(`${q.name}: игра ушла дальше записанного (узнал по «${at.by}») - продолжаю с шага ${at.index} этой же части.`);
         r = await runGuide(page, file, at.index, { quietDone: q.quietDone, exactStart: true });
       }
