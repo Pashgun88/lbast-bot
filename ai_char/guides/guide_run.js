@@ -259,6 +259,12 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
     const pendingFight = /Ударить/.test(tp) || lp.some((x) => /^В бой!?$/i.test(x.t));
     if (pendingFight) {
       console.log('Возобновление: на экране висит бой - откат к якорю не делаю.');
+    } else if (opts.exactStart) {
+      // Место определил ВЫЗЫВАЮЩИЙ, прочитав экран (resyncPartFromScreen в quests.js) - откат к
+      // дорожному якорю тут только вредит. 09.10.2026 без этого вышла петля: опознание ставило
+      // «Смерть ростовщика» на шаг 20, возобновление откатывало к @city, маршрут снова доходил до
+      // пройденного шага 17, снова опознавался на 20 - и так каждый круг, шаг 20 не выполнялся ни раз.
+      console.log(`Возобновление: место определено по экрану - начинаю ровно с шага ${start}, без отката к якорю.`);
     } else {
       const anchor = lastAnchorBefore(steps, start);
       if (anchor !== start) console.log(`Возобновление: откатываюсь с шага ${start} к якорю [${anchor}] ${steps[anchor]}`);

@@ -421,7 +421,36 @@ async function runGuideQuestIfDue(page, q) {
     }
     const file = path.join(__dirname, files[p]);
     console.log(`${q.name}: часть ${p + 1}/${files.length} (${files[p]})`);
-    const r = await runGuide(page, file, undefined, { quietDone: q.quietDone });
+    let r = await runGuide(page, file, undefined, { quietDone: q.quietDone });
+    let resyncedHere = false;
+    // Сразу после прохода спрашиваем у ЭКРАНА, где мы на самом деле (см. resyncPartFromScreen).
+    if (r.status === 'mismatch') {
+      const screenTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+        .map((a) => (a.innerText || '').trim().replace(/\s+/g, ' '))).catch(() => []);
+      const at = resyncPartFromScreen(q, screenTexts, p, r.index);
+      // Та же часть: доигрываем ПРЯМО СЕЙЧАС с найденного шага и без отката к дорожному якорю.
+      // 09.10.2026 без этого вышла петля: опознание ставило шаг 20, возобновление откатывало к
+      // @city, маршрут снова доходил до пройденного 17, снова опознавался на 20 - и шаг 20 не
+      // выполнялся ни разу. Один повтор за круг: если и он сорвётся, идём обычным путём.
+      if (at && at.part === p && at.index > r.index && !resyncedHere) {
+        resyncedHere = true;
+        console.log(`${q.name}: игра ушла дальше записанного (узнал по «${at.by}») - продолжаю с шага ${at.index} этой же части.`);
+        r = await runGuide(page, file, at.index, { quietDone: q.quietDone, exactStart: true });
+      }
+      if (at && at.part !== p) {
+        qs.part = at.part;
+        qs.failCount = 0;
+        delete qs.failIndex;
+        delete qs.failPart;
+        qs.suppressedUntil = Date.now() + 2 * 60000;
+        st[q.name] = qs;
+        saveState(st);
+        clearProgress(q);
+        try { fs.writeFileSync(path.join(__dirname, q.files[at.part]) + '.progress', String(at.index)); } catch { /* не критично */ }
+        console.log(`${q.name}: маршрут шёл частью ${p + 1}, а игра показывает часть ${at.part + 1} (узнал по «${at.by}») - встаю на её шаг ${at.index} и продолжаю оттуда.`);
+        return true;
+      }
+    }
     if (r.status === 'lost' && q.lostEndsDay) {
       qs.lastDone = Date.now();
       delete qs.part;
@@ -479,25 +508,6 @@ async function runGuideQuestIfDue(page, q) {
       // стоял где угодно. Пауза 3 часа, и то же самое заново. Теперь считаем срывы на ОДНОМ шаге:
       // второй подряд - стираем прогресс и следующий заход начинаем с начала маршрута (@qinfo),
       // а не с середины.
-      // Прежде чем считать срывы, спросим у экрана, где мы на самом деле (см. resyncPartFromScreen).
-      if (r.status === 'mismatch') {
-        const screenTexts = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
-          .map((a) => (a.innerText || '').trim().replace(/\s+/g, ' '))).catch(() => []);
-        const at = resyncPartFromScreen(q, screenTexts, p, r.index);
-        if (at && (at.part !== p || at.index !== r.index)) {
-          qs.part = at.part;
-          qs.failCount = 0;
-          delete qs.failIndex;
-          delete qs.failPart;
-          qs.suppressedUntil = Date.now() + 2 * 60000;
-          st[q.name] = qs;
-          saveState(st);
-          clearProgress(q);
-          try { fs.writeFileSync(path.join(__dirname, q.files[at.part]) + '.progress', String(at.index)); } catch { /* не критично */ }
-          console.log(`${q.name}: маршрут шёл частью ${p + 1}, а игра показывает часть ${at.part + 1} (узнал по «${at.by}») - встаю на её шаг ${at.index} и продолжаю оттуда.`);
-          return true;
-        }
-      }
       const sameStep = qs.failIndex === r.index && qs.failPart === p;
       qs.failCount = sameStep ? (qs.failCount || 1) + 1 : 1;
       qs.failIndex = r.index;
