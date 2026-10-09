@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const memory = require('./chat_memory');
+const { styleDigest } = require('./chat_style');
 const { S } = require('./lib/state');
 const dayLog = require('./chat_day');
 
@@ -230,6 +231,7 @@ function handleChatTrigger(trigger, roomText) {
     const said = cleanInput(trigger.text, 300);
     const user = `${task}\nКомната: ${cleanInput(trigger.roomName, 40)}. Новые сообщения сверху.\n`
       + `${styleHints(room)}\n`
+      + styleDigest(room)
       + (said ? `Сначала ответь ровно на это: «${said}». Потом, если есть что, добавь своё.\n` : '')
       + selfBlock()
       + todayBlock()
