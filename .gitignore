@@ -54,3 +54,8 @@ ai_char/lore/*.bak
 
 # Пульс главного цикла драйвера (внешний сторож keep_driver_alive.ps1) - только локальный
 ai_char/driver_cycle.heartbeat
+
+# выгрузки чужих страниц (разведка), в репозитории не нужны
+ai_char/z.html
+ai_char/zlata_blog.txt
+ai_char/zlata_ctx.txt
