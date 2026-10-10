@@ -488,6 +488,25 @@ async function runMolegFarmRound(page, buffed = false) {
   const hpAfter = typeof statsAfter.hpCurrent === 'number' ? statsAfter.hpCurrent : null;
   const delta = hpAfter !== null ? hpBefore - hpAfter : null;
   console.log(`Moleg farm: fight result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
+  // Замер вместо надежды на чей-то глаз. 10.10.2026: после взятия 9 уровня Молег снял за один бой
+  // 2180 HP при запасе 500 - персонаж улетел в -1680 и лежал два часа. На 8 уровне тот же бой стоил
+  // ~231: сила бота растёт вместе с нашим уровнем, а шмот остался прежний. Заметил это Паша, а не я,
+  // хотя цифра всё время была в журнале. Теперь бой, который стоит больше ПОЛОВИНЫ запаса HP, сам
+  // ставит точку фарма под запрет и зовёт Пашу: решение по шмоту и целям всё равно его.
+  const hpMax = typeof statsAfter.hpMax === 'number' ? statsAfter.hpMax : null;
+  if (delta !== null && hpMax && delta > hpMax * 0.5) {
+    const { GEAR_WAIT_FLAG_PATH } = require('./state');
+    const note = `Молег снял ${delta} HP при запасе ${hpMax} (больше половины) - фарм на нём остановлен.`;
+    try {
+      if (!require('fs').existsSync(GEAR_WAIT_FLAG_PATH)) {
+        require('fs').writeFileSync(GEAR_WAIT_FLAG_PATH, `${new Date().toISOString()}
+${note}
+Снять: удалить этот файл.
+`);
+      }
+    } catch (err) { console.log('Фарм: не смог поставить запрет файлом:', err.message); }
+    console.log(`ФАРМ ОПАСЕН: ${note} Нужен шмот по уровню или другая цель - реши, Паша.`);
+  }
   return true;
 }
 
