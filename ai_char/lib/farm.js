@@ -493,10 +493,13 @@ async function runMolegFarmRound(page, buffed = false) {
   // ~231: сила бота растёт вместе с нашим уровнем, а шмот остался прежний. Заметил это Паша, а не я,
   // хотя цифра всё время была в журнале. Теперь бой, который стоит больше ПОЛОВИНЫ запаса HP, сам
   // ставит точку фарма под запрет и зовёт Пашу: решение по шмоту и целям всё равно его.
+  // Порог - ВЕСЬ запас HP, а не половина: обычный бой с молегом на 8 уровне стоил 231 из 460, то
+  // есть половину, и его Паша выбрал сознательно. Под запрет попадает только бой, который снял
+  // больше, чем у нас было вообще - то есть нокаут с запасом (проверил на числах из журнала).
   const hpMax = typeof statsAfter.hpMax === 'number' ? statsAfter.hpMax : null;
-  if (delta !== null && hpMax && delta > hpMax * 0.5) {
+  if (delta !== null && hpMax && delta > hpMax) {
     const { GEAR_WAIT_FLAG_PATH } = require('./state');
-    const note = `Молег снял ${delta} HP при запасе ${hpMax} (больше половины) - фарм на нём остановлен.`;
+    const note = `Молег снял ${delta} HP при запасе ${hpMax} (это больше всего запаса) - фарм на нём остановлен.`;
     try {
       if (!require('fs').existsSync(GEAR_WAIT_FLAG_PATH)) {
         require('fs').writeFileSync(GEAR_WAIT_FLAG_PATH, `${new Date().toISOString()}
