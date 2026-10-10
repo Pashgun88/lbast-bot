@@ -687,6 +687,24 @@ const CHAIN_FIGHT_QUESTS = new Set(['Шепот']);
 // снимет Паша флаг после покупки снаряжения - вернутся сами.
 const TOO_STRONG_SINGLE_BOTS = new Set(['Камни Драбаса', 'Ордо: главарь банды', 'Ордо: банда']);
 
+// Паша, 10.10.2026: «останови фарм на молеге и парных ботах пока не получишь новый шмот». Персонаж
+// взял 9 уровень, а шмот на нём прежний, восьмого: молег снимает половину запаса HP, парные бои -
+// больше. Условие снятия тут не время, а событие (пришёл комплект от zlata), поэтому это ФАЙЛ, а не
+// таймер: пока файл лежит, запрет в силе; пришёл шмот - файл убираю, и ничего больше править не надо.
+const GEAR_WAIT_FLAG_PATH = path.join(__dirname, '..', 'wait_for_gear.flag');
+let gearWaitCache = { at: 0, on: null };
+function waitingForGear() {
+  const now = Date.now();
+  if (gearWaitCache.on !== null && now - gearWaitCache.at < 30000) return gearWaitCache.on;
+  let on = false;
+  try { on = fs.existsSync(GEAR_WAIT_FLAG_PATH); } catch (e) { on = false; }
+  gearWaitCache = { at: now, on };
+  return on;
+}
+// Бои, где противников двое и больше: по ним и стоит запрет Паши.
+const PAIRED_FIGHT_QUESTS = new Set(['Колодец Страха', 'Ордо: банда', 'Ордо: главарь банды',
+  'Ордо экзекуторс: Уничтожить банду', 'Ордо экзекуторс: Уничтожить главаря банды']);
+
 const NO_FIGHT_FLAG_PATH = require('path').join(__dirname, '..', 'no_fight.flag');
 let fightModeCache = { at: 0, mode: 'all' };
 function getFightMode() {
@@ -707,6 +725,7 @@ function isNoFightMode() { return getFightMode() === 'none'; }
 
 module.exports = {
   S, isNoFightMode, getFightMode, PEACEFUL_QUESTS, CHAIN_FIGHT_QUESTS, NO_FIGHT_FLAG_PATH,
+  waitingForGear, PAIRED_FIGHT_QUESTS, GEAR_WAIT_FLAG_PATH,
   setupWindowsConsoleUtf8, loadStateFromDisk, saveStateToDisk, getWeekday, resetHuntStateIfNewDay,
   parseCooldownError, restoreDailyQuestState, persistDailyQuestState,
   resetAssassinGuildDayIfNeeded, getDayKeyNow, getMonthKeyNow, DEBUG_SNAPSHOTS_PATH,

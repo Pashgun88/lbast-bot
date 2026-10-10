@@ -224,6 +224,12 @@ async function runQuestStepSafe(page, label, fn) {
     console.log(`Quest step skip (одиночный, но не по силам в шмоте 6 уровня): ${label} - замер 26.09: один такой бот снимает больше 500 HP с полного запаса.`);
     return false;
   }
+  // Паша, 10.10.2026: «останови фарм на молеге и парных ботах пока не получишь новый шмот».
+  // Персонаж взял 9 уровень в шмоте восьмого: парный бой снимает больше, чем весь запас HP.
+  if (!peaceful && require('./state').waitingForGear() && require('./state').PAIRED_FIGHT_QUESTS.has(label)) {
+    console.log(`Quest step skip (ждём новый шмот, парные боты): ${label}`);
+    return false;
+  }
   if (S.characterDownDetected) {
     console.log(`Quest step skip (персонаж выбыл из строя): ${label}`);
     return false;

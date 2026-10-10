@@ -117,12 +117,19 @@ function hasEnoughHpForOptionalFight(stats) {
 const FARM_SESSION_MIN = Number(process.env.AI_FARM_SESSION_MIN || 60);
 // Точка фарма: 'moleg' (Гора Вейлия, с 04.10.2026 по решению Паши) или 'hides' - прежние
 // кабан/бизон/лесопилка ради кож. Меняется переменной окружения AI_FARM_SPOT без правок кода.
-const FARM_SPOT = String(process.env.AI_FARM_SPOT || 'moleg').toLowerCase() === 'hides' ? 'hides' : 'moleg';
+const FARM_SPOT_ENV = String(process.env.AI_FARM_SPOT || 'moleg').toLowerCase() === 'hides' ? 'hides' : 'moleg';
+// Паша, 10.10.2026: «останови фарм на молеге ... пока не получишь новый шмот». Запрет снимается
+// файлом (wait_for_gear.flag), поэтому точку считаем КАЖДЫЙ раз, а не один раз при запуске: убрал
+// файл - молег вернулся сам, без перезапуска драйвера.
+function farmSpot() {
+  if (require('./lib/state').waitingForGear()) return 'hides';
+  return FARM_SPOT_ENV;
+}
 const FARM_HEAL_TARGET = 0.95;
 // Ниже этой доли HP в сессии не бьёмся, а уходим лечиться домой. Для молега порог выше: бой
 // снимает половину запаса (231 из 460), и начинать его на 70% - значит не дожить до конца.
 // Дома в Кулаке Хаоса реген 26 hp/мин против 18 на Горе Вейлия, так что лечиться выгодно именно там.
-const FARM_FIGHT_FLOOR = FARM_SPOT === 'moleg' ? 0.9 : 0.7;
+function farmFightFloor() { return farmSpot() === 'moleg' ? 0.9 : 0.7; }
 // До какого HP лечимся, когда ждут квесты с боями (порог входа в них - 70%, берём с запасом).
 const QUEST_HEAL_TARGET = 0.85;
 // Цель лечения обязана быть ВЫШЕ боевого порога, иначе драйвер лечится до 85%, а бой требует 90% -
@@ -288,7 +295,7 @@ async function runFarmSession(page) {
       await waitForHeal(page);
       continue;
     }
-    if (st.hpCurrent < st.hpMax * FARM_FIGHT_FLOOR) {
+    if (st.hpCurrent < st.hpMax * farmFightFloor()) {
       // лечимся в Кулаке Хаоса до 95%, замер раз в 2 минуты
       const here = await getBodyText(page).catch(() => '');
       if (!/Кулак Хаоса/i.test(here)) {
@@ -330,7 +337,7 @@ async function runFarmSession(page) {
     // Вейлия, бой снимает ~231 HP из 460 и даёт заметно больше опыта, чем кабан (171) - клан третий
     // месяц советовал «сидеть на молегах до 17-го». Прежний фарм (кабан/бизон/лесопилка) оставлен в
     // коде целиком: переключается AI_FARM_SPOT=hides, без правок.
-    if (FARM_SPOT === 'moleg') {
+    if (farmSpot() === 'moleg') {
       const mo = await runMolegFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: молег:', e.message); return false; });
       if (mo) fights += 1;
       if (!mo) {

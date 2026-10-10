@@ -328,11 +328,26 @@ function clearProgress(q) {
 }
 
 // Returns true when it did something (ran or resumed a quest), false when nothing was due.
+// Чтобы строка про ожидание шмота не повторялась каждый круг.
+const gearWaitLogged = new Set();
+
 async function runGuideQuestIfDue(page, q) {
   const st = loadState();
   const qs = st[q.name] || {};
   const now = Date.now();
   if (qs.suppressedUntil && now < qs.suppressedUntil) return false;
+
+  // Паша, 10.10.2026: «останови фарм на молеге и парных ботах пока не получишь новый шмот».
+  // В «Колодце Страха» два боя из трёх парные (Гном+Полуорк, Пьяный+Деревенский плотники), так
+  // что до нового комплекта он ждёт - даже начатый. Запрет снимается удалением wait_for_gear.flag.
+  const stateMod = require('../lib/state');
+  if (stateMod.waitingForGear() && stateMod.PAIRED_FIGHT_QUESTS.has(q.name)) {
+    if (!gearWaitLogged.has(q.name)) {
+      gearWaitLogged.add(q.name);
+      console.log(`${q.name}: ждём новый шмот - в нём парные бои, до комплекта не хожу (приказ Паши).`);
+    }
+    return false;
+  }
 
   if (qs.part === undefined) {
     // resetAtMidnight: квест обновляется с полуночи (Паша про Штольни, 19.09.2026), а не через сутки.
