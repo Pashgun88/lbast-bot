@@ -227,13 +227,27 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   const ownAddressee = ownLastForReply && (ownLastForReply.text.match(/^\s*([A-Za-z0-9_.-]+)\s*,/) || [])[1];
   const isOurInterlocutor = (nick) => !ownAddressee || ownAddressee.toLowerCase() === String(nick).toLowerCase();
 
+  // Обращение БЕЗ слов - не повод отвечать. 10.10.2026, Паша про диалог в зале: «вообще не
+  // понятный диалог». Galla написала «AI__, .boggle.» - один смайл недоумения, и AI__ ответил
+  // отчётом про статую славы и жареную рыбу. Смайл в ответ на смайл был бы в духе зала, но
+  // выбрать уместный смайл без понимания нельзя, а молчание всегда уместно.
+  const SMILEY_RE = /\.[a-zA-Z0-9_]+\./g;
+  const hasWords = (text) => String(text || '')
+    .replace(SMILEY_RE, ' ')
+    .replace(AI_MENTION_RE, ' ')
+    .replace(/[^А-Яа-яЁёA-Za-z]/g, '')
+    .length >= 2;
+
   for (const m of live) {
-    if (AI_MENTION_RE.test(m.text)) {
+    if (AI_MENTION_RE.test(m.text) && !hasWords(m.text)) {
+      // к нам обратились одним смайлом - отвечать нечего
+    } else if (AI_MENTION_RE.test(m.text)) {
       triggers.push({ ...base, type: 'mention', nick: m.nick, text: m.text,
         reason: `${m.nick} обратился к AI__` });
     // "Tsunami, и за месяц спустила..." - обращение к ДРУГОМУ нику: это не нам, даже если пришло
     // сразу после нашей реплики (первая ложная сработка 18.09.2026).
     } else if (!firstObservation && inReplyWindow && isOurInterlocutor(m.nick)
+      && hasWords(m.text)
       && !/^[A-Za-z0-9_.-]+\s*,/.test(m.text)) {
       triggers.push({ ...base, type: 'reply', nick: m.nick, text: m.text,
         reason: `${m.nick} ответил после реплики AI__` });
