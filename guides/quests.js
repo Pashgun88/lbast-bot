@@ -100,6 +100,8 @@ function clearProgress(q) {
 // Пока висит чужая миссия, все сцены-миссии отвечают «Вы выполняете другую миссию». Ходить к ним
 // каждые 3-5 минут бессмысленно (06.10.2026: 16 заходов за вечер) -- ждём час.
 const OTHER_MISSION_BACKOFF_MS = 60 * 60 * 1000;
+// Ответ «лучше начать завтра», хотя по нашему календарю день уже новый: пробуем снова через час.
+const NOT_YET_BACKOFF_MS = 60 * 60 * 1000;
 let otherMissionUntil = 0;
 
 async function runGuideQuestIfDue(page, q, deps = {}) {
@@ -109,11 +111,15 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
   const now = Date.now();
   if (now < otherMissionUntil) return false;
 
-  // Часть пройдена в эти же сутки -- следующая будет только завтра, ходить незачем.
+  // Часть пройдена в эти же сутки -- следующая будет только на следующий КАЛЕНДАРНЫЙ день (Паша,
+  // 11.10.2026). «Наступила ночь, лучше начать завтра» в тот день было не про 24 часа: день 1 на
+  // самом деле не был доигран (сапёр сорвался на шипе, а бот принял его за пройденный).
   if (q.partsOnSeparateDays && qs.part !== undefined && qs.partDoneAt) {
     const sameDay = new Date(qs.partDoneAt).toDateString() === new Date(now).toDateString();
     if (sameDay) return false;
   }
+  // Игра сама сказала «приходите завтра» -- до отметки не ходим.
+  if (qs.notBefore && now < qs.notBefore) return false;
 
   // qs.part !== undefined -> цепочка уже начата, доводим до конца независимо от меню Q:
   // взятый квест из меню пропадает, а сцена остаётся.
@@ -167,6 +173,15 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
     const file = path.join(__dirname, q.files[p]);
     console.log(`${q.name}: часть ${p + 1}/${q.files.length} (${q.files[p]})`);
     const r = await runGuide(page, file, undefined, deps);
+
+    if (r.status === 'not_yet') {
+      qs.part = p;
+      qs.notBefore = Date.now() + NOT_YET_BACKOFF_MS;
+      st[q.name] = qs;
+      saveState(st);
+      console.log(`${q.name}: игра говорит «приходите завтра» -- часть ${p + 1} ещё не открылась, попробую через час.`);
+      return false;
+    }
 
     if (r.status === 'other_mission') {
       // Сначала пробуем освободить слот: если сами мы ничего не ведём, висящее задание чужое или
@@ -224,6 +239,7 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
 
     qs.part = p + 1;
     qs.partDoneAt = Date.now();
+    delete qs.notBefore;
     st[q.name] = qs;
     saveState(st);
 
