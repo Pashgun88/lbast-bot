@@ -2235,6 +2235,9 @@ const HERB_QUEST_NAMES = [
   'Арайя',
   'Кустарник травии',
   'Хмель',
+  // Названия из меню 09.10.2026: «Травы: Шипы дикого кактуса», «Травы: Пререя».
+  'Шипы дикого кактуса',
+  'Пререя',
   'Семя винограда',
 ];
 
@@ -2515,7 +2518,10 @@ async function playSapperBoardOnce(page) {
   for (let round = 0; round < HERB_BOARD_MAX_ROUNDS; round++) {
     const text = await getBodyText(page);
 
-    if (/укололись о ядовитый шип/i.test(text)) {
+    // В «Жертвоприношении» шип пишется иначе, чем в травах: «Вы больно укололи руку.» (10.10.2026).
+    // Эту фразу решатель не знал, принял открытую доску за пройденную, нажал «Далее» с HP -30, и
+    // день 1 записался как сделанный -- хотя кинжал так и не достали.
+    if (/укололись о ядовитый шип|больно\s+укололи/i.test(text)) {
       return { outcome: 'thorn' };
     }
 
@@ -2651,6 +2657,14 @@ async function progressHerbQuest(page, herbName, { questCount } = {}) {
 
     await clickByTexts(page, ['В игру', 'в игру'], 'В игру (после трав)').catch(() => {});
 
+    // Правило Паши (08.10.2026): «трава собрана, когда пропадает из меню квестов. Как и квесты».
+    // Исход доски -- только догадка по тексту страницы (так усталость однажды сошла за сбор), а меню
+    // показывает правду. Поэтому итог решает меню: трава из него ушла -- собрана, висит -- нет.
+    if (Number.isFinite(questCount) && questCount > 0 && await resetToQuestMenu(page, questCount)) {
+      const stillListed = (await getBodyText(page)).includes(herbMenuLabel(herbName));
+      console.log(`Искать травы: "${herbName}" ${stillListed ? 'всё ещё в меню квестов -- НЕ собрана' : 'пропала из меню квестов -- собрана'}`);
+      return !stillListed;
+    }
     return result.outcome === 'done';
   } catch (e) {
     console.log(`Искать травы: ошибка (${herbName}): ${e.message}`);
