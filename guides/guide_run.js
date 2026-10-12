@@ -178,7 +178,9 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   // Пока переигрывается дорога, сохранённый шаг не трогаем: иначе сбой на дороге затёр бы место
   // в цепочке, и следующий проход начал бы квест с чужого экрана.
   const saveProg = (v) => { if (!replayRoad) fs.writeFileSync(PROG, String(v)); };
-  let autoLone = false;
+  // @autolone действует до конца файла. При возобновлении раннер прыгает на сохранённый шаг мимо
+  // самой метки, поэтому учитываем метку, если она стоит раньше этого шага.
+  let autoLone = steps.slice(0, from).includes('@autolone');
   // Вышел ли маршрут ЗА дорогу, то есть открылась ли вообще сцена квеста. Дорога сама по себе
   // ничего не доказывает: доехать на место можно и когда квест на кулдауне. Вызывающий (quests.js)
   // по этому признаку решает, считать ли цепочку начатой.
@@ -187,7 +189,37 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   let result = { status: 'error', index: from };
 
   try {
-    await backToScene(page);
+    // «Продолжить квест» на локации открывает ЛЮБУЮ незаконченную сцену, не обязательно нашу.
+    // 12.10.2026 висела сцена «Рыбацкой деревни», и «Жертвоприношение», начиная дорогу с амулета,
+    // первым делом жало «Продолжить квест» -- попадало к Старому рыбаку и вставало на «Амулет».
+    // Поэтому в сцену возвращаемся, только если продолжаем прямо из неё; дорога (и первый заход)
+    // начинается с обычной локации.
+    if (from === 0 || steps[start] === '@road') {
+      await goto(page, 'location.php');
+    } else {
+      await backToScene(page);
+    }
+
+    // Возобновляем сцену, а у персонажа уже висит бой этой сцены: ехать по дороге (конь, вход в
+    // сцену) нельзя и незачем -- сначала бой. 12.10.2026 после первого боя на рынке «Рыбацкой
+    // деревни» висел второй, а раннер при возобновлении поехал конём в деревню.
+    if (replayRoad) {
+      const fightPending = async () => (await links(page)).some((x) => /^В бой!?$/i.test(x.t))
+        || /Ударить/.test(await getBodyText(page));
+      let pending = await fightPending();
+      // Бой может быть виден только за «Продолжить квест» -- заглядываем туда и, если боя нет,
+      // возвращаемся на локацию, ничего больше не нажимая (сцена может быть и чужой).
+      if (!pending && (await links(page)).some((x) => /^Продолжить квест$/i.test(x.t))) {
+        await backToScene(page);
+        pending = await fightPending();
+        if (!pending) await goto(page, 'location.php');
+      }
+      if (pending) {
+        console.log(`guide ${name}: висит бой сцены -- дорогу не прохожу, продолжаю с шага ${from}`);
+        start = from;
+        replayRoad = false;
+      }
+    }
 
     let restRetries = 0;
 
@@ -199,6 +231,14 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
 
       // Могли попасть на экран отдыха ещё до шага (прошлый заход, чужое действие в игре).
       for (let r = 0; r < 5 && await restIfBlocked(page); r++) { /* ждём и пробуем снова */ }
+
+      // «Рыбака нигде не видно. Приходите через 6 дн.» -- квест уже сделан и на откате (12.10.2026:
+      // его доиграл прошлый запуск, а сохранённый шаг остался, и бот каждый цикл искал бой).
+      if (i > start && /Приходите\s+через\s+\d+\s*(дн|сут)/i.test(await getBodyText(page))) {
+        console.log(`guide ${name}: игра ответила «приходите через N дн.» -- квест уже сделан, на откате`);
+        result = { status: 'cooldown', index: from };
+        break;
+      }
 
       // «Наступила ночь, расследование лучше начать завтра.» -- следующая часть многодневной
       // цепочки ещё не открылась (11.10.2026, «Жертвоприношение»). Не ошибка маршрута: место в
@@ -513,7 +553,14 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
   }
 
   if (from >= steps.length) result = { status: 'done', index: steps.length };
-  return { ...result, pastRoad };
+  // Возобновление ИЗ СЦЕНЫ (сохранённый шаг уже за дорогой): сцену мы видели раньше, и если сейчас
+  // не нашёлся первый же шаг, это не значит «квест не начат». 12.10.2026 «Рыбацкая деревня» с
+  // сохранённым шагом 36 не нашла «Понятно» сразу за дорогой, и вызывающий стёр прогресс как у
+  // неначатой цепочки.
+  const arrivedBeforeFrom = lastMarkBefore('@arrived', from);
+  const roadBeforeFrom = lastMarkBefore('@road', from);
+  const resumed = from > 0 && !(roadBeforeFrom > arrivedBeforeFrom);
+  return { ...result, pastRoad, resumed };
 }
 
 module.exports = { runGuide, travelWait, restIfBlocked };

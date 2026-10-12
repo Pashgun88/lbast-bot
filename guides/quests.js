@@ -176,6 +176,18 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
     console.log(`${q.name}: часть ${p + 1}/${q.files.length} (${q.files[p]})`);
     const r = await runGuide(page, file, undefined, deps);
 
+    if (r.status === 'cooldown') {
+      // Квест уже выполнен (доиграли раньше -- вручную или прошлым запуском) и стоит на откате.
+      qs.lastDone = Date.now();
+      delete qs.part;
+      delete qs.notBefore;
+      st[q.name] = qs;
+      saveState(st);
+      clearProgress(q);
+      console.log(`${q.name}: игра говорит «приходите через N дн.» -- квест уже сделан, отмечаю выполненным.`);
+      return true;
+    }
+
     if (r.status === 'not_yet') {
       qs.part = p;
       qs.notBefore = Date.now() + NOT_YET_BACKOFF_MS;
@@ -220,7 +232,7 @@ async function runGuideQuestIfDue(page, q, deps = {}) {
       // цепочка НЕ начата. Признак начала снимаем, иначе qs.part обходит все гейты, включая гейт по
       // меню квестов: 28.09.2026 «Рыбацкая деревня» записала part=0 ещё старым кодом и потом весь
       // вечер каталась конём в деревню, где на кулдауне просто нет ссылки «Осмотреться».
-      if (p === 0 && r.pastRoad === false) {
+      if (p === 0 && r.pastRoad === false && !r.resumed) {
         delete qs.part;
         st[q.name] = qs;
         saveState(st);
