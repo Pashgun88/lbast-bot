@@ -73,16 +73,48 @@ function solveGrid(rows) {
     }
     if (!changed) break;
   }
-  const safe = [];
-  for (const [r, c, d] of digits) {
+  // Правило подмножеств (в сапёре это «1-2»). Живой случай 12.10.2026, сетка ****/****/****/**11:
+  // угловая «1» требует один шип среди {(3,3),(3,4)}, соседняя «1» - один шип среди
+  // {(3,2),(3,3),(3,4),(4,2)}. Первое множество целиком внутри второго, значит остаток
+  // {(3,2),(4,2)} шипов не содержит вовсе - обе клетки безопасны ТОЧНО. Прежний решатель этого не
+  // выводил и шёл гадать, хотя знать было можно.
+  const safeSet = new Set();
+  const addSafe = (rr, cc) => { if (!thorns.has(key(rr, cc))) safeSet.add(key(rr, cc)); };
+  const constraints = () => digits.map(([r, c, d]) => {
     const nb = around(r, c).filter(([, , v]) => v === '*');
-    const known = nb.filter(([rr, cc]) => thorns.has(key(rr, cc))).length;
-    if (d - known === 0) {
-      for (const [rr, cc] of nb) {
-        if (!thorns.has(key(rr, cc)) && !safe.some(([sr, sc]) => sr === rr && sc === cc)) safe.push([rr, cc]);
+    const open = nb.filter(([rr, cc]) => !thorns.has(key(rr, cc)) && !safeSet.has(key(rr, cc)));
+    return { cells: open.map(([rr, cc]) => key(rr, cc)), left: d - (nb.length - open.length) };
+  }).filter((x) => x.cells.length);
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    const cons = constraints();
+    for (const a of cons) {
+      // Все шипы этой подсказки уже найдены - остальные её соседи безопасны.
+      if (a.left === 0) {
+        for (const k of a.cells) if (!safeSet.has(k)) { safeSet.add(k); changed = true; }
+        continue;
+      }
+      if (a.left === a.cells.length) {
+        for (const k of a.cells) if (!thorns.has(k)) { thorns.add(k); changed = true; }
+        continue;
+      }
+      for (const b of cons) {
+        if (a === b) continue;
+        if (!a.cells.every((k) => b.cells.includes(k))) continue; // a не подмножество b
+        const rest = b.cells.filter((k) => !a.cells.includes(k));
+        if (!rest.length) continue;
+        const left = b.left - a.left;
+        if (left === 0) {
+          for (const k of rest) if (!safeSet.has(k)) { safeSet.add(k); changed = true; }
+        } else if (left === rest.length) {
+          for (const k of rest) if (!thorns.has(k)) { thorns.add(k); changed = true; }
+        }
       }
     }
+    if (!changed) break;
   }
+  const safe = [...safeSet].map((k) => k.split(',').map(Number));
+
   // Оценка риска клетки. Раньше тут была сумма соседних цифр - «подальше от того, что пахнет
   // шипами». Это уводит и от информации: клетка рядом с «1», у которой восемь незакрытых
   // соседей, рискует на 1/8, а клетка в стороне от всех цифр - на всю плотность шипов, и сумма
