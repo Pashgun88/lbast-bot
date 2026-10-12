@@ -233,7 +233,10 @@ let ordoItemsCollected = 0;
 // поэтому единственный гейт -- собственный период. 25.09.2026 сразу после сдачи в каталоге
 // встало «через 6 дн.», значит период около недели.
 let galleryLastDoneAt = 0;
-const GALLERY_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
+// Галерея висит в меню, а Марсиус всё равно отказал (например, занят слот задания) -- не ездим к
+// нему каждый цикл, пробуем через полчаса.
+let galleryNextTryAt = 0;
+const GALLERY_REFUSED_BACKOFF_MS = 30 * 60 * 1000;
 // Порог по резерву -- правило Паши от 26.09.2026 (10 минут); порог HP остаётся моей осторожной
 // оценкой: в сценке два боя подряд.
 const GALLERY_MIN_RESERVE_MINUTES = 10;
@@ -340,6 +343,7 @@ function restoreDailyQuestState() {
   if (s.ordoNextTryAt && typeof s.ordoNextTryAt === 'object') ordoNextTryAt = s.ordoNextTryAt;
   if (Number.isFinite(s.ordoItemsCollected)) ordoItemsCollected = s.ordoItemsCollected;
   if (Number.isFinite(s.galleryLastDoneAt)) galleryLastDoneAt = s.galleryLastDoneAt;
+  if (Number.isFinite(s.galleryNextTryAt)) galleryNextTryAt = s.galleryNextTryAt;
 
   if (s.misttownSecretDueAt && typeof s.misttownSecretDueAt === 'object') misttownSecretDueAt = s.misttownSecretDueAt;
   if (s.misttownSecretAttemptedAt && typeof s.misttownSecretAttemptedAt === 'object') misttownSecretAttemptedAt = s.misttownSecretAttemptedAt;
@@ -387,7 +391,7 @@ function persistDailyQuestState() {
     elkHuntDayKey, elkHuntDoneToday,
     demonHuntDayKey, demonHuntDoneToday,
     schoolTempleDayKey, schoolTempleDoneToday,
-    ordoNextTryAt, ordoItemsCollected, galleryLastDoneAt,
+    ordoNextTryAt, ordoItemsCollected, galleryLastDoneAt, galleryNextTryAt,
     misttownSecretDueAt, misttownSecretAttemptedAt, lastMisttownSecretCheckAt, needsArrowFarm,
     extraDailyDayKey, extraDailyDoneToday,
     thursdayDayKey, thursdayGravediggerDoneToday, thursdayButcherFightsToday, thursdayWitchFightsToday,
@@ -1690,6 +1694,7 @@ async function runDailyQuests(page, stats) {
     'Грабим корованы',
     'Варьете',
     'Рыбный ресторан',
+    'Галерея искусств',
     // Квесты по записанным маршрутам берём прямо из реестра guides/quests.js -- иначе каждый
     // новый .steps пришлось бы дублировать ещё и здесь, и забытый квест молча уступал бы ферме.
     ...GUIDE_QUESTS.map((q) => q.name),
@@ -1848,9 +1853,12 @@ async function runDailyQuests(page, stats) {
     }
   }
 
-  // Галерея искусств (лазулиты): в меню Q не показывается вообще, берётся прямо у Марсиуса в
-  // Рыбацкой деревне, поэтому гейт только по собственному периоду. Маршрут -- guides/gallery.js.
-  if (exclusiveInProgress.length === 0 && Date.now() - galleryLastDoneAt >= GALLERY_PERIOD_MS) {
+  // Галерея искусств (лазулиты): берётся у Марсиуса в Рыбацкой деревне. Гейт -- САМО НАЛИЧИЕ в
+  // меню квестов (Паша, 12.10.2026: «надо ходить только когда появляется в меню квестов»; в меню
+  // она бывает -- «• Галерея искусств [инфо]»). Раньше гейт был по своему 7-дневному периоду, и бот
+  // весь день по два раза за цикл ездил к Марсиусу, который задание не выдавал. Маршрут --
+  // guides/gallery.js.
+  if (exclusiveInProgress.length === 0 && isQuestInMenu(listedQuests, 'Галерея искусств') && Date.now() >= galleryNextTryAt) {
     const galleryMisttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
     const galleryHp = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
     if (galleryMisttownSoon) {
@@ -1868,6 +1876,10 @@ async function runDailyQuests(page, stats) {
         didAnything = true;
         galleryLastDoneAt = Date.now();
         persistDailyQuestState();
+      } else {
+        galleryNextTryAt = Date.now() + GALLERY_REFUSED_BACKOFF_MS;
+        persistDailyQuestState();
+        console.log('Галерея: не вышло -- следующая попытка через 30 мин');
       }
       await resetToQuestMenu(page, questCount);
       listedQuests = parseQuestNamesFromQMenuText(await getBodyText(page));

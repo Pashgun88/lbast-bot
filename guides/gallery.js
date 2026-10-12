@@ -169,7 +169,8 @@ async function runGalleryLazuliteQuest(page, deps = {}) {
     return true;
   }
   if (!/Задание получено/i.test(text)) {
-    console.log(`Галерея: Марсиус не выдал задание, прекращаю: ${SHORT(text).slice(0, 300)}`);
+    // Начало экрана -- всегда одно и то же описание Марсиуса; причина отказа в КОНЦЕ реплики.
+    console.log(`Галерея: Марсиус не выдал задание, прекращаю. Конец экрана: ${SHORT(text).slice(-400)}`);
     return false;
   }
 
