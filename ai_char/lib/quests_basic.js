@@ -632,16 +632,25 @@ async function progressFisherFoodQuest(page, { questCount } = {}) {
   });
 
   // Deliver: Конь -> Ивовое озеро -> path -> hut -> give food -> leave.
-  await tryPerformStepOptional(page, {
+  const onHorse = await tryPerformStepOptional(page, {
     stepName: '\u041a\u043e\u043d\u044c',
     currentTexts: ['\u041a\u043e\u043d\u044c', '\u043a\u043e\u043d\u044c'],
   });
 
-  await tryPerformStepOptional(page, {
+  const rodeToLake = await tryPerformStepOptional(page, {
     stepName: '\u00bb \u0418\u0432\u043e\u0432\u043e\u0435 \u043e\u0437\u0435\u0440\u043e',
     currentTexts: ['\u00bb \u0418\u0432\u043e\u0432\u043e\u0435 \u043e\u0437\u0435\u0440\u043e', '\u0418\u0432\u043e\u0432\u043e\u0435 \u043e\u0437\u0435\u0440\u043e', '\u0438\u0432\u043e\u0432\u043e\u0435 \u043e\u0437\u0435\u0440\u043e'],
     waitAfterClickMs: 7000,
   });
+  // 12.10.2026: доставка сорвалась молча - в логе после «Конь» не было ни одной строки, а в
+  // конце только «не удалось отдать еду». Оба шага необязательные, а необязательный шаг при
+  // неудаче ничего не пишет: причина пропадала. Теперь видно, на каком шаге всё встало и что
+  // было на экране (конь мог быть в пути или уставшим).
+  if (!onHorse || !rodeToLake) {
+    const screen = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').slice(0, 250);
+    console.log(`Fisher Food quest: до Ивового озера не доехал (конь: ${onHorse ? 'сел' : 'НЕ сел'},`
+      + ` поездка: ${rodeToLake ? 'начата' : 'НЕ начата'}). Экран: ${screen}`);
+  }
 
   // \u0416\u0434\u0451\u043c \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f \u043f\u0435\u0440\u0435\u0435\u0437\u0434\u0430 \u043a \u0418\u0432\u043e\u0432\u043e\u043c\u0443 \u043e\u0437\u0435\u0440\u0443: \u043a\u043b\u0438\u043a\u0430\u0435\u043c "\u0412 \u043f\u0443\u0442\u0438" \u0438 \u0436\u0434\u0451\u043c \u0434\u043e 30 \u0441\u0435\u043a \u043f\u043e\u044f\u0432\u043b\u0435\u043d\u0438\u044f \u043f\u0435\u0440\u0432\u043e\u0433\u043e
   // \u0448\u0430\u0433\u0430 \u0434\u043e\u0441\u0442\u0430\u0432\u043a\u0438 ("\u0418\u0434\u0442\u0438 \u043d\u0430 \u0437\u0430\u043f\u0430\u0434"/"\u0412\u043e\u0439\u0442\u0438 \u0432 \u043b\u0430\u0447\u0443\u0433\u0443"). \u0411\u0435\u0437 \u044d\u0442\u043e\u0433\u043e \u0434\u043e\u0441\u0442\u0430\u0432\u043a\u0430 \u043c\u043e\u043b\u0447\u0430 \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430\u043b\u0430\u0441\u044c, \u0430
