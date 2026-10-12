@@ -1,0 +1,30 @@
+const { chromium } = require('playwright');
+const m = require('./module');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SKIP = /Чат|Форум|ЖГ|^Карта|Кланы|^Бои|Амулет|Aмулет|Конь|Выход|Размер|Кто здесь|Галерея|статы|AI__|^Q\d|^D\d|Обновить|Памятник|Мемориальная|Стела/;
+(async () => {
+  const ctx = await chromium.launchPersistentContext('C:/lbast-bot/ai_char/chrome-profile-ai-char', { headless: false, viewport: null });
+  const page = ctx.pages()[0] || (await ctx.newPage());
+  const nav = async () => (await page.$$eval('a', (as) => as.map((a) => ({ t: (a.textContent || '').trim().replace(/\s+/g, ' '), h: a.getAttribute('href') || '' })))).filter((a) => a.t);
+  const seen = new Set();
+  const visit = async (href, path) => {
+    if (path.length > 3) return;
+    await page.goto(new URL(href, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+    await sleep(900);
+    const t = (await m.getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+    const place = (t.match(/D\d+ (.{0,40}?) [А-ЯЁ]/) || t.match(/D\d+ (.{0,40})/) || [, '?'])[1];
+    if (seen.has(place)) return;
+    seen.add(place);
+    const l = (await nav()).filter((a) => !SKIP.test(a.t));
+    const woman = l.filter((a) => /женщин|Велана|мать|путниц/i.test(a.t));
+    console.log(`[${path.join('>')}] ${place}  >> ` + l.map((a) => a.t).join(' | '));
+    if (woman.length) console.log('   *** ЖЕНЩИНА: ' + JSON.stringify(woman) + '\n   ТЕКСТ: ' + t.slice(0, 800));
+    const kids = l.filter((a) => /^Идти/.test(a.t)).map((a) => ({ ...a }));
+    for (const k of kids) await visit(k.h, path.concat(k.t.replace('Идти ', '')));
+  };
+  await page.goto('http://lbast.ru/location.php?mod=fastway&lway=7', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await sleep(2300);
+  const start = (await nav()).find((a) => /^Идти на юг$/.test(a.t));
+  await visit(start.h, ['юг']);
+  await ctx.close();
+})();
