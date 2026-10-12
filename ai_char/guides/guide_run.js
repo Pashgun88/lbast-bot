@@ -163,84 +163,24 @@ function findLink(l, want) {
 //   * обычный сборщик ссылок клетки не видит - он срезает ведущую «*» и выбрасывает пустой текст;
 //   * выходить из цикла по слову «шип» нельзя: оно есть в самом тексте задания, всегда.
 // Ссылки идут в том же порядке, что клетки в тексте, поэтому k-я «*» в чтении = k-я ссылка-клетка.
-function parseGrid(text) {
-  const rows = [];
-  for (const line of String(text || '').split(new RegExp(String.raw`\r?\n`))) {
-    const cells = line.trim().split(new RegExp(String.raw`[\s\t]+`));
-    if (cells.length === 6 && cells.every((c) => c === '*' || /^[0-9]$/.test(c))) rows.push(cells);
-  }
-  return rows.length === 6 ? rows : null;
-}
+// Решатель вынесен в lib/minesweeper.js: та же игра встречается и в сборе трав, но сеткой 4x4,
+// а здешняя копия жёстко требовала шести столбцов (из-за этого травы пять дней собирались
+// наугад и сгорали на шипах). Размер теперь читается из экрана.
+const { parseGrid, pickGridCell, gridCellIndex } = require('../lib/minesweeper');
 // наименьшей суммой соседних цифр - подальше от того, что уже пахнет шипами.
 // Какую клетку открывать. Логика обычного сапёра, в два прохода:
 //   1) если открытой цифре d не хватает ровно столько шипов, сколько у неё незакрытых соседей -
 //      все они шипы, помечаем и больше не трогаем;
 //   2) если все шипы цифры уже найдены, её остальные соседи безопасны - их и открываем.
 // Безопасных нет - берём незакрытую клетку без метки шипа с наименьшей суммой соседних цифр.
-function solveGrid(rows) {
-  const key = (r, c) => r + ',' + c;
-  const at = (r, c) => (r >= 0 && r < 6 && c >= 0 && c < 6 ? rows[r][c] : null);
-  const around = (r, c) => {
-    const out = [];
-    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-      if (dr || dc) { const v = at(r + dr, c + dc); if (v !== null) out.push([r + dr, c + dc, v]); }
-    }
-    return out;
-  };
-  const digits = [];
-  const unknown = [];
-  for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) {
-    if (rows[r][c] === '*') unknown.push([r, c]);
-    else digits.push([r, c, Number(rows[r][c])]);
-  }
-  const thorns = new Set();
-  for (let pass = 0; pass < 8; pass++) {
-    let changed = false;
-    for (const [r, c, d] of digits) {
-      const nb = around(r, c).filter(([, , v]) => v === '*');
-      const open = nb.filter(([rr, cc]) => !thorns.has(key(rr, cc)));
-      const known = nb.length - open.length;
-      if (open.length && d - known === open.length) {
-        for (const [rr, cc] of open) thorns.add(key(rr, cc));
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  const safe = [];
-  for (const [r, c, d] of digits) {
-    const nb = around(r, c).filter(([, , v]) => v === '*');
-    const known = nb.filter(([rr, cc]) => thorns.has(key(rr, cc))).length;
-    if (d - known === 0) {
-      for (const [rr, cc] of nb) {
-        if (!thorns.has(key(rr, cc)) && !safe.some(([sr, sc]) => sr === rr && sc === cc)) safe.push([rr, cc]);
-      }
-    }
-  }
-  const score = ([r, c]) => around(r, c).reduce((a, [, , v]) => a + (v === '*' ? 0 : Number(v)), 0);
-  return { safe, thorns, unknown, score, key };
-}
-function pickGridCell(rows) {
-  const { safe, thorns, unknown, score, key } = solveGrid(rows);
-  const free = unknown.filter(([r, c]) => !thorns.has(key(r, c)));
-  const pool = safe.length ? safe : (free.length ? free : unknown);
-  const best = Math.min(...pool.map(score));
-  const cands = pool.filter((x) => score(x) === best);
-  return { pick: cands[Math.floor(Math.random() * cands.length)], safeCount: safe.length, thornCount: thorns.size };
-}
+
 // Якорь дороги: после него местоположение персонажа известно наверняка.
 function lastAnchorBefore(steps, i) {
   const isAnchor = (x) => /^@(city|url|qinfo)/.test(x) || x === 'Конь';
   for (let k = Math.min(i, steps.length - 1); k >= 0; k--) if (isAnchor(steps[k])) return k;
   return 0;
 }
-function gridCellIndex(rows, r, c) {
-  let k = 0;
-  for (let rr = 0; rr < 6; rr++) for (let cc = 0; cc < 6; cc++) {
-    if (rows[rr][cc] === '*') { if (rr === r && cc === c) return k; k += 1; }
-  }
-  return -1;
-}
+
 
 async function runGuide(page, FILE, fromArg, opts = {}) {
   const PROG = FILE + '.progress';

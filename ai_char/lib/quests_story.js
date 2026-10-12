@@ -807,18 +807,51 @@ async function progressHerbGatherQuest(page, questName) {
   }
   await pause(page, 800, 1200);
 
+  // Заросли - это САПЁР (сетка 4x4): открытая клетка показывает, сколько шипов рядом.
+  // До 12.10.2026 здесь кликалась просто первая «*» подряд - и попытка почти всегда кончалась
+  // «Вы укололись о ядовитый шип и ничего не нашли!», то есть сгорала на сутки. Пять дней
+  // «рвём все травки» не дали ни одной травы, хотя в логе каждый раз стояло бодрое «попытка
+  // завершена». Решатель лежал рядом, в сапёре Жертвоприношения, но требовал ровно 6 столбцов;
+  // теперь он общий - lib/minesweeper.js.
+  const { parseGrid, pickGridCell, gridCellIndex } = require('./minesweeper');
+  const MAX_GUESSES = 2; // первый клик вывести невозможно: на закрытом поле выводить нечего
+  let guesses = 0;
+  let outcome = 'ничего не изменилось';
   for (let round = 0; round < 20; round++) {
-    const links = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('a')).map((a) => ({ text: a.textContent.trim(), href: a.getAttribute('href') }))
-    );
-    const pick = links.find((l) => l.text === '*') || links.find((l) => l.text === 'Далее');
-    if (!pick) break;
-    const href = pick.href.startsWith('http') ? pick.href : `http://lbast.ru/${pick.href.replace(/^\//, '')}`;
+    const screen = await getBodyText(page);
+    if (/укололись о ядовитый шип/i.test(screen)) { outcome = 'напоролся на шип, попытка сгорела'; break; }
+    // Без регулярок с обратными слэшами: при записи файла через heredoc они теряются,
+    // и `[^\n]` однажды уже превратилось в настоящий перевод строки.
+    const found = screen.split(String.fromCharCode(10)).find((l) => /(Вы нашли|Получено|добав|сорвал|подобрал)/i.test(l));
+    if (found) { outcome = `нашёл: ${found.trim().slice(0, 120)}`; break; }
+    const rows = parseGrid(screen);
+    if (!rows) {
+      // Удачный исход как раз такой: сетка исчезает. Печатаем экран целиком - так мы узнаем
+      // точную формулировку находки и потом будем ловить её прямо, а не по отсутствию сетки.
+      outcome = `сетки на экране нет, экран: ${screen.replace(/\s+/g, ' ').slice(0, 200)}`;
+      break;
+    }
+    const cells = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .filter((a) => (a.innerText || '').trim() === '*')
+      .map((a) => a.getAttribute('href') || '')).catch(() => []);
+    if (!cells.length) { outcome = 'закрытых клеток не осталось'; break; }
+    const { pick, safeCount, thornCount } = pickGridCell(rows);
+    if (!pick) { outcome = 'открывать нечего'; break; }
+    if (!safeCount) {
+      if (guesses >= MAX_GUESSES) { outcome = `безопасных клеток не вывести, догадки (${MAX_GUESSES}) кончились - ухожу целым`; break; }
+      guesses += 1;
+    }
+    const idx = gridCellIndex(rows, pick[0], pick[1]);
+    if (idx < 0 || idx >= cells.length) { outcome = 'клетка и ссылка не сошлись'; break; }
+    console.log(`Herb quest "${questName}": сетка ${rows.length}x${rows.length}, закрытых ${cells.length},`
+      + ` шипов выведено ${thornCount}, безопасных ${safeCount},`
+      + ` ${safeCount ? 'открываю' : `догадка ${guesses}/${MAX_GUESSES}:`} (${pick[0] + 1},${pick[1] + 1})`);
+    const href = cells[idx].startsWith('http') ? cells[idx] : `http://lbast.ru/${cells[idx].replace(/^\//, '')}`;
     await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
     await pause(page, 500, 900);
   }
 
-  console.log(`Herb quest "${questName}": попытка на сегодня завершена.`);
+  console.log(`Herb quest "${questName}": ${outcome}.`);
   return true;
 }
 
