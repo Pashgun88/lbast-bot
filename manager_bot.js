@@ -17,6 +17,25 @@ process.on('exit', (code) => {
 });
 
 const { spawn, execFile, execSync } = require('child_process');
+
+// Остановка сценария ВМЕСТЕ с его браузером. На Windows kill('SIGTERM') гасит только сам node, а
+// Chrome от Playwright остаётся жить и держит chrome-profile -- следующий запуск не может открыть
+// браузер. 12.10.2026 после «остановки» в логе стоял END, а node со своим Chrome работал дальше,
+// и сценарий не запускался, пока процессы не убили руками. taskkill /T убирает всё дерево.
+function killScriptTree(proc) {
+  if (!proc) return;
+  // Код выхода после taskkill /F -- 1 без сигнала; по этой метке обработчик выхода понимает, что
+  // остановили мы сами, а не сценарий упал.
+  proc.killedByManager = true;
+  if (process.platform === 'win32' && proc.pid) {
+    try {
+      execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: 'ignore' });
+      return;
+    } catch (e) { /* процесс уже завершился -- тогда обычный kill ниже ничего не сломает */ }
+  }
+  try { proc.kill('SIGTERM'); } catch (e) { /* уже завершён */ }
+}
+
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -356,7 +375,7 @@ function scheduleAutoBreak() {
     if (!isRunning || !currentProcess) return;
 
     isAutoBreakStop = true;
-    currentProcess.kill('SIGTERM');
+    killScriptTree(currentProcess);
 
     const breakMs = randomHoursMs(AUTO_BREAK_DURATION_MIN_H, AUTO_BREAK_DURATION_MAX_H);
     const restartAt = new Date(Date.now() + breakMs);
@@ -943,14 +962,15 @@ async function runSelectedScript(reason = 'вручную', extraEnv = {}) {
 
     clearAutoBreakTimer();
 
-    const stoppedBySignal = signal === 'SIGTERM' || signal === 'SIGINT';
+    const stoppedBySignal = signal === 'SIGTERM' || signal === 'SIGINT'
+      || Boolean(currentProcess && currentProcess.killedByManager);
 
     if (code === 0) {
       lastRunResult = `Успешно завершен: ${selectedScriptName}`;
       await sendToAllowedChat(`Сценарий завершился: ${selectedScriptName}\nВремя: ${formatDate(lastRunFinishedAt)}`);
     } else if (stoppedBySignal) {
       lastRunResult = `Прерван: ${selectedScriptName}`;
-      await sendToAllowedChat(`Сценарий прерван: ${selectedScriptName}\nСигнал: ${signal}\nВремя: ${formatDate(lastRunFinishedAt)}`);
+      await sendToAllowedChat(`Сценарий прерван: ${selectedScriptName}\nСигнал: ${signal || 'остановлен менеджером'}\nВремя: ${formatDate(lastRunFinishedAt)}`);
     } else {
       lastRunResult = `Ошибка ${selectedScriptName}, код ${code}`;
       const fragment = (stderrBuffer || stdoutBuffer || 'Нет вывода').slice(0, 3500);
@@ -1069,7 +1089,7 @@ async function stopEverything() {
   try { fs.unlinkSync(PAUSE_FLAG_PATH); } catch (e) { /* флага и не было */ }
 
   if (currentProcess && isRunning) {
-    currentProcess.kill('SIGTERM');
+    killScriptTree(currentProcess);
     await sendToAllowedChat('Скрипт остановлен вручную.');
   } else {
     await sendToAllowedChat('Нет активного запуска. Параметры сброшены.');
@@ -1232,7 +1252,7 @@ process.on('SIGINT', () => {
   clearAutoBreakTimer();
 
   if (currentProcess && isRunning) {
-    currentProcess.kill('SIGTERM');
+    killScriptTree(currentProcess);
   }
 
   process.exit(0);
