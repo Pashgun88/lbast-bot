@@ -442,6 +442,26 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           hit = findLink(l, want);
         }
 
+        // Сцена живёт на сервере и могла уйти дальше, чем знает наш .progress (часть квеста прошли
+        // раньше вручную или старым кодом). 12.10.2026 «Рыбацкая деревня» после «Подойти ближе»
+        // открылась сразу на рынке (часть 3, «- Эх, ну пошли на рынок.»), а раннер ждал «Спросить в
+        // чем дело» из части 1 и вставал. Поэтому, если шага нет, ищем БЛИЖАЙШИЙ дальнейший шаг-клик,
+        // который есть на экране, и продолжаем с него. Только обычные шаги (без @/*/?) -- служебные
+        // маркеры и повторяемые кнопки вроде «Далее» перескок не запускают.
+        if (!hit && !optional) {
+          for (let j = i + 1; j < steps.length; j++) {
+            const sj = steps[j];
+            if (/^[@*?]/.test(sj) || /^(далее|продолжить квест|уйти)$/i.test(norm(sj))) continue;
+            const ahead = findLink(l, sj);
+            if (ahead) {
+              console.log(`guide ${name}: шага ${i} «${want}» нет, а на экране шаг ${j} «${sj}» -- сцена уже дальше, перескакиваю`);
+              i = j;
+              hit = ahead;
+              break;
+            }
+          }
+        }
+
         if (!hit) {
           if (optional) {
             console.log('guide: необязательный шаг, пропускаю');
@@ -476,7 +496,9 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
 
       saveProg(i + 1);
       // Шаг вне дороги реально выполнен -- значит экран сцены был, квест на месте.
-      if (!inRoad && step !== '@road' && step !== '@arrived') pastRoad = true;
+      // @qinfo -- это ещё подход к сцене (инфо -> «К месту выполнения»), а не сама сцена: если после
+      // него сцена не открылась, цепочку начатой считать нельзя.
+      if (!inRoad && step !== '@road' && step !== '@arrived' && !step.startsWith('@qinfo')) pastRoad = true;
       if (i === steps.length - 1) {
         result = { status: 'done', index: steps.length };
         await dump(page, 'END');
