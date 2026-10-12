@@ -826,8 +826,14 @@ async function progressHerbGatherQuest(page, questName) {
     if (/укололись о ядовитый шип/i.test(screen)) { outcome = 'напоролся на шип, попытка сгорела'; break; }
     // Без регулярок с обратными слэшами: при записи файла через heredoc они теряются,
     // и `[^\n]` однажды уже превратилось в настоящий перевод строки.
-    const found = screen.split(String.fromCharCode(10)).find((l) => /(Вы нашли|Получено|добав|сорвал|подобрал)/i.test(l));
-    if (found) { outcome = `нашёл: ${found.trim().slice(0, 120)}`; break; }
+    // Точный текст удачи (замер 12.10.2026): «Среди зарослей и повсюду торчащих ядовитых шипов
+    // вы всё-таки нашли нужную траву!», а знак «#» на сетке - это место, где трава лежала,
+    // НЕ шип. Я сначала принял «#» за шип и решил, что решатель открыл опасную клетку; сумка
+    // показала обратное - пустолиста стало 17 вместо 16, травии 13 вместо 12.
+    // «ничего не нашли» из текста про укол исключаем явно: там тоже есть «нашл».
+    const found = screen.split(String.fromCharCode(10))
+      .find((l) => /(нашл|Получено|добав|сорвал|подобрал)/i.test(l) && !/ничего не нашл/i.test(l));
+    if (found) { outcome = `НАШЁЛ ТРАВУ - ${found.trim().slice(0, 140)}`; break; }
     const rows = parseGrid(screen);
     if (!rows) {
       // Удачный исход как раз такой: сетка исчезает. Печатаем экран целиком - так мы узнаем
@@ -842,7 +848,7 @@ async function progressHerbGatherQuest(page, questName) {
         console.log(`Herb quest "${questName}": попытка сейчас недоступна - игра ответила пустым экраном.`);
         return false;
       }
-      outcome = `сетки на экране нет, экран: ${flat.slice(0, 200)}`;
+      outcome = `сетки на экране нет, экран: ${flat.slice(0, 400)}`;
       break;
     }
     const cells = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
