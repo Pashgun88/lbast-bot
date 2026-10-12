@@ -432,7 +432,9 @@ const SINGLE_FIGHT_STEPS = new Set([
 // боты». Режим 'none' дейлики глушил целиком - а это ровно то, что делать как раз НУЖНО. Гарпия
 // сюда не входит намеренно: это раунд фарма (ферма в этом режиме и так стоит), и её бёрст-урон
 // однажды снял половину запаса HP за один бой.
-const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Fish Eye step',
+// 'Fish Eye step' убран 12.10.2026: см. TOO_STRONG_SINGLE_BOTS в lib/state.js - три нокаута за
+// утро. Шаг цикла и гейт квеста - два разных входа в один и тот же бой, закрывать нужно оба.
+const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -532,7 +534,7 @@ async function runCycleStep(page, label, fn) {
     if (!noFightLoggedSteps.has(label)) {
       noFightLoggedSteps.add(label);
       console.log(fightMode === 'none'
-        ? `Режим ожидания снаряжения: шаг "${label}" пропускаю (из боёв только дейлики, бизон, кабан, Харчевня и Рыбий глаз, и с ${Math.round(fightHpFraction() * 100)}% HP).`
+        ? `Режим ожидания снаряжения: шаг "${label}" пропускаю (из боёв только дейлики, бизон, кабан и Харчевня, и с ${Math.round(fightHpFraction() * 100)}% HP).`
         : `Режим только одиночных боёв: шаг "${label}" - цепочка боёв, пропускаю.`);
     }
     return { didAnything: false, ko: false };
