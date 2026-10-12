@@ -8,6 +8,7 @@ module.exports = {
   runHarpyFarmRound, isBisonLocation, goRouteToBison, openBisonFight, runBisonFarmRound,
   isBoarLocation, goRouteToBoar, openBoarFight, runBoarFarmRound, runSawmillGuardRound,
   isMolegLocation, goRouteToMoleg, runMolegFarmRound,
+  isGargoyleLocation, goRouteToGargoyle, runGargoyleFarmRound,
 };
 
 const {
@@ -500,6 +501,120 @@ async function runMolegFarmRound(page, buffed = false) {
   if (delta !== null && hpMax && delta > hpMax) {
     const { GEAR_WAIT_FLAG_PATH } = require('./state');
     const note = `Молег снял ${delta} HP при запасе ${hpMax} (это больше всего запаса) - фарм на нём остановлен.`;
+    try {
+      if (!require('fs').existsSync(GEAR_WAIT_FLAG_PATH)) {
+        require('fs').writeFileSync(GEAR_WAIT_FLAG_PATH, `${new Date().toISOString()}
+${note}
+Снять: удалить этот файл.
+`);
+      }
+    } catch (err) { console.log('Фарм: не смог поставить запрет файлом:', err.message); }
+    console.log(`ФАРМ ОПАСЕН: ${note} Нужен шмот по уровню или другая цель - реши, Паша.`);
+  }
+  return true;
+}
+
+// ===================================================================================
+// ГОРГУЛЬЯ, Маяк на южном побережье. Паша, 12.10.2026: «раздели фарм пополам на горгулью и
+// молега. Горгулью поищи, я не помню где она».
+//
+// Где она: слой «Боты» карты мира даёт «№36 - Маяк: Горгулья -> Западный тракт». Это тот самый
+// маяк, через который проходит доставка еды рыбаку: «Построенный несколько веков назад маяк давно
+// уже не работает. Его облюбовали каменные горгульи, существа чудовищной силы и непробиваемой
+// брони». Поиск по карте работает ТОЛЬКО отправкой формы (map.php?mv=0&go=search, поле look),
+// GET с look= в адресе всегда отвечает «Ничего не найдено».
+//
+// Дорога: Конь -> Ивовое озеро (lway=23) -> «Идти на запад» -> «Идти на юг» три раза.
+// Экран охоты тот же, что у Молега: ссылка «Осмотреть маяк» ведёт на location_boi.php, дальше
+// go=1 и обычный бой.
+//
+// Сила боя НЕ ЗАМЕРЕНА - первый живой бой и покажет. Поэтому порог входа тот же, что у Молега
+// (0.9), а защита от «бой дороже всего запаса HP» стоит ниже, как и у Молега: это она поймала
+// 2180 урона после взятия 9 уровня. Зуб горгульи, кстати, нужен для эликсира каменного голема
+// в гильдии Травников - дроп пригодится.
+// ===================================================================================
+const GARGOYLE_HP_SAFETY_FRACTION = 0.9;
+const GARGOYLE_KONJ_URL = 'http://lbast.ru/location.php?mod=konj&lway=23';
+
+// Проверяем по ССЫЛКЕ, а не по слову «Маяк» в тексте: у соседних локаций юга в описаниях тоже
+// попадается море и берег, а однажды проверка по тексту уже заперла персонажа на соседней клетке
+// (каменоломня, 09.10.2026).
+async function isGargoyleLocation(page) {
+  const links = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+    .map((a) => (a.innerText || '').trim())).catch(() => []);
+  return links.some((t) => /^Осмотреть маяк$/i.test(t));
+}
+
+async function goRouteToGargoyle(page) {
+  await page.goto(GARGOYLE_KONJ_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 900, 1500);
+  await waitOutHorseTravel(page, 'http://lbast.ru/location.php');
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const step = async (re, label) => {
+    const links = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') || '' }))).catch(() => []);
+    const hit = links.find((l) => re.test(l.t));
+    if (!hit) { console.log(`Gargoyle farm: не нашёл «${label}». Экран: ${links.map((l) => l.t).join(' | ').slice(0, 200)}`); return false; }
+    await page.goto(new URL(hit.h, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 600, 1100);
+    return true;
+  };
+  if (!(await step(/^Идти на запад$/, 'Идти на запад'))) return;
+  for (let i = 1; i <= 3; i++) if (!(await step(/^Идти на юг$/, `Идти на юг (${i}/3)`))) return;
+}
+
+async function runGargoyleFarmRound(page, buffed = false) {
+  const floor = buffed ? Math.min(GARGOYLE_HP_SAFETY_FRACTION, HP_FLOOR_WITH_BUFF) : GARGOYLE_HP_SAFETY_FRACTION;
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  let stats = parseStats(await getBodyText(page));
+  const low = (st) => typeof st.hpCurrent !== 'number' || typeof st.hpMax !== 'number'
+    || st.hpCurrent <= 0 || st.hpCurrent < st.hpMax * floor;
+  if (low(stats)) return false;
+
+  if (!(await isGargoyleLocation(page))) {
+    await goRouteToGargoyle(page).catch((e) => console.log('Gargoyle farm: дорога не пройдена:', e.message));
+  }
+  if (!(await isGargoyleLocation(page))) {
+    console.log('Gargoyle farm: до маяка не добрался - пропускаю круг.');
+    return false;
+  }
+  stats = parseStats(await getBodyText(page));
+  if (low(stats)) return false;
+
+  await page.goto('http://lbast.ru/location_boi.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const screen = await getBodyText(page);
+  const tired = screen.match(/приходите через\s+(\d+)\s*мин/i);
+  if (tired) {
+    console.log(`Gargoyle farm: ещё не отдохнул (${tired[1]} мин) -> попробую в следующем круге`);
+    noteFarmCooldown(Number(tired[1]));
+    return false;
+  }
+
+  const hpBefore = stats.hpCurrent;
+  await page.goto('http://lbast.ru/location_boi.php?go=1', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  let won;
+  try {
+    won = await fightLoop(page);
+  } catch (e) {
+    const waitMinutes = parseCooldownError(e);
+    if (waitMinutes !== null) {
+      console.log(`Gargoyle farm: горгулья на кулдауне (${waitMinutes} мин) -> попробую в следующем круге`);
+      noteFarmCooldown(waitMinutes);
+      return false;
+    }
+    console.log('Gargoyle farm: fightLoop error:', e.message);
+    won = null;
+  }
+
+  const statsAfter = parseStats(await getBodyText(page));
+  const hpAfter = typeof statsAfter.hpCurrent === 'number' ? statsAfter.hpCurrent : null;
+  const delta = hpAfter !== null ? hpBefore - hpAfter : null;
+  console.log(`Gargoyle farm: fight result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
+  const hpMax = typeof statsAfter.hpMax === 'number' ? statsAfter.hpMax : null;
+  if (delta !== null && hpMax && delta > hpMax) {
+    const { GEAR_WAIT_FLAG_PATH } = require('./state');
+    const note = `Горгулья сняла ${delta} HP при запасе ${hpMax} (это больше всего запаса) - фарм остановлен.`;
     try {
       if (!require('fs').existsSync(GEAR_WAIT_FLAG_PATH)) {
         require('fs').writeFileSync(GEAR_WAIT_FLAG_PATH, `${new Date().toISOString()}

@@ -51,6 +51,7 @@ const {
   runBisonFarmRound,
   runBoarFarmRound,
   runMolegFarmRound,
+  runGargoyleFarmRound,
   runSawmillGuardRound,
   runDemonLakeQuestIfAvailable,
   runShipwreckQuestIfAvailable,
@@ -338,12 +339,28 @@ async function runFarmSession(page) {
     // месяц советовал «сидеть на молегах до 17-го». Прежний фарм (кабан/бизон/лесопилка) оставлен в
     // коде целиком: переключается AI_FARM_SPOT=hides, без правок.
     if (farmSpot() === 'moleg') {
-      const mo = await runMolegFarmRound(page, buffed).catch((e) => { console.log('Фарм-сессия: молег:', e.message); return false; });
+      // Паша, 12.10.2026: «раздели фарм пополам на горгулью и молега». Чередуем раунды, и выбор
+      // переворачиваем ВСЕГДА, даже когда точка оказалась недоступна: иначе кулдаун одной из них
+      // залипнет на ней же, и «пополам» превратится в «только вторая». Если выбранная не вышла,
+      // тут же пробуем другую - ждать минуту, когда рядом есть доступный бой, незачем.
+      const pick = S.farmAltNext === 'gargoyle' ? 'gargoyle' : 'moleg';
+      S.farmAltNext = pick === 'gargoyle' ? 'moleg' : 'gargoyle';
+      try { require('./lib/state').persistDailyQuestState(); } catch (e) { /* не критично */ }
+      const round = async (which) => {
+        const fn = which === 'gargoyle' ? runGargoyleFarmRound : runMolegFarmRound;
+        return fn(page, buffed).catch((e) => { console.log(`Фарм-сессия: ${which}:`, e.message); return false; });
+      };
+      let mo = await round(pick);
+      if (!mo) {
+        const other = pick === 'gargoyle' ? 'moleg' : 'gargoyle';
+        console.log(`Фарм-сессия: ${pick} недоступен - пробую ${other} в этом же круге.`);
+        mo = await round(other);
+      }
       if (mo) fights += 1;
       if (!mo) {
         const left = S.farmCooldownUntil > Date.now() ? S.farmCooldownUntil - Date.now() : 60_000;
         const ms = Math.max(30_000, Math.min(left, 5 * 60_000, Math.max(0, deadline - Date.now()) || 30_000));
-        console.log(`Фарм-сессия: молег недоступен -> жду ${Math.round(ms / 60_000 * 10) / 10} мин.`);
+        console.log(`Фарм-сессия: обе точки недоступны -> жду ${Math.round(ms / 60_000 * 10) / 10} мин.`);
         beat();
         await new Promise((r) => setTimeout(r, ms));
       }
