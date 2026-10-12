@@ -814,7 +814,11 @@ async function progressHerbGatherQuest(page, questName) {
   // завершена». Решатель лежал рядом, в сапёре Жертвоприношения, но требовал ровно 6 столбцов;
   // теперь он общий - lib/minesweeper.js.
   const { parseGrid, pickGridCell, gridCellIndex } = require('./minesweeper');
-  const MAX_GUESSES = 2; // первый клик вывести невозможно: на закрытом поле выводить нечего
+  // Догадки для трав НЕ ограничиваем, и это измерено: шип в зарослях не стоит ни одного HP
+  // (12.10.2026: 560/560 до и после). Попытка сгорает на сутки в любом случае, поэтому «уйти
+  // целым» здесь означает просто отдать траву даром. Ограничение в две догадки я принёс из
+  // сапёра «Жертвоприношения», где шип снял 355 HP - там оно на месте, здесь было вредно.
+  const MAX_GUESSES = Infinity;
   let guesses = 0;
   let outcome = 'ничего не изменилось';
   for (let round = 0; round < 20; round++) {
@@ -843,9 +847,10 @@ async function progressHerbGatherQuest(page, questName) {
     }
     const idx = gridCellIndex(rows, pick[0], pick[1]);
     if (idx < 0 || idx >= cells.length) { outcome = 'клетка и ссылка не сошлись'; break; }
-    console.log(`Herb quest "${questName}": сетка ${rows.length}x${rows.length}, закрытых ${cells.length},`
-      + ` шипов выведено ${thornCount}, безопасных ${safeCount},`
-      + ` ${safeCount ? 'открываю' : `догадка ${guesses}/${MAX_GUESSES}:`} (${pick[0] + 1},${pick[1] + 1})`);
+    // Сетку печатаем целиком: плотность шипов мы пока не знаем, а по логам её видно.
+    console.log(`Herb quest "${questName}": закрытых ${cells.length}, шипов выведено ${thornCount},`
+      + ` безопасных ${safeCount}, ${safeCount ? 'открываю' : `догадка ${guesses}:`} (${pick[0] + 1},${pick[1] + 1});`
+      + ` сетка: ${rows.map((r) => r.join('')).join('/')}`);
     const href = cells[idx].startsWith('http') ? cells[idx] : `http://lbast.ru/${cells[idx].replace(/^\//, '')}`;
     await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
     await pause(page, 500, 900);

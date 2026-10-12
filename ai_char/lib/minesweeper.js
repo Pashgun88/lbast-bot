@@ -15,6 +15,10 @@
 
 module.exports = { parseGrid, solveGrid, pickGridCell, gridCellIndex };
 
+// Плотность шипов нам неизвестна, поэтому клетке без подсказок ставим такой риск: он выше
+// «1 из 8» и «1 из 5» (рядом с цифрой 1), но ниже «1 из 3» - то есть рядом с цифрами мы ходим,
+// пока подсказка не стала слишком плотной.
+const DEFAULT_RISK = 0.25;
 const MIN_SIZE = 3;
 const MAX_SIZE = 8;
 
@@ -79,8 +83,25 @@ function solveGrid(rows) {
       }
     }
   }
-  const score = ([r, c]) => around(r, c).reduce((a, [, , v]) => a + (/^[0-9]$/.test(v) ? Number(v) : 0), 0);
-  return { safe, thorns, unknown, score, key };
+  // Оценка риска клетки. Раньше тут была сумма соседних цифр - «подальше от того, что пахнет
+  // шипами». Это уводит и от информации: клетка рядом с «1», у которой восемь незакрытых
+  // соседей, рискует на 1/8, а клетка в стороне от всех цифр - на всю плотность шипов, и сумма
+  // цифр этого не видит. Теперь берём вероятность: для каждой соседней цифры это
+  // (её шипы минус уже найденные) / (её незакрытые непомеченные соседи), и из них берём худшую -
+  // пессимистично. Клетке без соседних цифр ставим DEFAULT_RISK.
+  const risk = ([r, c]) => {
+    let worst = -1;
+    for (const [dr, dc, v] of around(r, c)) {
+      if (!/^[0-9]$/.test(v)) continue;
+      const nb = around(dr, dc).filter(([, , x]) => x === '*');
+      const open = nb.filter(([rr, cc]) => !thorns.has(key(rr, cc)));
+      if (!open.length) continue;
+      const left = Number(v) - (nb.length - open.length);
+      worst = Math.max(worst, left / open.length);
+    }
+    return worst < 0 ? DEFAULT_RISK : worst;
+  };
+  return { safe, thorns, unknown, score: risk, key };
 }
 
 function pickGridCell(rows) {
