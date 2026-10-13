@@ -71,28 +71,38 @@ async function enterSchool(page) {
   return (await getBodyText(page)) || '';
 }
 
-// Какие умения доступны на нашем уровне - нужно только для доклада Паше, когда учить нечего.
-async function readCandidates(page, branch) {
+// Паша, 13.10.2026: «они по очереди изучаются, нужно все сделать». То есть выбор ветки - не
+// развилка, а порядок: учим следующее умение ПОСЛЕ текущего в той же ветке. Текущее умение игра
+// пишет сама («Текущее умение: Удар по глазам»), поэтому гадать не нужно - следующее за ним в
+// списке и есть очередное. Выученные умения в списке ничем не помечены, цены видны у всех.
+//
+// Сам покупаю только дешёвое: до 9 уровня умения стоят 100-1500 дин, а дальше цена растёт до 42
+// тысяч - такие траты решает Паша. Порог ниже.
+const MAX_SKILL_PRICE = 3000;
+
+// Разбор списка ветки: название, требуемый уровень, цена, срок и ссылка покупки (go=3&next=N).
+async function readSkillList(page, branch) {
   await page.goto(`http://lbast.ru/loc.php?obj=5198&go=${branch}`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
   await pause(page, 500, 900);
-  const text = (await getBodyText(page).catch(() => '')) || '';
-  // Уровень берём ИЗ ИГРЫ, а не из S.charLevel. 13.10.2026: charLevel с самого начала был нулём
-  // (его читали из pers.php, где слова «Уровень» нет вовсе), фильтр «не дороже нашего уровня» при
-  // нуле не отсекал ничего, и доклад Паше предложил умения за 34-42 тысячи дин на 9 уровне при
-  // 8 тысячах в кошеле. Источник истины - игра: анкета «кто» показывает «AI__ [9]».
-  const level = await require('./levelup').readCharLevelFromProfile(page).catch(() => 0);
+  const rows = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+    .filter((a) => /next=/.test(a.getAttribute('href') || ''))
+    .map((a) => ({ text: (a.innerText || '').replace(/\s+/g, ' ').trim(), href: a.getAttribute('href') || '' }))).catch(() => []);
   const out = [];
-  for (const line of text.split('\n')) {
-    const m = line.match(/^\s*•\s*(.+?)\s*\[(\d+)\]\s*-\s*изучение за\s*(\d+)\s*дин и\s*(\d+)\s*дн/);
+  for (const r of rows) {
+    const m = r.text.match(/^•?\s*(.+?)\s*\[(\d+)\]\s*-\s*изучение за\s*(\d+)\s*дин и\s*(\d+)\s*дн/);
     if (!m) continue;
-    const need = Number(m[2]);
-    if (level && need > level) continue;
-    out.push(`${m[1]} [${need} ур.] - ${m[3]} дин, ${m[4]} дн.`);
+    out.push({ name: m[1].trim(), need: Number(m[2]), price: Number(m[3]), days: Number(m[4]), href: r.href });
   }
-  // Список отсортирован по уровню, поэтому «сильнейшее доступное» - последнее. Но когда уровень
-  // прочитать не удалось, брать последние - значит показывать самые дорогие умения дерева; в этом
-  // случае честнее показать самые дешёвые и сказать, что уровень неизвестен.
-  return level ? out.slice(-3) : out.slice(0, 3);
+  return out;
+}
+
+// Следующее умение по очереди: то, что стоит в списке СРАЗУ ПОСЛЕ текущего. Если текущего в ветке
+// нет (например, оно из другой ветки) - берём первое доступное по уровню.
+function nextSkillAfter(list, currentName, level) {
+  const norm = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').trim();
+  const idx = list.findIndex((x) => norm(x.name) === norm(currentName));
+  const tail = idx >= 0 ? list.slice(idx + 1) : list;
+  return tail.find((x) => !level || x.need <= level) || null;
 }
 
 async function runTitanSchoolIfDue(page) {
@@ -114,14 +124,31 @@ async function runTitanSchoolIfDue(page) {
       + (current ? `; выучено: ${current[1]}` : '')
       + (missed ? ' (игра отметила пропущенный день - прогресс замедлен)' : ''));
   } else {
-    // Учить нечего: умение доучено, а новое - это трата дин, то есть решение Паши.
-    const atk = await readCandidates(page, 1);
-    const def = await readCandidates(page, 2);
-    const lvl = Number(S.charLevel) || 0;
-    console.log(`ШКОЛА ТИТАН: ЖДЁТ РЕШЕНИЯ - учить нечего${current ? `, выучено «${current[1]}»` : ''}.`
-      + ` Уровень ${lvl || 'неизвестен - список ниже самый дешёвый, а не по уровню'}.`
-      + ` Атака: ${atk.join('; ') || '-'}. Защита: ${def.join('; ') || '-'}.`
-      + ' Что брать - реши, Паша: покупку я сам не делаю.');
+    // Учить нечего: прошлое умение доучено. Берём следующее по очереди и платим сами, пока дёшево.
+    const level = await require('./levelup').readCharLevelFromProfile(page).catch(() => 0);
+    const currentName = current ? current[1] : '';
+    const atk = await readSkillList(page, 1);
+    const def = await readSkillList(page, 2);
+    const inAttack = atk.some((x) => String(x.name).toLowerCase() === String(currentName).toLowerCase());
+    const list = inAttack || !def.length ? atk : (def.some((x) => String(x.name).toLowerCase() === String(currentName).toLowerCase()) ? def : atk);
+    const next = nextSkillAfter(list, currentName, level);
+    if (!next) {
+      console.log(`ШКОЛА ТИТАН: ЖДЁТ РЕШЕНИЯ - на ${level || '?'} уровне учить больше нечего`
+        + `${currentName ? `, выучено «${currentName}»` : ''}. Следующее - уже выше нашего уровня.`);
+    } else if (next.price > MAX_SKILL_PRICE) {
+      console.log(`ШКОЛА ТИТАН: ЖДЁТ РЕШЕНИЯ - следующее по очереди «${next.name}» стоит ${next.price} дин`
+        + ` (дороже ${MAX_SKILL_PRICE}), сам не покупаю. Реши, Паша.`);
+    } else {
+      await page.goto(new URL(next.href, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+      await pause(page, 600, 1000);
+      const after = (await getBodyText(page).catch(() => '')) || '';
+      // Ответ игры на покупку (замер 13.10.2026): «Вы начали процесс обучения новому умению.
+      // Приходите завтра, чтобы продолжить. Пропускать занятия мастер очень не рекомендует.»
+      // Первый раз я его не предусмотрел, и успешная покупка попала в лог как «ответ непонятный».
+      const started = /начали процесс обучения|День тренировок|Вы изучаете/i.test(after);
+      console.log(`Школа Титан: ${started ? 'начал учить' : 'ответ непонятный на попытке выучить'} «${next.name}»`
+        + ` (${next.price} дин, ${next.days} дн.)${started ? '' : `: ${after.replace(/\s+/g, ' ').slice(0, 200)}`}`);
+    }
   }
 
   S.titanSchoolDayKey = day;
