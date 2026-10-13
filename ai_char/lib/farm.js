@@ -9,6 +9,7 @@ module.exports = {
   isBoarLocation, goRouteToBoar, openBoarFight, runBoarFarmRound, runSawmillGuardRound,
   isMolegLocation, goRouteToMoleg, runMolegFarmRound,
   isGargoyleLocation, goRouteToGargoyle, runGargoyleFarmRound,
+  farmFloorFor,
 };
 
 const {
@@ -457,6 +458,14 @@ function noteFarmKnockout(spot, delta, hpMax) {
     + ` За сутки это ${S.farmKoCount[spot]}-й раз. Фарм продолжаю - проигрыши разрешены.`);
 }
 
+// Порог точки фарма наружу: драйверу он нужен, чтобы не гнать персонажа лечиться до 95%, когда
+// следующий бой по силам уже сейчас.
+function farmFloorFor(spot) {
+  if (spot === 'gargoyle') return GARGOYLE_HP_SAFETY_FRACTION;
+  if (spot === 'moleg') return MOLEG_HP_SAFETY_FRACTION;
+  return 0.7;
+}
+
 async function runMolegFarmRound(page, buffed = false) {
   const floor = buffed ? Math.min(MOLEG_HP_SAFETY_FRACTION, HP_FLOOR_WITH_BUFF) : MOLEG_HP_SAFETY_FRACTION;
 
@@ -539,7 +548,12 @@ async function runMolegFarmRound(page, buffed = false) {
 // 2180 урона после взятия 9 уровня. Зуб горгульи, кстати, нужен для эликсира каменного голема
 // в гильдии Травников - дроп пригодится.
 // ===================================================================================
-const GARGOYLE_HP_SAFETY_FRACTION = 0.9;
+// Порог поставлен по ЗАМЕРАМ, а не на глаз. 13.10.2026, четыре боя подряд: 140, 173, 191, 288 HP
+// при запасе 930 - худший из них 31% запаса. Прежние 0.9 были осторожной догадкой первого дня, и
+// из-за них фарм выглядел «один бой и всё»: горгулья снимала 19%, а сессия после каждого боя
+// уходила лечиться до 95%. 0.6 оставляет после худшего известного удара ещё 270 HP, то есть
+// переживает и двойной выброс. Молегу порог не меняю: он сегодня бил на 899 и 906 из 930.
+const GARGOYLE_HP_SAFETY_FRACTION = 0.6;
 const GARGOYLE_KONJ_URL = 'http://lbast.ru/location.php?mod=konj&lway=23';
 
 // Проверяем по ССЫЛКЕ, а не по слову «Маяк» в тексте: у соседних локаций юга в описаниях тоже
