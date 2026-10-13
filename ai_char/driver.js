@@ -339,12 +339,15 @@ async function runFarmSession(page) {
     // месяц советовал «сидеть на молегах до 17-го». Прежний фарм (кабан/бизон/лесопилка) оставлен в
     // коде целиком: переключается AI_FARM_SPOT=hides, без правок.
     if (farmSpot() === 'moleg') {
-      // Паша, 12.10.2026: «раздели фарм пополам на горгулью и молега». Чередуем раунды, и выбор
-      // переворачиваем ВСЕГДА, даже когда точка оказалась недоступна: иначе кулдаун одной из них
-      // залипнет на ней же, и «пополам» превратится в «только вторая». Если выбранная не вышла,
-      // тут же пробуем другую - ждать минуту, когда рядом есть доступный бой, незачем.
-      const pick = S.farmAltNext === 'gargoyle' ? 'gargoyle' : 'moleg';
-      S.farmAltNext = pick === 'gargoyle' ? 'moleg' : 'gargoyle';
+      // Паша, 12.10.2026: «раздели фарм пополам на горгулью и молега», 13.10.2026: «смени фарм
+      // больше на горгулью чем на молега 30/70% пока» - семь раундов горгульи на три молега.
+      // Порядок берём из готового кольца FARM_ORDER, а не из жребия: монетка на коротком дне
+      // запросто выдаст подряд пять молегов, и доля окажется совсем не той, что просили.
+      // Номер раунда двигаем ВСЕГДА, даже когда точка оказалась недоступна: иначе кулдаун одной
+      // из них залипнет на ней же. Если выбранная не вышла, тут же пробуем другую - ждать минуту,
+      // когда рядом есть доступный бой, незачем.
+      const pick = FARM_ORDER[S.farmRoundNo % FARM_ORDER.length];
+      S.farmRoundNo = (S.farmRoundNo + 1) % FARM_ORDER.length;
       try { require('./lib/state').persistDailyQuestState(); } catch (e) { /* не критично */ }
       const round = async (which) => {
         const fn = which === 'gargoyle' ? runGargoyleFarmRound : runMolegFarmRound;
@@ -412,6 +415,7 @@ const { checkLevelUpIfDue, readHealRateHere } = require('./lib/levelup');
 const { sendSkullsIfDue } = require('./lib/skulls');
 const { runCitizenWorkIfDue } = require('./lib/citizen_work');
 const { runTitanSchoolIfDue } = require('./lib/titan_school');
+const { runHerbGuildIfDue } = require('./lib/herb_guild');
 const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendingFightQuestsNow } = require('./lib/daily_quests');
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 const { acceptPendingLeasesIfAny } = require('./lib/lease');
@@ -451,7 +455,10 @@ const SINGLE_FIGHT_STEPS = new Set([
 // однажды снял половину запаса HP за один бой.
 // 'Fish Eye step' убран 12.10.2026: см. TOO_STRONG_SINGLE_BOTS в lib/state.js - три нокаута за
 // утро. Шаг цикла и гейт квеста - два разных входа в один и тот же бой, закрывать нужно оба.
-const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round',
+// Кольцо раундов фарма: 7 горгулий на 3 молега (Паша, 13.10.2026), молеги расставлены вразбивку.
+const FARM_ORDER = ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg'];
+
+const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Гильдия травников',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -967,6 +974,12 @@ async function loginIfNeeded(page) {
       // Паша, 12.10.2026: «я забываю тебя водить туда, ходи сам». Боёв и трат нет - шаг идёт и в
       // режиме без боёв; покупку нового умения делает только Паша (см. lib/titan_school.js).
       r = await runCycleStep(page, 'Школа Титан', () => runTitanSchoolIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Гильдия травников: варка эликсиров из собранных трав. Паша, 13.10.2026: «Вари все».
+      // Боёв и трат нет, трава всё равно копится - шаг идёт и в режиме без боёв.
+      r = await runCycleStep(page, 'Гильдия травников', () => runHerbGuildIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
