@@ -380,10 +380,12 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         const { tryDrinkBuffAle, isAnyBuffAleActive } = require('../lib/recovery');
         if (await isAnyBuffAleActive(page).catch(() => false)) {
           console.log('@ale: баф эля уже висит, повторно не пью.');
-        } else if (await tryDrinkBuffAle(page, 'Праздничный эль').catch(() => false)) {
-          console.log('@ale: выпит Праздничный эль перед боем.');
+        } else if (await tryDrinkBuffAle(page, 'Эль "Вырви глаз"').catch(() => false)) {
+          // 13.10.2026: праздничный эль Паша пить запретил и велел продавать, а «Вырви глаз» -
+          // «можешь продолжать пить». Поэтому директива теперь берёт именно его.
+          console.log('@ale: выпит Эль "Вырви глаз" перед боем.');
         } else {
-          console.log('@ale: эль не пью (Паша снял условие 13.10.2026) - иду без него.');
+          console.log('@ale: буфф-эля нет - иду без него.');
         }
         await backToScene(page);
       } else if (step.startsWith('@heal')) {
