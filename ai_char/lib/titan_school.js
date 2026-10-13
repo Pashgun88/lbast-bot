@@ -76,7 +76,11 @@ async function readCandidates(page, branch) {
   await page.goto(`http://lbast.ru/loc.php?obj=5198&go=${branch}`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
   await pause(page, 500, 900);
   const text = (await getBodyText(page).catch(() => '')) || '';
-  const level = Number(S.charLevel) || 0;
+  // Уровень берём ИЗ ИГРЫ, а не из S.charLevel. 13.10.2026: charLevel с самого начала был нулём
+  // (его читали из pers.php, где слова «Уровень» нет вовсе), фильтр «не дороже нашего уровня» при
+  // нуле не отсекал ничего, и доклад Паше предложил умения за 34-42 тысячи дин на 9 уровне при
+  // 8 тысячах в кошеле. Источник истины - игра: анкета «кто» показывает «AI__ [9]».
+  const level = await require('./levelup').readCharLevelFromProfile(page).catch(() => 0);
   const out = [];
   for (const line of text.split('\n')) {
     const m = line.match(/^\s*•\s*(.+?)\s*\[(\d+)\]\s*-\s*изучение за\s*(\d+)\s*дин и\s*(\d+)\s*дн/);
@@ -85,8 +89,10 @@ async function readCandidates(page, branch) {
     if (level && need > level) continue;
     out.push(`${m[1]} [${need} ур.] - ${m[3]} дин, ${m[4]} дн.`);
   }
-  // Сильнейшее доступное умение - последнее в списке: он отсортирован по уровню.
-  return out.slice(-3);
+  // Список отсортирован по уровню, поэтому «сильнейшее доступное» - последнее. Но когда уровень
+  // прочитать не удалось, брать последние - значит показывать самые дорогие умения дерева; в этом
+  // случае честнее показать самые дешёвые и сказать, что уровень неизвестен.
+  return level ? out.slice(-3) : out.slice(0, 3);
 }
 
 async function runTitanSchoolIfDue(page) {
@@ -111,7 +117,9 @@ async function runTitanSchoolIfDue(page) {
     // Учить нечего: умение доучено, а новое - это трата дин, то есть решение Паши.
     const atk = await readCandidates(page, 1);
     const def = await readCandidates(page, 2);
+    const lvl = Number(S.charLevel) || 0;
     console.log(`ШКОЛА ТИТАН: ЖДЁТ РЕШЕНИЯ - учить нечего${current ? `, выучено «${current[1]}»` : ''}.`
+      + ` Уровень ${lvl || 'неизвестен - список ниже самый дешёвый, а не по уровню'}.`
       + ` Атака: ${atk.join('; ') || '-'}. Защита: ${def.join('; ') || '-'}.`
       + ' Что брать - реши, Паша: покупку я сам не делаю.');
   }

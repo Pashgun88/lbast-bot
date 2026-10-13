@@ -5,7 +5,7 @@
 // 23.09.2026 свободных статов 0, так что любое их появление = новый уровень.
 // Опыт в анкете печатается с точками как разделителем тысяч: «Опыт: 121.000 (осталось 79.000)».
 
-module.exports = { checkLevelUpIfDue, readHealRateHere };
+module.exports = { checkLevelUpIfDue, readHealRateHere, readCharLevelFromProfile };
 
 const { S, persistDailyQuestState } = require('./state');
 const { getBodyText } = require('./core');
@@ -56,6 +56,34 @@ async function checkLevelUpIfDue(page) {
 // и устарел молча: 03.10.2026 Паша сказал «ты всё ещё упоминаешь что ты 7 уровень, но ты 8-й уже
 // давно». Скорость лечения стояла константой 16, хотя зависит от места - в Кулаке Хаоса с
 // максимальным домом она выше («лечение смотри в Кулаке Хаоса в профиле»).
+// Уровень персонажа живёт НЕ в pers.php. 13.10.2026: noteLevelAndHealRate ищет строку «Уровень:»,
+// а в анкете её нет вовсе (там опыт, лечение, деньги, раса, мораль) - поэтому S.charLevel так и
+// остался нулём с самого начала, молча. Это вылезло в школе «Титан»: её подбор умений «не дороже
+// нашего уровня» при нуле не отсекал ничего и предложил Паше умения за 34-42 тысячи дин на 9
+// уровне. Настоящее место уровня - анкета «кто»: «AI__ [9] (930/850)».
+async function readCharLevelFromProfile(page) {
+  try {
+    const back = page.url();
+    await page.goto('http://lbast.ru/log_infa.php?mod=who&blogin=AI__',
+      { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const t = await getBodyText(page).catch(() => '');
+    await page.goto(back, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    // Регулярка ЛИТЕРАЛОМ: собранная из строки теряет обратные слэши при записи файла - на этом я
+    // уже спотыкался дважды (брага, требования кольца).
+    const mm = String(t || '').match(/AI__\s*\[(\d+)\]/);
+    const n = mm ? Number(mm[1]) : 0;
+    if (n > 0 && n !== S.charLevel) {
+      console.log(`Уровень персонажа: ${n}${S.charLevel ? ` (было ${S.charLevel})` : ''} - прочитан в анкете «кто».`);
+      S.charLevel = n;
+      persistDailyQuestState();
+    }
+    return n || Number(S.charLevel) || 0;
+  } catch (e) {
+    console.log(`Уровень: анкету «кто» прочитать не удалось - ${e.message.slice(0, 80)}`);
+    return Number(S.charLevel) || 0;
+  }
+}
+
 function noteLevelAndHealRate(text) {
   const lv = String(text || '').match(/Уровень:\s*(\d+)/i);
   if (lv) {
