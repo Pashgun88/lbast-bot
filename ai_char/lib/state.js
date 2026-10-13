@@ -163,6 +163,8 @@ S.farmAltNext = 'moleg'; // чья очередь в фарме: 'moleg' или 
 // монеткой, а готовым порядком раундов: при жребии 30/70 на коротком дне легко выйти пять молегов
 // подряд. Номер раунда переживает перезапуск, иначе каждый подъём драйвера начинал бы с горгульи.
 S.farmRoundNo = 0;
+S.farmKoDayKey = null; // сутки, за которые считаем нокауты на точках фарма
+S.farmKoCount = {};    // точка -> сколько раз за сутки легли (только учёт, фарм не останавливаем)
 // Квест, который круг за кругом не двигается, не должен держать ферму. 09.10.2026: Варьете,
 // Ордо и ростовщик ломались на своих шагах, а ферма при полных HP стояла «берегу под них».
 // Срок наблюдения за заданием-сиротой. В памяти процесса он обнулялся при каждом перезапуске
@@ -401,6 +403,8 @@ function restoreDailyQuestState() {
   if (s.farmAltNext === 'moleg' || s.farmAltNext === 'gargoyle') S.farmAltNext = s.farmAltNext;
   if (typeof s.herbGuildDayKey === 'string' || s.herbGuildDayKey === null) S.herbGuildDayKey = s.herbGuildDayKey;
   if (Number.isFinite(s.farmRoundNo)) S.farmRoundNo = s.farmRoundNo;
+  if (typeof s.farmKoDayKey === 'string' || s.farmKoDayKey === null) S.farmKoDayKey = s.farmKoDayKey;
+  if (s.farmKoCount && typeof s.farmKoCount === 'object') S.farmKoCount = s.farmKoCount;
   if (typeof s.slotUnknownLine === 'string') S.slotUnknownLine = s.slotUnknownLine;
   if (Number.isFinite(s.slotUnknownSince)) S.slotUnknownSince = s.slotUnknownSince;
   if (Number.isFinite(s.ordoForeignSlotStreak)) S.ordoForeignSlotStreak = s.ordoForeignSlotStreak;
@@ -495,7 +499,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,

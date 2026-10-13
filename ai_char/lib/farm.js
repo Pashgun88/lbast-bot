@@ -13,7 +13,7 @@ module.exports = {
 
 const {
   S, DEMON_LAKE_FASTWAY_URL, getWeekday, HARPY_HUNT_WEEKDAY, HARPY_HUNTS_PER_DAY,
-  HP_FLOOR_WITH_BUFF, parseCooldownError, persistDailyQuestState, resetHuntStateIfNewDay,
+  HP_FLOOR_WITH_BUFF, parseCooldownError, persistDailyQuestState, resetHuntStateIfNewDay, getDayKeyNow,
 } = require('./state');
 const { waitOutHorseTravel } = require('./assassins');
 const { getBodyText, parseStats, pause } = require('./core');
@@ -439,6 +439,24 @@ async function goRouteToMoleg(page) {
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
 }
 
+// Нокаут на точке фарма: считаем и пишем, но фарм НЕ останавливаем. Паша, 13.10.2026: «фарм на
+// молеге продолжай. Бывают иногда проигрыши, не страшно».
+//
+// Почему автозапрет пришлось убрать совсем, а не поправить порог: он сравнивал «урон за бой» с
+// запасом HP, а при поражении игра роняет HP глубоко в минус (замер 13.10.2026: 930 -> -3367,
+// «урон» 4297). Ни один выживший бой столько не стоит, то есть сработать запрет мог ТОЛЬКО на
+// нокауте - на том самом случае, который Паша считает нормальным. Запрет на действие, которое
+// разрешено, - это просто остановленный фарм; его и получили: файл wait_for_gear.flag выключил
+// бои целиком, и вместе с фармом встали квестовые бои и дейлик на гарпий.
+function noteFarmKnockout(spot, delta, hpMax) {
+  const day = getDayKeyNow();
+  if (S.farmKoDayKey !== day) { S.farmKoDayKey = day; S.farmKoCount = {}; }
+  S.farmKoCount[spot] = (S.farmKoCount[spot] || 0) + 1;
+  try { persistDailyQuestState(); } catch (e) { /* не критично */ }
+  console.log(`Фарм: нокаут на ${spot} (HP ушло в минус, «урон» ${delta} при запасе ${hpMax}).`
+    + ` За сутки это ${S.farmKoCount[spot]}-й раз. Фарм продолжаю - проигрыши разрешены.`);
+}
+
 async function runMolegFarmRound(page, buffed = false) {
   const floor = buffed ? Math.min(MOLEG_HP_SAFETY_FRACTION, HP_FLOOR_WITH_BUFF) : MOLEG_HP_SAFETY_FRACTION;
 
@@ -498,19 +516,7 @@ async function runMolegFarmRound(page, buffed = false) {
   // есть половину, и его Паша выбрал сознательно. Под запрет попадает только бой, который снял
   // больше, чем у нас было вообще - то есть нокаут с запасом (проверил на числах из журнала).
   const hpMax = typeof statsAfter.hpMax === 'number' ? statsAfter.hpMax : null;
-  if (delta !== null && hpMax && delta > hpMax) {
-    const { GEAR_WAIT_FLAG_PATH } = require('./state');
-    const note = `Молег снял ${delta} HP при запасе ${hpMax} (это больше всего запаса) - фарм на нём остановлен.`;
-    try {
-      if (!require('fs').existsSync(GEAR_WAIT_FLAG_PATH)) {
-        require('fs').writeFileSync(GEAR_WAIT_FLAG_PATH, `${new Date().toISOString()}
-${note}
-Снять: удалить этот файл.
-`);
-      }
-    } catch (err) { console.log('Фарм: не смог поставить запрет файлом:', err.message); }
-    console.log(`ФАРМ ОПАСЕН: ${note} Нужен шмот по уровню или другая цель - реши, Паша.`);
-  }
+  if (hpAfter !== null && hpAfter <= 0) noteFarmKnockout('молеге', delta, hpMax);
   return true;
 }
 
@@ -612,19 +618,7 @@ async function runGargoyleFarmRound(page, buffed = false) {
   const delta = hpAfter !== null ? hpBefore - hpAfter : null;
   console.log(`Gargoyle farm: fight result=${won} HP ${hpBefore}->${hpAfter} (урон за бой: ${delta})`);
   const hpMax = typeof statsAfter.hpMax === 'number' ? statsAfter.hpMax : null;
-  if (delta !== null && hpMax && delta > hpMax) {
-    const { GEAR_WAIT_FLAG_PATH } = require('./state');
-    const note = `Горгулья сняла ${delta} HP при запасе ${hpMax} (это больше всего запаса) - фарм остановлен.`;
-    try {
-      if (!require('fs').existsSync(GEAR_WAIT_FLAG_PATH)) {
-        require('fs').writeFileSync(GEAR_WAIT_FLAG_PATH, `${new Date().toISOString()}
-${note}
-Снять: удалить этот файл.
-`);
-      }
-    } catch (err) { console.log('Фарм: не смог поставить запрет файлом:', err.message); }
-    console.log(`ФАРМ ОПАСЕН: ${note} Нужен шмот по уровню или другая цель - реши, Паша.`);
-  }
+  if (hpAfter !== null && hpAfter <= 0) noteFarmKnockout('горгулье', delta, hpMax);
   return true;
 }
 
