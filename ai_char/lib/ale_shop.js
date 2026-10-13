@@ -24,7 +24,12 @@ async function goLinkByExactText(page, text) {
   return true;
 }
 
+// Паша, 13.10.2026: эль больше не пьём и не нужен - значит и покупать его незачем. Шаг оставлен
+// на месте (вернуть покупку = снять этот выход), но денег больше не тратит.
+const BUY_ALE_ALLOWED = false;
+
 async function buyFestiveAleIfNeeded(page) {
+  if (!BUY_ALE_ALLOWED) return false;
   if (Date.now() - lastCheckAt < CHECK_EVERY_MS) return false;
   lastCheckAt = Date.now();
 

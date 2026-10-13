@@ -383,7 +383,7 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         } else if (await tryDrinkBuffAle(page, 'Праздничный эль').catch(() => false)) {
           console.log('@ale: выпит Праздничный эль перед боем.');
         } else {
-          console.log('@ale: эля нет - иду без него.');
+          console.log('@ale: эль не пью (Паша снял условие 13.10.2026) - иду без него.');
         }
         await backToScene(page);
       } else if (step.startsWith('@heal')) {

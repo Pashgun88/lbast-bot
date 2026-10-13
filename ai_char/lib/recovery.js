@@ -249,7 +249,22 @@ function normalizeItemName(s) {
 
 const BUFF_ALE_ITEM_NAMES = ['Праздничный эль', 'Эль "Вырви глаз"'];
 
+// Паша, 13.10.2026: «праздничный эль не надо уже пить, ты достаточно силен проходить сильные
+// квесты». Эль больше не пьём НИГДЕ: ни в Штольнях, ни по директиве @ale в маршрутах, ни перед
+// фарм-сессией. Закрыто здесь, в одной функции, через которую шли все три пути - но каждое место
+// вызова проверено отдельно, потому что запрет должен закрывать ДЕЙСТВИЕ, а не функцию: гейт
+// Штолен «без эля не начинаю» снят в lib/shtolni.js тем же заходом, иначе квест встал бы навсегда.
+const DRINK_ALE_ALLOWED = false;
+let aleRefusalLogged = false;
+
 async function tryDrinkBuffAle(page, aleName) {
+  if (!DRINK_ALE_ALLOWED) {
+    if (!aleRefusalLogged) {
+      aleRefusalLogged = true;
+      console.log(`Эль не пью: Паша снял это условие 13.10.2026 (${aleName} остаётся в сумке на продажу).`);
+    }
+    return false;
+  }
   const currentUrl = page.url();
   try {
     await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
