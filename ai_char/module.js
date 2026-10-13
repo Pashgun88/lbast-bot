@@ -84,7 +84,8 @@ const {
   runThursdayDailiesIfAvailable, runWeekdayHuntsIfDue,
 } = require('./lib/weekday_dailies');
 const {
-  runBisonFarmRound, runBoarFarmRound, runHarpyFarmRound, runMolegFarmRound, runPodvalyFarmRound, runSawmillGuardRound,
+  runBisonFarmRound, runBoarFarmRound, runHarpyFarmRound, runMolegFarmRound, runGargoyleFarmRound,
+  runPodvalyFarmRound, runSawmillGuardRound,
 } = require('./lib/farm');
 const {
   CHAT_ROOMS, chatMessageAgeMinutes, detectChatTriggers, extractChatMessagesSection,
@@ -120,6 +121,10 @@ module.exports = {
   runBisonFarmRound,
   runBoarFarmRound,
   runMolegFarmRound,
+  // 13.10.2026: горгульи в этом списке не было, а driver.js берёт функции ИЗ module.js - fn
+  // оказывался undefined, и фарм-сессия падала с «fn is not a function». Новую функцию в lib/*
+  // недостаточно написать и экспортировать из неё: её надо провести и через этот реэкспорт.
+  runGargoyleFarmRound,
   runSawmillGuardRound,
   runDemonLakeQuestIfAvailable,
   runShipwreckQuestIfAvailable,
