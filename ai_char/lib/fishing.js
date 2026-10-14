@@ -340,9 +340,28 @@ async function castFishingRodAndDetectCatch(page) {
   // ждём до 8 с, пока появится одно из известных состояний, иначе performStep перезагрузит
   // location.php и потеряет экран.
   let afterRodText = await getBodyText(page);
-  for (let i = 0; i < 16 && !/Забросить удочку|Ждать|выловили\s+всю\s+рыбу/i.test(afterRodText); i++) {
+  for (let i = 0; i < 16 && !/Забросить удочку|Ждать|выловили\s+всю\s+рыбу|без удочки/i.test(afterRodText); i++) {
     await page.waitForTimeout(500);
     afterRodText = await getBodyText(page);
+  }
+  // 14.10.2026: удочка из сумки исчезла, и озеро отвечает «без удочки вы можете им только
+  // любоваться». Прежний код этого состояния не знал: он три раза искал «Забросить удочку», падал
+  // ошибкой и ехал к озеру снова в каждом круге - в журнале десятки одинаковых срывов. Снасть
+  // покупкой не восстановить (в магазинах Стоунгарда удочки нет вовсе), это решение Паши, поэтому
+  // отмечаем день закрытым и молчим до завтра: одна строка вместо потока.
+  if (/без удочки/i.test(afterRodText)) {
+    syncFishingDayState();
+    S.fishingCatchesToday = FISHING_DAILY_CATCH_LIMIT;
+    S.lastFishingAttemptAt = Date.now();
+    persistDailyQuestState();
+    if (S.fishingNoRodDayKey !== S.fishingDayKey) {
+      S.fishingNoRodDayKey = S.fishingDayKey;
+      persistDailyQuestState();
+      console.log('Рыбалка: УДОЧКИ НЕТ - озеро отвечает «без удочки вы можете им только любоваться».'
+        + ' До конца дня больше не еду. Где взять снасть - вопрос к Паше.');
+    }
+    await leaveFishingResultToGame(page);
+    return false;
   }
   if (/выловили\s+всю\s+рыбу/i.test(afterRodText)) {
     console.log('Рыбалка: на сегодня рыба закончилась ("выловили всю рыбу") -> отмечаю лимит и выхожу');

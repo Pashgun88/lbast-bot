@@ -246,6 +246,7 @@ const FISHING_DAILY_CATCH_LIMIT = 6;
 const FISHING_ATTEMPT_COOLDOWN_MS = 2 * 60 * 1000;
 S.fishingDayKey = '';
 S.fishingCatchesToday = 0;
+S.fishingNoRodDayKey = ''; // день, за который уже написали «удочки нет» - чтобы не повторяться
 S.lastFishingAttemptAt = 0;
 
 // Порог HP, при котором можно продолжать обычные действия (квесты) или биться с Блейком —
@@ -404,6 +405,7 @@ function restoreDailyQuestState() {
   if (typeof s.herbGuildDayKey === 'string' || s.herbGuildDayKey === null) S.herbGuildDayKey = s.herbGuildDayKey;
   if (Number.isFinite(s.farmRoundNo)) S.farmRoundNo = s.farmRoundNo;
   if (typeof s.farmKoDayKey === 'string' || s.farmKoDayKey === null) S.farmKoDayKey = s.farmKoDayKey;
+  if (typeof s.fishingNoRodDayKey === 'string') S.fishingNoRodDayKey = s.fishingNoRodDayKey;
   if (s.farmKoCount && typeof s.farmKoCount === 'object') S.farmKoCount = s.farmKoCount;
   if (typeof s.slotUnknownLine === 'string') S.slotUnknownLine = s.slotUnknownLine;
   if (Number.isFinite(s.slotUnknownSince)) S.slotUnknownSince = s.slotUnknownSince;
@@ -499,7 +501,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, fishingNoRodDayKey: S.fishingNoRodDayKey, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,
