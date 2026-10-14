@@ -244,6 +244,19 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
       // цепочки ещё не открылась (11.10.2026, «Жертвоприношение»). Не ошибка маршрута: место в
       // цепочке не трогаем, просто уходим.
       if (i > start && /лучше\s+начать\s+завтра/i.test(await getBodyText(page))) {
+        // Но та же фраза -- обычный КОНЕЦ дня по гайду («Наступила ночь... Уйти»). Если в этом
+        // проходе мы уже прошли шаги сцены, день доигран, а не «не открылся». 12.10.2026 бот прошёл
+        // день 2 целиком, принял конец дня за «не открылся» и не засчитал его; 13.10 игра открыла
+        // день 3, а бот повторил на нём разговоры дня 2 вместо кладовой Диеге -- и к Скатору пришёл
+        // без улик, без ответа «кукольник».
+        if (pastRoad) {
+          console.log(`guide ${name}: «лучше начать завтра» после шагов сцены -- день доигран`);
+          const leave = (await links(page)).find((x) => /^Уйти$/i.test(x.t));
+          if (leave) await goto(page, leave.h);
+          saveProg(steps.length);
+          result = { status: 'done', index: steps.length };
+          break;
+        }
         console.log(`guide ${name}: игра ответила «лучше начать завтра» после шага ${i - 1} -- часть ещё не открылась`);
         result = { status: 'not_yet', index: from };
         break;
@@ -283,8 +296,30 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
         inRoad = false;
         if (replayRoad) {
           replayRoad = false;
-          console.log(`guide ${name}: дорога пройдена заново, возвращаюсь к шагу ${from}.`);
-          i = from - 1;
+          // Сохранённый шаг может быть ВПЕРЕДИ сцены (старый .progress, сцена сброшена сервером).
+          // 13.10.2026 «Жертвоприношение» день 2: .progress=21, а сцена открылась с самого начала
+          // дня -- раннер прыгнул на «*Далее»/«?Уйти», оба необязательные, нажал «Уйти» и записал
+          // день как пройденный, хотя ни с Рейной, ни с Диеге не говорил. Поэтому сверяемся с
+          // экраном: если ни один шаг-клик от сохранённого места дальше не виден, а более ранний
+          // шаг сцены виден -- продолжаем с него.
+          const plain = (s) => !/^[@*?]/.test(s) && !/^(далее|продолжить квест|уйти)$/i.test(norm(s));
+          const lNow = await links(page);
+          let resumeAt = from;
+          let aheadSeen = false;
+          for (let j = from; j < steps.length && !aheadSeen; j++) {
+            if (plain(steps[j]) && findLink(lNow, steps[j])) aheadSeen = true;
+          }
+          if (!aheadSeen) {
+            for (let j = i + 1; j < from; j++) {
+              if (plain(steps[j]) && findLink(lNow, steps[j])) { resumeAt = j; break; }
+            }
+          }
+          if (resumeAt !== from) {
+            console.log(`guide ${name}: сохранён шаг ${from}, но сцена на шаге ${resumeAt} «${steps[resumeAt]}» -- продолжаю с него.`);
+          } else {
+            console.log(`guide ${name}: дорога пройдена заново, возвращаюсь к шагу ${from}.`);
+          }
+          i = resumeAt - 1;
           continue;
         }
       } else if (step === '@autolone') {
