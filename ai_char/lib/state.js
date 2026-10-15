@@ -152,6 +152,8 @@ S.levelUpReported = false;
 // молча. Теперь он читается из игры (lib/levelup.js) и попадает в промпт чата как факт, а не память.
 S.charLevel = 0;
 // Когда последний раз отправляли черепа в казну клана (lib/skulls.js, раз в 2 дня по слову Паши).
+S.ordoAdSentAt = 0; // объявление о продаже предметов Ордо - не чаще раза в 6 ч
+S.ordoAdSmallLoggedDay = null; // «копим» в лог раз в сутки, а не каждый проход
 S.skullsSentAt = 0;
 S.skullsTriedAt = 0; // когда последний раз ПЫТАЛИСЬ отправить черепа (переживает перезапуск)
 S.skullsSmallLoggedAt = 0; // когда писали «черепов меньше 15, копим» - не чаще раза в сутки
@@ -396,6 +398,8 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.drabasNoPetUntil)) S.drabasNoPetUntil = s.drabasNoPetUntil;
   if (typeof s.levelUpReported === 'boolean') S.levelUpReported = s.levelUpReported;
   if (Number.isFinite(s.charLevel)) S.charLevel = s.charLevel;
+  if (Number.isFinite(s.ordoAdSentAt)) S.ordoAdSentAt = s.ordoAdSentAt;
+  if (typeof s.ordoAdSmallLoggedDay === 'string' || s.ordoAdSmallLoggedDay === null) S.ordoAdSmallLoggedDay = s.ordoAdSmallLoggedDay;
   if (Number.isFinite(s.skullsSentAt)) S.skullsSentAt = s.skullsSentAt;
   if (Number.isFinite(s.skullsTriedAt)) S.skullsTriedAt = s.skullsTriedAt;
   if (Number.isFinite(s.skullsSmallLoggedAt)) S.skullsSmallLoggedAt = s.skullsSmallLoggedAt;
@@ -501,7 +505,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, fishingNoRodDayKey: S.fishingNoRodDayKey, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, fishingNoRodDayKey: S.fishingNoRodDayKey, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, ordoAdSentAt: S.ordoAdSentAt, ordoAdSmallLoggedDay: S.ordoAdSmallLoggedDay, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,

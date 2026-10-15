@@ -69,6 +69,7 @@ const {
   fryFishWhileHealing,
   runOrdoQuestsIfAvailable,
   runOrdoMedalTurnIn,
+  runOrdoItemsAdIfDue,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -468,7 +469,7 @@ const SINGLE_FIGHT_STEPS = new Set([
 // Кольцо раундов фарма: 7 горгулий на 3 молега (Паша, 13.10.2026), молеги расставлены вразбивку.
 const FARM_ORDER = ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg'];
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Гильдия травников',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Гильдия травников', 'Объявление о продаже ордо',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -1051,6 +1052,12 @@ async function loginIfNeeded(page) {
       // 23.09.2026: сдача купленных предметов Ордо и обмен медалей - боёв не требует, поэтому идёт
       // отдельным шагом и работает даже в режиме без боёв.
       r = await runCycleStep(page, 'Сдача предметов Ордо', () => runOrdoMedalTurnIn(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+      // 15.10.2026, Паша: «нужно копить сами предметы. Продавать их в обьявлениях периодически.
+      // Цепи и медальойны». Боёв не требует (читает сумку и кладёт строку в chat_outbox),
+      // поэтому идёт рядом со сдачей и работает даже в режиме без боёв.
+      r = await runCycleStep(page, 'Объявление о продаже ордо', () => runOrdoItemsAdIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
       // Демон - РАНЬШЕ Ордо: слот «ответственного задания» один на двоих, Ордо можно брать

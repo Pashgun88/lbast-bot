@@ -78,6 +78,7 @@ const {
   runDemonLakeQuestIfAvailable, runGalleryQuestIfAvailable, runHerbQuestsIfAvailable,
   runOrdoQuestsIfAvailable, runOrdoMedalTurnIn, runShipwreckQuestIfAvailable,
 } = require('./lib/quests_story');
+const { runOrdoItemsAdIfDue } = require('./lib/ordo_ads');
 const { runFishRestaurantQuestIfAvailable } = require('./lib/fish_restaurant_quest');
 const {
   escapeStuckSceneIfAny, readDailyTasksProgress, resolvePendingFightIfAny,
@@ -143,6 +144,7 @@ module.exports = {
   fryFishWhileHealing,
   runOrdoQuestsIfAvailable,
   runOrdoMedalTurnIn,
+  runOrdoItemsAdIfDue,
   escapeStuckSceneIfAny,
   readDailyTasksProgress,
   getPlayerRaceAndFaction,
