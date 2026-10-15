@@ -505,6 +505,12 @@ function noteGolemRequestsFromChat(msgs, room) {
     }
     const req = golem.parseGolemRequest(msg.text, msg.nick);
     if (!req) continue;
+    // Ники в lbast только латиницей (Паша, 15.10.2026). Русское слово после «на» - не ник, и
+    // угадывать за Пашу нельзя: голем ушёл бы не туда. Докладываем и ждём уточнения.
+    if (!req.target) {
+      console.log(`ГОЛЕМ НЕ СДЕЛАН: в просьбе «${msg.text}» ник написан кириллицей («${req.badNick}»), а ники только латиницей - жду уточнения от ${msg.nick}.`);
+      continue;
+    }
     golem.enqueueGolemRequest({ ...req, requester: msg.nick, source: `чат room=${room}` });
   }
 }

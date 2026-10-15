@@ -13,7 +13,9 @@ const CASES = [
   // места фразы, не только после «на».
   ['нужен голем Varus', 'request', 'Varus'],
   ['нужен голем Galla в 16:00', 'request', 'Galla'],
-  ['нужен голем на Цунами', 'request', 'Цунами'],
+  // Паша, 15.10.2026: «ник только латиницей». Русское слово после «на» ником не считается:
+  // цель пустая, и просьба не исполняется, а докладывается.
+  ['нужен голем на Цунами', 'request', ''],
   // Русское слово без «на» ником НЕ считается - иначе применили бы на игрока «срочно».
   ['нужен голем срочно', 'request', 'Tsunami'],
   ['голем нужен', 'request', 'Tsunami'],
@@ -42,13 +44,14 @@ for (const [text, want, wantTarget] of CASES) {
     const req = parseGolemRequest(text, 'Tsunami');
     const when = req.atMs ? new Date(req.atMs).toLocaleTimeString('ru-RU') : 'сразу';
     line += ` цель=${req.target} время=${when}`;
-    if (wantTarget && req.target !== wantTarget) { bad += 1; line += ` [ожидалась цель ${wantTarget}]`; }
+    if (wantTarget !== undefined && req.target !== wantTarget) { bad += 1; line += ` [ожидалась цель ${wantTarget === '' ? 'пустая' : wantTarget}]`; }
+    if (req.badNick) line += ` (ник кириллицей: ${req.badNick} - не исполняю)`;
   }
   console.log(line);
 }
 
 // Чьи просьбы вообще слушаем.
-for (const [nick, want] of [['Tsunami', true], ['Цунами', true], ['Hank', true], ['Varus', false], ['Galla', false]]) {
+for (const [nick, want] of [['Tsunami', true], ['Hank', true], ['Varus', false], ['Galla', false], ['Цунами', false]]) {
   const got = GOLEM_ALLOWED_RE.test(nick);
   if (got !== want) { bad += 1; console.log(`ПЛОХО ник ${nick}: ${got}, ожидалось ${want}`); }
   else console.log(`ok   ник ${nick}: ${got ? 'слушаю' : 'игнорирую'}`);
