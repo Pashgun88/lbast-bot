@@ -106,19 +106,25 @@ function parseGolemRequest(text, requester) {
     d.setHours(Number(tm[1]), Number(tm[2]), Number(tm[3] || 0), 0);
     atMs = d.getTime();
   }
-  // Ник: слово после «на» либо единственное латинское слово в строке. Если ника нет - цель сам
-  // просящий: он просит голема для себя.
+  // Ник. Паша, 15.10.2026: «нужен голем и любой ник который я или ханк назовем» - значит ник
+  // берётся из самой фразы в любом месте, а не только после «на».
+  //
+  // Два способа, и порядок важен:
+  // 1) «на <ник>» - явное указание, принимаю и кириллический ник тоже;
+  // 2) первое латинское слово во фразе - ники в lbast латиницей (Hank, Tsunami, Galla, Varus).
+  // Кириллическое слово БЕЗ «на» ником не считаю: иначе «нужен голем срочно» применился бы на
+  // игрока «срочно». Это то же правило - при сомнении выбирается не действие.
   let target = '';
-  // \b перед «на» НЕ РАБОТАЕТ: \w в JavaScript знает только латиницу, у кириллицы границы слова
+  //  перед «на» НЕ РАБОТАЕТ: \w в JavaScript знает только латиницу, у кириллицы границы слова
   // нет, и «голем на Tsunami» разбиралось как просьба без ника. Край строки или не-букву проверяю
   // явно - тот же урок, что с «эль» и гербом в lib/fish_sale.js.
-  const onNick = t.match(/(?:^|[^A-Za-zА-Яа-яЁё])на\s+([A-Za-z0-9_-]{2,20})/);
+  const onNick = t.match(/(?:^|[^A-Za-zА-Яа-яЁё])на\s+([A-Za-zА-Яа-яЁё0-9_-]{2,20})/);
   if (onNick) [, target] = onNick;
   if (!target) {
-    // Кандидат в ник обязан содержать букву: иначе «09» и «05» из времени 09:05 считались
-    // словами, строка выглядела как «три слова», и ник не находился вовсе.
+    // Кандидат в ник обязан содержать латинскую букву: иначе «09» и «05» из времени 09:05
+    // считались словами, а русские слова фразы - никами.
     const words = (t.match(/[A-Za-z0-9_-]{2,20}/g) || []).filter((w) => /[A-Za-z]/.test(w));
-    if (words.length === 1) [target] = words;
+    if (words.length) [target] = words;
   }
   if (!target) target = String(requester || '');
   return { target, atMs };
@@ -168,7 +174,29 @@ async function findElixirUseHref(page) {
   return null;
 }
 
+// Есть ли такой игрок. Ник приходит из чужой фразы - опечатка в нём стоила бы эликсира, а их у
+// нас один. Страница профиля открывается по ссылке, которая и так используется для разбора расы
+// (chat.php?mod=infa&userlogin=<ник>); проверяем её ДО применения.
+// Запрос делаю здесь, а не через lib/chat.js: chat.js уже подключает golem.js, и встречный
+// require замкнул бы круг.
+async function nickExists(page, nick) {
+  const url = `http://lbast.ru/chat.php?mod=infa&userlogin=${encodeURIComponent(nick)}`;
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const text = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+  if (/Раса:/i.test(text)) return true;
+  console.log(`ГОЛЕМ: игрока «${nick}» игра не знает - ответ страницы: ${text.slice(0, 200)}`);
+  return false;
+}
+
 async function applyGolemElixir(page, target) {
+  if (!target) {
+    console.log('ГОЛЕМ НЕ СДЕЛАН: в просьбе нет ника и непонятно, на кого применять.');
+    return false;
+  }
+  if (!(await nickExists(page, target))) {
+    console.log(`ГОЛЕМ НЕ СДЕЛАН: ник «${target}» не подтвердился, эликсир не трачу.`);
+    return false;
+  }
   const href = await findElixirUseHref(page);
   if (!href) {
     console.log(`ГОЛЕМ НЕ СДЕЛАН: «${ELIXIR_NAME}» в сумке не найден (цель «${target}»).`);
