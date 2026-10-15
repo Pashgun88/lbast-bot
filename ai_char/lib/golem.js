@@ -31,6 +31,41 @@ const { S } = require('./state');
 const { getBodyText, pause } = require('./core');
 
 const QUEUE_FILE = path.join(__dirname, '..', 'golem_queue.json');
+// Словарик русских написаний ников. Паша, 15.10.2026: «а сделай словарик, Цунами - Tsunami,
+// ханк - Hank, Галла/Гала/Галя - Galla». Лежит файлом, чтобы новый ник дописывался без правки
+// кода. Читается при каждом разборе: Паша может дописать ник, пока драйвер работает.
+const ALIASES_FILE = path.join(__dirname, '..', 'nick_aliases.json');
+function readNickAliases() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(ALIASES_FILE, 'utf8'));
+    const out = [];
+    for (const [ru, lat] of Object.entries(raw)) {
+      if (ru.startsWith('_')) continue; // служебные поля вроде «_комментарий»
+      if (/^[A-Za-z0-9_-]{2,20}$/.test(String(lat))) out.push([ru.toLowerCase(), lat]);
+    }
+    // Длинные ключи первыми: «галла» должна проверяться раньше «гала».
+    return out.sort((x, y) => y[0].length - x[0].length);
+  } catch (e) { return []; }
+}
+// Русское слово -> ник латиницей. Падежи меняют не только хвост, но и последнюю букву
+// («Галя» -> «Галю», «Галла» -> «Галлу»), поэтому сверка по началу слова не годится - её я
+// проверил тестом и она роняла оба случая. Сравниваю основы: у слова и у ключа отбрасываю
+// конечные гласные и мягкий знак.
+function nickStem(word) {
+  return String(word || '').toLowerCase().replace(/ё/g, 'е').replace(/[аеиоуыэюяьй]+$/g, '');
+}
+function resolveNickAlias(word) {
+  const w = nickStem(word);
+  if (!w) return '';
+  for (const [ru, lat] of readNickAliases()) {
+    const k = nickStem(ru);
+    if (!k) continue;
+    // Равенство основ - главный случай. Приставочное совпадение разрешаю только для основ от
+    // четырёх букв: иначе короткая основа («гал») тянула бы на себя посторонние слова.
+    if (w === k || (k.length >= 4 && w.startsWith(k))) return lat;
+  }
+  return '';
+}
 const ELIXIR_NAME = 'Эликсир каменного голема';
 // Триггер - ФРАЗА, а не слово. Паша 15.10.2026 сначала сказал «слово голем должно быть как
 // тригер», я ответил, что простое упоминание от просьбы не отличу, и он поправил: «давай лкчше
@@ -126,8 +161,19 @@ function parseGolemRequest(text, requester) {
     if (words.length) [target] = words;
   }
   if (!target) {
-    const cyr = t.match(/(?:^|[^A-Za-zА-Яа-яЁё])на\s+([А-Яа-яЁё][А-Яа-яЁё0-9_-]{1,19})/);
-    if (cyr) [, badNick] = cyr;
+    // Русское слово может быть ником из словарика - тогда это полноценная цель. Смотрим и слово
+    // после «на», и просто русские слова фразы: «нужен голем Цунами» так же понятно, как «на Цунами».
+    const cyrWords = t.match(/[А-Яа-яЁё][А-Яа-яЁё0-9_-]{1,19}/g) || [];
+    for (const w of cyrWords) {
+      const lat = resolveNickAlias(w);
+      if (lat) { target = lat; break; }
+    }
+    if (!target) {
+      // Словарь не знает. Если слово стояло после «на», Паша явно указывал ник - докладываем,
+      // чтобы он дописал словарик. Иначе это обычное слово фразы, и цель - сам просящий.
+      const cyr = t.match(/(?:^|[^A-Za-zА-Яа-яЁё])на\s+([А-Яа-яЁё][А-Яа-яЁё0-9_-]{1,19})/);
+      if (cyr) [, badNick] = cyr;
+    }
   }
   // Ника нет вовсе - цель сам просящий: он просит голема для себя.
   if (!target && !badNick) target = String(requester || '');
