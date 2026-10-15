@@ -297,7 +297,7 @@ async function sellHidesInGeneralShop(page) {
     const money = (await getBodyText(page)).match(/Деньги:\s*(\d+)/);
     console.log(`Продажа кож: итого ${soldTotal} шт. примерно на ${earned} дин${money ? `, денег теперь ${money[1]}` : ''}.`);
   } else {
-    console.log('Продажа в магазине: ни выделанных кож, ни предметов задания Ордо в списке нет.');
+    console.log('Продажа в магазине: выделанных кож в списке нет.');
   }
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   return soldTotal > 0;
