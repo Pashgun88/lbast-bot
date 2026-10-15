@@ -21,5 +21,6 @@ if (args[0] === '--list' || args.length === 0) {
 }
 
 const target = args[0];
-const req = parseGolemRequest(`голем ${args.slice(1).join(' ')}`, target) || { atMs: 0 };
+// Фраза-триггер подставляется сама: сюда Паша передаёт только ник и время.
+const req = parseGolemRequest(`нужен голем ${args.slice(1).join(' ')}`, target) || { atMs: 0 };
 enqueueGolemRequest({ target, atMs: req.atMs, requester: 'Паша', source: 'CLI' });

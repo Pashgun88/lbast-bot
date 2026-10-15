@@ -489,9 +489,22 @@ function noteGolemRequestsFromChat(msgs, room) {
     // Старые сообщения не исполняем: после перезапуска в ленте висит вся история комнаты, и
     // просьба вчерашнего дня не должна тратить эликсир.
     if (chatMessageAgeMinutes(msg) > 10) { golemSeenKeys.add(key); continue; }
+    // Три исхода, а не «есть слово - делаем». Паша: «давай лкчше сделаем нужен голем» - просьба
+    // это ФРАЗА «нужен голем»; одно слово - разговор, и о том, как я его понял, пишу в лог.
+    const cls = golem.classifyGolemMessage(msg.text);
+    if (cls.kind === 'none') continue;
+    golemSeenKeys.add(key);
+    if (cls.kind === 'cancel') {
+      const n = golem.cancelGolemRequests();
+      console.log(`Голем: ${msg.nick} отменяет - «${msg.text}». Снял из очереди просьб: ${n}.`);
+      continue;
+    }
+    if (cls.kind === 'mention') {
+      console.log(`Голем: упоминание от ${msg.nick} («${msg.text}») - ${cls.why}, ничего не делаю.`);
+      continue;
+    }
     const req = golem.parseGolemRequest(msg.text, msg.nick);
     if (!req) continue;
-    golemSeenKeys.add(key);
     golem.enqueueGolemRequest({ ...req, requester: msg.nick, source: `чат room=${room}` });
   }
 }

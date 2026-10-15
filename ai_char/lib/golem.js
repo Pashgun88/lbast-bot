@@ -22,7 +22,7 @@
 // константы экспортируются ПОСЛЕ объявления, в конце файла.
 module.exports = {
   runGolemRequestsIfDue, enqueueGolemRequest, readGolemQueue, golemDueWithinMs,
-  parseGolemRequest,
+  parseGolemRequest, classifyGolemMessage, cancelGolemRequests,
 };
 
 const fs = require('fs');
@@ -32,12 +32,17 @@ const { getBodyText, pause } = require('./core');
 
 const QUEUE_FILE = path.join(__dirname, '..', 'golem_queue.json');
 const ELIXIR_NAME = 'Эликсир каменного голема';
-// Слово-триггер. Паша: «слово голем должно быть как тригер».
-const GOLEM_TRIGGER_RE = /голем/i;
+// Триггер - ФРАЗА, а не слово. Паша 15.10.2026 сначала сказал «слово голем должно быть как
+// тригер», я ответил, что простое упоминание от просьбы не отличу, и он поправил: «давай лкчше
+// сделаем нужен голем». Одно слово «голем» теперь ничего не запускает - только разговор.
+const GOLEM_TRIGGER_RE = /(нужен\s+голем|голем\s+нужен)/i;
+// Слово само по себе - чтобы заметить упоминание и написать в лог, как я его понял.
+const GOLEM_WORD_RE = /голем/i;
 // Чьи просьбы исполняем. Паша: «это только по моей просьбе... или по просьбе Ханк». Ник Hank
 // подтверждён (сделка по асам 21.09). Ник Паши в игре беру из переменной окружения - угадывать
 // нельзя: по чужой просьбе эликсир тратить нельзя вовсе.
-const GOLEM_ALLOWED = String(process.env.AI_GOLEM_REQUESTERS || 'Hank')
+// Паша, 15.10.2026: «мой цунами» - его персонаж Tsunami (так ник пишется в логе передач).
+const GOLEM_ALLOWED = String(process.env.AI_GOLEM_REQUESTERS || 'Hank,Tsunami,Цунами')
   .split(',').map((x) => x.trim()).filter(Boolean);
 const GOLEM_ALLOWED_RE = new RegExp(`^(${GOLEM_ALLOWED.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`, 'i');
 // За сколько до назначенной секунды драйвер перестаёт начинать фарм.
@@ -53,6 +58,38 @@ function readGolemQueue() {
 }
 function writeGolemQueue(q) {
   fs.writeFileSync(QUEUE_FILE, JSON.stringify(q, null, 1));
+}
+
+// Паша, 15.10.2026: «ты отличишь тригер от простого упоминания?» Нет, простое вхождение слова -
+// не просьба: «голем уже в кд», «спасибо за голема», «а голем есть?» - это разговор, а эликсир
+// один. Поэтому разбор в три исхода, и при любом сомнении выбирается НЕ действие: пропустить
+// просьбу я могу переспросить, потраченный эликсир не вернуть.
+//
+// 'cancel'  - отменить то, что стоит в очереди («отмени голем», «голем не надо»);
+// 'request' - просьба применить;
+// 'mention' - слово прозвучало, но делать ничего не надо. Пишем в лог, чтобы Паша видел, как я
+//             понял его фразу, и мог поправить.
+// «не нужен» тоже отказ, и именно его легко забыть: фраза-триггер «нужен голем» в нём почти
+// целиком. Поймано тестом test_golem_trigger.js.
+const GOLEM_CANCEL_RE = /(отмен|отбой|не надо|не нуж|не кидай|не делай|стоп)/i;
+
+function classifyGolemMessage(text) {
+  const t = String(text || '');
+  if (!GOLEM_WORD_RE.test(t)) return { kind: 'none' };
+  // Отмена проверяется ПЕРВОЙ: «голем не нужен» содержит и фразу-триггер, и отказ, и это отказ.
+  if (GOLEM_CANCEL_RE.test(t)) return { kind: 'cancel' };
+  if (!GOLEM_TRIGGER_RE.test(t)) return { kind: 'mention', why: 'нет фразы «нужен голем»' };
+  // Вопрос - не приказ: «нужен голем?» это вопрос ко мне, а не просьба.
+  if (t.includes('?')) return { kind: 'mention', why: 'это вопрос' };
+  return { kind: 'request' };
+}
+
+// Снять из очереди всё, что ещё не исполнено. Возвращает число снятых просьб.
+function cancelGolemRequests() {
+  const q = readGolemQueue();
+  if (q.length === 0) return 0;
+  writeGolemQueue([]);
+  return q.length;
 }
 
 // «голем в 16:52:44 на Hank», «голем Hank», «голем» - ник и время необязательны.
