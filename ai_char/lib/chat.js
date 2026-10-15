@@ -449,6 +449,11 @@ async function runChatMonitorCycle(chatPage, state) {
       lastInitiativeAt: s.lastInitiativeAt || 0,
       now,
     });
+    // Слово «голем» от Паши или Ханка - просьба применить эликсир каменного голема.
+    // 15.10.2026, Паша: «слово голем должно быть как тригер», просьба бывает «в игре».
+    // Разбирается здесь, а не в автоответе: это действие, а не реплика, и ответ модели для него
+    // не нужен. Чужие просьбы игнорируем - эликсир тратится только по слову Паши или Ханка.
+    noteGolemRequestsFromChat(nextMsgs, room);
     if (triggers.some((t) => t.type === 'initiative')) {
       s.lastInitiativeAt = now;
     }
@@ -471,3 +476,22 @@ async function runChatMonitorCycle(chatPage, state) {
 Object.assign(module.exports, {
   CHAT_ROOMS,
 });
+
+// Просьбы «голем» из чата. Дедупликация по ключу сообщения: лента читается раз в 30-60 секунд,
+// и одно и то же сообщение видно много раз - без этого одна просьба попала бы в очередь десятки раз.
+const golemSeenKeys = new Set();
+function noteGolemRequestsFromChat(msgs, room) {
+  const golem = require('./golem');
+  for (const msg of msgs || []) {
+    if (!golem.GOLEM_ALLOWED_RE.test(String(msg.nick || ''))) continue;
+    const key = chatMessageKey(msg);
+    if (golemSeenKeys.has(key)) continue;
+    // Старые сообщения не исполняем: после перезапуска в ленте висит вся история комнаты, и
+    // просьба вчерашнего дня не должна тратить эликсир.
+    if (chatMessageAgeMinutes(msg) > 10) { golemSeenKeys.add(key); continue; }
+    const req = golem.parseGolemRequest(msg.text, msg.nick);
+    if (!req) continue;
+    golemSeenKeys.add(key);
+    golem.enqueueGolemRequest({ ...req, requester: msg.nick, source: `чат room=${room}` });
+  }
+}

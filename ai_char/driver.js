@@ -70,6 +70,9 @@ const {
   runOrdoQuestsIfAvailable,
   runOrdoMedalTurnIn,
   runOrdoItemsAdIfDue,
+  runGolemRequestsIfDue,
+  golemDueWithinMs,
+  GOLEM_CLEAR_AHEAD_MS,
   runChatMonitorCycle,
   runStatueOfGloryIfDue,
   runShepotQuestIfAvailable,
@@ -469,7 +472,7 @@ const SINGLE_FIGHT_STEPS = new Set([
 // Кольцо раундов фарма: 7 горгулий на 3 молега (Паша, 13.10.2026), молеги расставлены вразбивку.
 const FARM_ORDER = ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg'];
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Гильдия травников', 'Объявление о продаже ордо',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -921,7 +924,14 @@ async function loginIfNeeded(page) {
       // Приказ отказаться от задания (файл ai_char/drop_task.flag) исполняем в начале цикла: слот
       // один на всё, и пока он занят, стоят Штольни и половина квестов. 27.09.2026 флаг полчаса
       // пролежал без дела, потому что его читал только гейт внутри квестов с needsSlot.
-      let r = await runCycleStep(page, 'Отказ от задания по приказу', () => require('./lib/task_slot').runDropOrderIfAny(page));
+      // Эликсир каменного голема - САМЫМ первым шагом цикла. Паша, 15.10.2026: «нужно точно в это
+      // время... ты долден быть в игре в это время не занят». Просьба может ждать названной секунды,
+      // поэтому шаг стоит там, где его ничто не задерживает.
+      let r = await runCycleStep(page, 'Голем по просьбе', () => runGolemRequestsIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      r = await runCycleStep(page, 'Отказ от задания по приказу', () => require('./lib/task_slot').runDropOrderIfAny(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
       
@@ -1162,7 +1172,11 @@ async function loginIfNeeded(page) {
       const questReserveWait = guideQuestWaitsForReserve();
       const questMidRoute = guideQuestInProgress() || guideQuestDueNow();
       if (questMidRoute) console.log(`Ферма пропущена: «${questMidRoute}» - квест ждёт, сначала он.`);
-      const farmAllowed = hpOkForFarm && !questsPending && !questReserveWait && !questMidRoute; // бизон разрешён и в режиме без боёв
+      // Перед назначенным големом фарм не начинаем: круг фарма - это бой на несколько минут, а
+      // Паша требует быть «в игре в это время не занят». Один пропущенный круг дешевле промаха.
+      const golemSoon = golemDueWithinMs(GOLEM_CLEAR_AHEAD_MS);
+      if (golemSoon) console.log('Ферма пропущена: скоро голем по просьбе - в это время нужно быть свободным.');
+      const farmAllowed = hpOkForFarm && !questsPending && !questReserveWait && !questMidRoute && !golemSoon; // бизон разрешён и в режиме без боёв
       const farmAllowedFull = farmAllowed && !noFight;   // кабан и гарпия - только в обычном режиме
       if (questReserveWait) {
         console.log(`Ферма пропущена: ${questReserveWait} - раунды фарма резерв только тратят.`);
