@@ -71,6 +71,7 @@ const {
   runOrdoMedalTurnIn,
   runOrdoItemsAdIfDue,
   runGolemRequestsIfDue,
+  runExpSnapshotIfDue,
   golemDueWithinMs,
   GOLEM_CLEAR_AHEAD_MS,
   runChatMonitorCycle,
@@ -496,7 +497,7 @@ const SINGLE_FIGHT_STEPS = new Set([
 const HIDE_FARM_ENABLED = process.env.AI_FARM_SPOT === 'hides';
 const FARM_ORDER = ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg'];
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -1092,6 +1093,13 @@ async function loginIfNeeded(page) {
       // Цепи и медальойны». Боёв не требует (читает сумку и кладёт строку в chat_outbox),
       // поэтому идёт рядом со сдачей и работает даже в режиме без боёв.
       r = await runCycleStep(page, 'Объявление о продаже ордо', () => runOrdoItemsAdIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Замер опыта раз в сутки с прогнозом следующего уровня. Паша, 16.10.2026: «проследи за своим
+      // прогрессом опыта, сниаю раз в день, прикинь когда примерно след уровень, чтобы взять новый
+      // шмот в аренду». Боёв не требует - читает pers.php.
+      r = await runCycleStep(page, 'Опыт: суточный замер', () => runExpSnapshotIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
       // Демон - РАНЬШЕ Ордо: слот «ответственного задания» один на двоих, Ордо можно брать

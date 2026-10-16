@@ -79,6 +79,7 @@ const {
   runOrdoQuestsIfAvailable, runOrdoMedalTurnIn, runShipwreckQuestIfAvailable,
 } = require('./lib/quests_story');
 const { runOrdoItemsAdIfDue } = require('./lib/ordo_ads');
+const { runExpSnapshotIfDue, expForecast, formatForecast } = require('./lib/exp_tracker');
 const golemLib = require('./lib/golem');
 const { runGolemRequestsIfDue, golemDueWithinMs, enqueueGolemRequest, parseGolemRequest } = golemLib;
 const { runFishRestaurantQuestIfAvailable } = require('./lib/fish_restaurant_quest');
@@ -151,6 +152,9 @@ module.exports = {
   golemDueWithinMs,
   enqueueGolemRequest,
   parseGolemRequest,
+  runExpSnapshotIfDue,
+  expForecast,
+  formatForecast,
   GOLEM_CLEAR_AHEAD_MS: golemLib.GOLEM_CLEAR_AHEAD_MS,
   escapeStuckSceneIfAny,
   readDailyTasksProgress,
