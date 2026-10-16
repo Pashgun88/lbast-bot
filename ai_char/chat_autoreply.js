@@ -118,6 +118,18 @@ function selfBlock() {
   return parts.length ? `<сейчас>\n${parts.join('; ')}\n</сейчас>\n` : '';
 }
 
+// Знания по игре под конкретный вопрос. Пустая строка, если по вопросу у нас ничего нет: тогда
+// пусть лучше переспросит, чем выдумает.
+function kbBlock(question) {
+  try {
+    const block = require('./lib/game_kb').recallKb(question, 3);
+    return block ? `<знания>
+${block}
+</знания>
+` : '';
+  } catch (e) { return ''; }
+}
+
 // Что AI__ делал сегодня - данные для промпта, чтобы разговор шёл про реальную жизнь персонажа.
 function todayBlock() {
   const d = dayLog.digest(400);
@@ -152,15 +164,22 @@ const QUEST_TALK_RE = /(квест|дейлик|задани|Штольн|Дов
 const PROFANITY_RE = /(сук[аи]|сучк|бля|хуй|хуе|хуё|пизд|ебат|ебан|ебл|(?<![а-яё])еб[аоу]|муда|гандон|долбо|залуп|шлюх|пидор|пидар)/iu;
 
 // Возвращает { text } или { reason } — причина отказа пишется в лог.
-function filterReply(raw, { oneLine = true, max = 240 } = {}) {
+// 16.10.2026, Паша: «ты можешь побольше информации по игре, вносить в базу данных и отвечать
+// игрокам?» Здесь запреты на квесты и ботов сталкиваются с этой задачей: если игрок сам спросил
+// «где молег?» или «как Штольни проходятся», молчать глупо. Разделяю: о СВОИХ делах не
+// рассказываем (инициатива, сводка дня), но на прямой вопрос отвечаем. Признак прямого вопроса -
+// тема есть в самом сообщении игрока; это решает вызывающий (asked), а не модель.
+function filterReply(raw, { oneLine = true, max = 240, asked = '' } = {}) {
+  const askedAboutQuests = QUEST_TALK_RE.test(String(asked || ''));
+  const askedAboutMobs = MOB_TALK_RE.test(String(asked || ''));
   let s = String(raw || '').trim();
   s = oneLine ? (s.split('\n').map((l) => l.trim()).find(Boolean) || '') : s.replace(/\n+/g, ' ');
   s = s.replace(/^["«„']+|["»“']+$/g, '').replace(/^AI__\s*[:,-]\s*/i, '').trim();
   if (!s || /^SKIP/i.test(s)) return { reason: 'SKIP' };
   if (/https?:|www\.|\.(ru|com|net|org)(?![a-z])/i.test(s)) return { reason: `ссылка: ${s}` };
   if (LEAK_RE.test(s)) return { reason: `стоп-слово: ${s}` };
-  if (QUEST_TALK_RE.test(s)) return { reason: `разговор о квестах: ${s}` };
-  if (MOB_TALK_RE.test(s)) return { reason: `разговор про ботов: ${s}` };
+  if (!askedAboutQuests && QUEST_TALK_RE.test(s)) return { reason: `разговор о квестах: ${s}` };
+  if (!askedAboutMobs && MOB_TALK_RE.test(s)) return { reason: `разговор про ботов: ${s}` };
   if (PROFANITY_RE.test(s)) return { reason: `грубость: ${s}` };
   s = s.replace(CRUDE_SMILES, '').replace(/\s{2,}/g, ' ').trim();
   if (s.length > max) s = s.slice(0, max).replace(/\s+\S*$/, '') + '…';
@@ -267,12 +286,15 @@ function handleChatTrigger(trigger, roomText) {
       + todayBlock()
       + affairsBlock()
       + adviceBlock(room)
+      // База знаний по игре: практика, которую мы замерили сами (lib/game_kb.js). Летописи ищет
+      // memory.recall, а здесь - где кто стоит, сколько стоит, как работает механика.
+      + kbBlock(said)
       + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
       + `<chat>\n${cleanInput(roomText, 1500)}\n</chat>`;
     const res = await askModel(user);
     if (!res.ok) { console.log(`Автоответ: ошибка вызова модели (${res.err})`); return; }
     const noteText = takeNote(res, nickRaw);
-    const f = filterReply(res.text);
+    const f = filterReply(res.text, { asked: said });
     if (!f.text) { console.log(`Автоответ: промолчал [${trigger.type}] (${f.reason})`); return; }
     let reply = f.text;
     const nick = cleanInput(trigger.nick, 30).trim();
