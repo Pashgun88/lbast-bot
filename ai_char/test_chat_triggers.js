@@ -66,8 +66,11 @@ check('ответ собеседника -> reply', tReplyOk.some((t) => t.type 
 const tReplyOther = detectChatTriggers(ROOM, [OURS, OLD], [fresh('Universe', 'а я вот рыбу жарю'), OURS, OLD], { quietForMs: 0, now });
 check('чужая реплика после нашей -> молчим', tReplyOther.length === 0, JSON.stringify(tReplyOther.map((t) => t.type)));
 
+// 16.10.2026: инициатива выключена (CHAT_INITIATIVE_ENABLED = false в lib/chat.js). Паша про
+// реплику в молчащий зал: «это к чему вообще было?» - говорить первым стало нечем, потому что
+// сводка дня и совет залу запрещены. Проверка перевёрнута: в тишине мы молчим.
 const tInit = detectChatTriggers(ROOM, prev, [OLD], { quietForMs: 120 * 60_000, lastInitiativeAt: 0, now });
-check('долгая тишина -> initiative', tInit.some((t) => t.type === 'initiative'), JSON.stringify(tInit.map((t) => t.type)));
+check('долгая тишина -> молчим (инициатива выключена)', !tInit.some((t) => t.type === 'initiative'), JSON.stringify(tInit.map((t) => t.type)));
 
 const tInitCooldown = detectChatTriggers(ROOM, prev, [OLD],
   { quietForMs: 120 * 60_000, lastInitiativeAt: now - 10 * 60_000, now });

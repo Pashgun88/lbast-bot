@@ -170,6 +170,14 @@ const CHAT_REACT_TO_ROOM = false;
 // \b в JS только ASCII. Для ника собеседника (m.nick) по-прежнему AI_SELF_NICK_RE - игрок с ником
 // вроде «Айкидо» не должен считаться нами.
 const AI_MENTION_RE = /(\bAI__\b|(^|[^а-яёА-ЯЁA-Za-z0-9_])[Аа]йк(а|у|ом|е)?(?![а-яёА-ЯЁA-Za-z0-9_]))/;
+// 16.10.2026, Паша про реплику «Сам наловил, сам пожарил, по мне так лучше любой лавки»:
+// «это к чему вообще было?» Это была инициатива - зал молчал 194 минуты, и модель взяла
+// единственное, что осталось в дневнике. Разбор всех инициатив за сутки показал, что они бывают
+// ровно двух видов: сводка дня и совет залу. Совет Паша запретил 10.10 («вообще не понятный
+// диалог»), сводку - 16.10 (квесты и боты). Говорить первым стало нечем, и инициатива выключена.
+// Ответы на обращение, приветствия и подхват ожившего разговора работают как раньше.
+// Вернуть - поставить true: остальной код на месте.
+const CHAT_INITIATIVE_ENABLED = false;
 const CHAT_INITIATIVE_QUIET_MS = 120 * 60_000;
 const CHAT_INITIATIVE_COOLDOWN_MS = 120 * 60_000;
 // 21.09.2026, Паша: «с 23 до 5 сон» - первым AI__ пишет только с 5:00 (было с 4:00).
@@ -272,7 +280,7 @@ function detectChatTriggers(roomInfo, prevMsgs, nextMsgs, opts = {}) {
   // подряд. Последнее сообщение AI__ в ленте переживает любые перезапуски.
   const ownLast = nextMsgs.find((m) => AI_SELF_NICK_RE.test(m.nick));
   const ownLastAgoMs = ownLast ? chatMessageAgeMinutes(ownLast, nowDate) * 60_000 : Infinity;
-  if (!firstObservation && fresh.length === 0
+  if (CHAT_INITIATIVE_ENABLED && !firstObservation && fresh.length === 0
       && Number.isFinite(quietForMs) && quietForMs >= CHAT_INITIATIVE_QUIET_MS
       && now - lastInitiativeAt >= CHAT_INITIATIVE_COOLDOWN_MS
       && ownLastAgoMs >= CHAT_INITIATIVE_COOLDOWN_MS
