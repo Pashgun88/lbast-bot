@@ -470,9 +470,13 @@ const SINGLE_FIGHT_STEPS = new Set([
 // 'Fish Eye step' убран 12.10.2026: см. TOO_STRONG_SINGLE_BOTS в lib/state.js - три нокаута за
 // утро. Шаг цикла и гейт квеста - два разных входа в один и тот же бой, закрывать нужно оба.
 // Кольцо раундов фарма: 7 горгулий на 3 молега (Паша, 13.10.2026), молеги расставлены вразбивку.
+// Кабан и бизон в фарме. Паша, 16.10.2026: «остается только молег и горгулья, кабан и бизон
+// только на дейлики». Фарм на кожи целиком остаётся в коде и включается переменной AI_FARM_SPOT=hides
+// (тогда farmSpot() !== 'moleg', и длинная фарм-сессия сама идёт по прежней ветке).
+const HIDE_FARM_ENABLED = process.env.AI_FARM_SPOT === 'hides';
 const FARM_ORDER = ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg'];
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Boar farm round', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -1206,6 +1210,12 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'Bison farm round', () => {
+        // 16.10.2026, Паша: «я же говорил что меняем точку фарма. Остается только молег и горгулья,
+        // кабан и бизон только на дейлики». Точку фарма он сменил ещё 04.10, но эти два раунда
+        // остались жить отдельно, ради кож для дубления, и каждый цикл отъедали бои. Выключены:
+        // в дейликах кабан и бизон вызываются своим кодом (lib/daily_quests.js) и работают как
+        // раньше. Вернуть фарм на кожи - AI_FARM_SPOT=hides, там вся прежняя ветка цела.
+        if (!HIDE_FARM_ENABLED) return Promise.resolve(false);
         if (!farmAllowed) return Promise.resolve(false);
         if (process.env.AI_DISABLE_PODVALY === '1') return Promise.resolve(false);
         // Равновесие кож соблюдаем и в одиночных раундах цикла, по последнему известному счёту.
@@ -1219,6 +1229,8 @@ async function loginIfNeeded(page) {
       if (r.ko) continue;
 
       r = await runCycleStep(page, 'Boar farm round', () => {
+        // Выключен вместе с бизоном 16.10.2026 - см. комментарий у шага «Bison farm round».
+        if (!HIDE_FARM_ENABLED) return Promise.resolve(false);
         // 23.09.2026 кабан был разрешён и в режиме без боёв, но 26.09.2026 Паша сузил список:
         // «кроме харчевни и бизона», то есть кабан теперь только в обычном режиме.
         if (!farmAllowedFull) return Promise.resolve(false);
