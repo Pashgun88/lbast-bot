@@ -474,7 +474,14 @@ async function runMolegFarmRound(page, buffed = false) {
   const low = (st) => typeof st.hpCurrent !== 'number' || typeof st.hpMax !== 'number'
     || st.hpCurrent <= 0 || st.hpCurrent < st.hpMax * floor;
   // Порог проверяем ДО дороги: гонять коня туда-обратно при низком HP бессмысленно.
-  if (low(stats)) return false;
+  // 16.10.2026: этот отказ был МОЛЧАЛИВЫМ, и в логе оставалось только «moleg недоступен» - я искал
+  // причину в игре и даже предположил, что бот не возрождается. Паша: «боты не возрождаются в этой
+  // игре... они всегда есть». Причина была здесь: порог молега 0.9 против 0.6 у горгульи, то есть
+  // почти всегда после горгульего боя молег сам себе запрещён. Теперь отказ называет себя.
+  if (low(stats)) {
+    console.log(`Moleg farm: HP ${stats.hpCurrent}/${stats.hpMax} ниже порога ${Math.round(floor * 100)}% - круг молега пропускаю.`);
+    return false;
+  }
 
   if (!isMolegLocation(await getBodyText(page))) {
     await goRouteToMoleg(page).catch((e) => console.log('Moleg farm: дорога не пройдена:', e.message));

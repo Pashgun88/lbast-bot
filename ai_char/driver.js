@@ -360,8 +360,28 @@ async function runFarmSession(page) {
       // Номер раунда двигаем ВСЕГДА, даже когда точка оказалась недоступна: иначе кулдаун одной
       // из них залипнет на ней же. Если выбранная не вышла, тут же пробуем другую - ждать минуту,
       // когда рядом есть доступный бой, незачем.
-      const pick = FARM_ORDER[S.farmRoundNo % FARM_ORDER.length];
+      // 16.10.2026. Кольцо просит 3 молега из 10, а выходило 1 на 19 горгулий. Причина не в игре
+      // (Паша: «боты не возрождаются в этой игре... они всегда есть»), а в порогах: молегу нужно
+      // 90% запаса, горгулье 60%. Сессия бьёт горгулий, пока HP не упало до 60%, и к моменту, когда
+      // кольцо называет молега, HP почти никогда не дотягивает до 90% - круг молега просто терялся.
+      // Теперь он не теряется, а записывается ДОЛГОМ: как только HP снова хватит, следующий бой
+      // будет молегом, независимо от того, что говорит кольцо.
+      let pick = FARM_ORDER[S.farmRoundNo % FARM_ORDER.length];
       S.farmRoundNo = (S.farmRoundNo + 1) % FARM_ORDER.length;
+      const molegFloor = require('./lib/farm').farmFloorFor('moleg');
+      // HP берём из st - замера, сделанного в начале этого же круга сессии (переменная stats
+      // здесь не существует, в сессии замер называется st).
+      const hpFrac = st && st.hpMax ? st.hpCurrent / st.hpMax : 0;
+      if (hpFrac >= molegFloor && (S.farmMolegDebt || 0) > 0) {
+        pick = 'moleg';
+        S.farmMolegDebt = Math.max(0, (S.farmMolegDebt || 0) - 1);
+        console.log(`Фарм-сессия: отдаю долг по молегу (осталось ${S.farmMolegDebt}), HP хватает.`);
+      } else if (pick === 'moleg' && hpFrac < molegFloor) {
+        // Долг копим, но не бесконечно: три круга - уже половина кольца, больше незачем.
+        S.farmMolegDebt = Math.min(3, (S.farmMolegDebt || 0) + 1);
+        console.log(`Фарм-сессия: молегу нужно ${Math.round(molegFloor * 100)}% HP, сейчас ${Math.round(hpFrac * 100)}% - беру горгулью, молег в долг (${S.farmMolegDebt}).`);
+        pick = 'gargoyle';
+      }
       try { require('./lib/state').persistDailyQuestState(); } catch (e) { /* не критично */ }
       const round = async (which) => {
         const fn = which === 'gargoyle' ? runGargoyleFarmRound : runMolegFarmRound;
