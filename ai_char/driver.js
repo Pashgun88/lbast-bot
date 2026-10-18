@@ -274,6 +274,16 @@ async function runFarmSession(page) {
   let lastMailAt = Date.now();
   console.log(`Фарм-сессия: ${FARM_SESSION_MIN} мин (до ${new Date(deadline).toLocaleTimeString('ru-RU')}).`);
   while (Date.now() < deadline && !isSleepTime()) {
+    // 18.10.2026. Паша попросил голема на 18:11:36, а шла часовая фарм-сессия (до 19:06) - и до
+    // шага «Голем по просьбе» цикл не дошёл бы вовсе. Гейт «не начинать фарм перед големом» стоял
+    // только ПЕРЕД сессией, а уже начатая сессия про голема ничего не знала. Пришлось гасить
+    // драйвер руками, и я опоздал на десять секунд.
+    // Поэтому проверка стоит здесь, первой в круге сессии, и БЕЗ условия «хотя бы один бой»:
+    // просьба Паши в названную секунду важнее любого круга фарма.
+    if (golemDueWithinMs(GOLEM_CLEAR_AHEAD_MS)) {
+      console.log('Фарм-сессия: подошёл голем по просьбе - прерываю фарм немедленно, вернусь после.');
+      break;
+    }
     // 23.09.2026, Паша: «рыбий глаз перестал делаться сегодня». Сессия фарма длится час, а Рыбий
     // глаз повторяется каждые 25 минут, камни Драбаса - раз в 3 часа: внутри сессии их никто не
     // звал, и за час они просто пропадали. Подошёл срок - выходим из фарма, общий круг их сделает
@@ -324,7 +334,17 @@ async function runFarmSession(page) {
       await withHangGuard(page, 'кухня', 5 * 60_000, () => fryFishWhileHealing(page, firstSt).catch(() => {}));
       let lastHealLog = Date.now();
       for (;;) {
-        await new Promise((r) => setTimeout(r, 120_000));
+        // Шаг ожидания 30 секунд, а не две минуты: из лечения надо успеть выйти к назначенному
+        // голему, а лечение длится до двадцати минут. Замер HP всё равно делается не чаще,
+        // чем раз в две минуты (healTick), - лишних запросов к игре нет.
+        for (let healTick = 0; healTick < 4; healTick += 1) {
+          await new Promise((r) => setTimeout(r, 30_000));
+          if (golemDueWithinMs(GOLEM_CLEAR_AHEAD_MS)) break;
+        }
+        if (golemDueWithinMs(GOLEM_CLEAR_AHEAD_MS)) {
+          console.log('Лечение в сессии: подошёл голем по просьбе - выхожу из лечения.');
+          break;
+        }
         beat(); // долгое лечение - это жизнь, а не зависание
         const h = await readLocationStats(page);
         if (typeof h.hpCurrent !== 'number') break;
