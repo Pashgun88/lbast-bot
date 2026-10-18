@@ -23,6 +23,7 @@
 module.exports = {
   runGolemRequestsIfDue, enqueueGolemRequest, readGolemQueue, golemDueWithinMs,
   parseGolemRequest, classifyGolemMessage, cancelGolemRequests,
+  serverSkewMs,
 };
 
 const fs = require('fs');
@@ -293,6 +294,33 @@ async function applyGolemElixir(page, target) {
   return true;
 }
 
+// Время сервера. Нажимать надо по часам ИГРЫ, а не по своим: в шапке любой страницы стоит
+// «18:11:47, Вс», и если наши часы ушли на пару секунд, промах будет ровно на эту пару секунд.
+// Возвращает поправку в миллисекундах: сколько прибавить к нашему времени, чтобы получить игровое.
+function serverSkewMs(pageText) {
+  const m = String(pageText || '').match(/(\d{1,2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const now = new Date();
+  const srv = new Date(now);
+  srv.setHours(Number(m[1]), Number(m[2]), Number(m[3]), 0);
+  // В шапке нет миллисекунд, она обрезана: настоящее время сервера лежит где-то в пределах этой
+  // секунды. Поэтому прибавляем половину секунды - в среднем это ближе к правде, чем ноль.
+  let d = srv.getTime() + 500 - now.getTime();
+  // Через полночь разница выглядит как почти сутки - сворачиваем в ближайшую сторону.
+  if (d > 12 * 3600 * 1000) d -= 24 * 3600 * 1000;
+  if (d < -12 * 3600 * 1000) d += 24 * 3600 * 1000;
+  // Больше минуты расхождения - это не часы, а разбор не того числа. Не верим.
+  return Math.abs(d) > 60_000 ? null : d;
+}
+
+// За сколько до секунды открываем и заполняем форму. 18.10.2026 я опоздал на 10 секунд именно
+// потому, что прежний код СНАЧАЛА ждал названную секунду и ТОЛЬКО ПОТОМ искал эликсир по сумке
+// (до восьми загрузок страниц) и открывал форму. Теперь наоборот: всё тяжёлое делается заранее, а в
+// названную секунду остаётся один клик по готовой форме.
+const GOLEM_ARM_LEAD_MS = 40_000;
+// Насколько раньше жать, чтобы запрос ушёл вовремя: клик -> POST идёт по сети, это десятки мс.
+const GOLEM_CLICK_LEAD_MS = Number(process.env.AI_GOLEM_CLICK_LEAD_MS || 150);
+
 async function runGolemRequestsIfDue(page) {
   const q = readGolemQueue();
   if (q.length === 0) return false;
@@ -305,13 +333,69 @@ async function runGolemRequestsIfDue(page) {
     writeGolemQueue(q.filter((r) => r !== due));
     return false;
   }
-  // Ждём названную секунду на месте: цикл драйвера длинный, другого способа попасть в точное
-  // время нет. Ожидание ограничено GOLEM_CLEAR_AHEAD_MS, то есть пятью минутами.
-  while (Date.now() < at - 300) {
-    await page.waitForTimeout(Math.min(2000, at - Date.now()));
-  }
+  // Просьбу снимаем из очереди СРАЗУ: иначе при сбое посреди подготовки она останется и будет
+  // исполнена во второй раз, когда уже не нужна.
   writeGolemQueue(q.filter((r) => r !== due));
-  return applyGolemElixir(page, due.target);
+
+  if (!due.target) {
+    console.log('ГОЛЕМ НЕ СДЕЛАН: в просьбе нет ника и непонятно, на кого применять.');
+    return false;
+  }
+  // Ник проверяем заранее, в запас времени, а не в названную секунду.
+  if (!(await nickExists(page, due.target))) {
+    console.log(`ГОЛЕМ НЕ СДЕЛАН: ник «${due.target}» не подтвердился, эликсир не трачу.`);
+    return false;
+  }
+
+  // Ждём до момента «пора готовиться». Если просьба «сразу», ждать нечего.
+  while (Date.now() < at - GOLEM_ARM_LEAD_MS) {
+    await page.waitForTimeout(Math.min(5000, at - GOLEM_ARM_LEAD_MS - Date.now()));
+  }
+
+  const href = await findElixirUseHref(page);
+  if (!href) {
+    console.log(`ГОЛЕМ НЕ СДЕЛАН: «${ELIXIR_NAME}» в сумке не найден (цель «${due.target}»).`);
+    return false;
+  }
+  await page.goto(new URL(href, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const armedText = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+  const field = await page.$('input[name=lgn]');
+  if (!field) {
+    console.log(`ГОЛЕМ: поля «Логин» (input[name=lgn]) на странице применения нет. Ответ страницы: ${armedText.slice(0, 300)}`);
+    return false;
+  }
+  await field.fill(String(due.target));
+  const btn = await page.$('input[type=submit]');
+  if (!btn) {
+    console.log('ГОЛЕМ: кнопки отправки на форме нет.');
+    return false;
+  }
+  const skew = serverSkewMs(armedText);
+  const target = at - (skew === null ? 0 : skew) - GOLEM_CLICK_LEAD_MS;
+  console.log(`Голем: форма готова на «${due.target}», жму в ${new Date(at).toLocaleTimeString('ru-RU')}`
+    + ` по часам игры (поправка ${skew === null ? 'не прочиталась' : `${skew} мс`}).`);
+
+  // Последние секунды досыпаем мелкими шагами: setTimeout на минуту может проснуться позже, а
+  // точность нам нужна в пределах секунды.
+  while (Date.now() < target - 1500) await page.waitForTimeout(500);
+  while (Date.now() < target) await page.waitForTimeout(10);
+
+  await btn.click({ timeout: 10000 }).catch((e) => console.log('Голем: клик не прошёл:', e.message));
+  const clickedAt = new Date();
+  await pause(page, 900, 1500);
+  let text = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+  if (/Вы точно|Подтверд/i.test(text)) {
+    const yes = await page.$('input[type=submit]');
+    if (yes) await yes.click({ timeout: 10000 }).catch(() => {});
+    await pause(page, 800, 1400);
+    text = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+  }
+  S.golemUsedAt = Date.now();
+  S.golemLastTarget = String(due.target);
+  const offBy = Math.round((clickedAt.getTime() + (skew || 0) - at) / 10) / 100;
+  console.log(`ГОЛЕМ на «${due.target}»: нажал в ${clickedAt.toLocaleTimeString('ru-RU')}.${String(clickedAt.getMilliseconds()).padStart(3, '0')}`
+    + ` (отклонение ${offBy} с). Ответ игры: ${text.slice(0, 300)}`);
+  return true;
 }
 
 // Константы - после объявления (см. комментарий к module.exports выше).

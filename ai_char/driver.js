@@ -611,6 +611,13 @@ async function runCycleStep(page, label, fn) {
   beat(); // пульс главного цикла для внешнего сторожа: чат его не поддерживает
   const fightMode = getFightMode();
   // 23.09.2026, Паша: в режиме без боёв, кроме бизона, разрешён кабан («харчевня... потом кабана»).
+  // Тихое окно перед големом. 18.10.2026: мало прервать фарм - нельзя и НАЧИНАТЬ новый бой за две
+  // минуты до названной секунды, иначе один ход в бою (до 70 секунд) съест всё время. Квестовые бои
+  // и дейлики тоже ждут: просьба Паши точна до секунды, а они - нет.
+  if ((CHAIN_FIGHT_STEPS.has(label) || SINGLE_FIGHT_STEPS.has(label)) && golemDueWithinMs(2 * 60_000)) {
+    console.log(`Шаг "${label}" пропускаю: до голема по просьбе меньше двух минут, в это время нужно быть свободным.`);
+    return { didAnything: false, ko: false };
+  }
   const blocked = fightMode === 'none' ? ((CHAIN_FIGHT_STEPS.has(label) || SINGLE_FIGHT_STEPS.has(label)) && !NONE_MODE_ALLOWED_STEPS.has(label))
     : fightMode === 'single' ? CHAIN_FIGHT_STEPS.has(label) : false;
   if (blocked) {
