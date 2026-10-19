@@ -45,7 +45,9 @@ async function clickByLinkPrefix(page, prefix) {
 async function sellFriedFishIfDue(page) {
   if (Date.now() - S.lastFishSaleAt < FISH_SALE_INTERVAL_MS) return false;
 
-  console.log('Продажа рыбы: раз в 3 дня - Стоунгард -> Магазин -> Лавка боевых ресурсов -> Продать.');
+  // «Раз в 3 дня» - след первого замера; на самом деле FISH_SALE_INTERVAL_MS = час (Паша, 25.09:
+  // «продавай всегда все что можно»). Строку поправил 19.10.2026: она вводила в заблуждение.
+  console.log('Продажа в лавке: заход раз в час - Стоунгард -> Магазин -> Лавка боевых ресурсов -> Продать.');
   await page.goto(STONEGUARD_FASTWAY, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(6000); // перелёт амулетом
   await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -101,7 +103,19 @@ async function sellFriedFishIfDue(page) {
   // медальойны». Значит правка 05.10 («предметы теперь можно продать») отменена: «Медальон бандита»
   // и «Костяная цепь бандита» возвращаются в защиту лавки - в магазин они не идут вообще, сбыт
   // только игрокам через объявления (lib/ordo_ads.js). Слово «ордо» их не ловит: в названиях его нет.
-  const PROTECTED_RE = /(медальон|костяная цепь|кольцо|ордо|руна|эликсир|амулет|вырви|брага|браги|хмел|удочк|удилищ|снаст|арайя|пустолист|травии|прере|кактус|молодиц|змеевик|вишн|краст|язык призрачного|зуб горгул|крыло василиск|грамота|свиток|карась|камень|камни|кинжал|тесак|меч|щит|шлем|доспех|сапоги|броня|пояс|подсумок|набор|четки|чётки|картина|часы)/i;
+  // 19.10.2026, Паша: «брагу продавай, держи у себя 2 штуки. праздничный эль так же». Это третий
+  // режим, которого раньше не было: не «продаём всё» и не «держим всё», а ОСТАВЛЯЕМ ЗАПАС.
+  // Поэтому брага и эль уходят из полного запрета сюда: продаём всё сверх двух штук.
+  // Хмель остаётся под полным запретом - из него варится брага, и про него речи не было.
+  const KEEP_SOME = [
+    { re: /брага|браги/i, keep: 2 },
+    { re: /праздничный\s+эль|(?:^|[^а-яё])эль(?![а-яё])/i, keep: 2 },
+  ];
+  const keepFor = (name) => {
+    const r = KEEP_SOME.find((x) => x.re.test(name));
+    return r ? r.keep : 0;
+  };
+  const PROTECTED_RE = /(медальон|костяная цепь|кольцо|ордо|руна|эликсир|амулет|вырви|хмел|удочк|удилищ|снаст|арайя|пустолист|травии|прере|кактус|молодиц|змеевик|вишн|краст|язык призрачного|зуб горгул|крыло василиск|грамота|свиток|карась|камень|камни|кинжал|тесак|меч|щит|шлем|доспех|сапоги|броня|пояс|подсумок|набор|четки|чётки|картина|часы)/i;
   const ITEM_RE = /([^\n\[]{3,60}?)\s*\[(\d+)\]\s*-\s*(\d+)\s*дин/g;
   // Паша, 28.09.2026: «выделаные кожи не забывай тоже продавать». Они и не продавались: список лавки
   // РАЗБИТ НА СТРАНИЦЫ (shop.php?mod=prodat&cpage=N), а читалась только первая - всё, что не попало
@@ -141,8 +155,16 @@ async function sellFriedFishIfDue(page) {
     persistDailyQuestState();
     return true;
   }
-  const toSell = offered.filter((it) => !PROTECTED_RE.test(it.name) && !NEVER_SELL_RE.test(it.name));
-  const kept = offered.filter((it) => PROTECTED_RE.test(it.name) || NEVER_SELL_RE.test(it.name));
+  const banned = (it) => PROTECTED_RE.test(it.name) || NEVER_SELL_RE.test(it.name);
+  // Для позиции с резервом продаём количество СВЕРХ запаса, а не всю позицию.
+  const toSell = offered.filter((it) => !banned(it))
+    .map((it) => ({ ...it, keep: keepFor(it.name), sellQty: Math.max(0, it.qty - keepFor(it.name)) }))
+    .filter((it) => it.sellQty > 0);
+  const kept = offered.filter((it) => banned(it));
+  const keptPartly = offered.filter((it) => !banned(it) && keepFor(it.name) > 0);
+  if (keptPartly.length) {
+    console.log(`Продажа в лавке: держу запас - ${keptPartly.map((k) => `${k.name}: ${Math.min(k.qty, keepFor(k.name))} из ${k.qty}`).join(', ')}.`);
+  }
   if (kept.length) {
     console.log(`Продажа в лавке: не продаю (нужны нам): ${kept.map((k) => `${k.name} x${k.qty}`).join(', ').slice(0, 200)}`);
   }
@@ -152,7 +174,7 @@ async function sellFriedFishIfDue(page) {
     persistDailyQuestState();
     return true;
   }
-  console.log(`Продажа в лавке: продаю ${toSell.map((it) => `${it.name} x${it.qty} по ${it.price}`).join('; ').slice(0, 300)}`);
+  console.log(`Продажа в лавке: продаю ${toSell.map((it) => `${it.name} x${it.sellQty}${it.keep ? ` (из ${it.qty}, ${it.keep} оставляю)` : ''} по ${it.price}`).join('; ').slice(0, 300)}`);
 
   let sold = 0;
   let earned = 0;
@@ -167,7 +189,9 @@ async function sellFriedFishIfDue(page) {
       continue;
     }
     let n = 0;
-    for (let i = 0; i < MAX_SALES; i++) {
+    // Предел продажи этой позиции - сколько можно продать сверх резерва.
+    const limit = Math.min(MAX_SALES, item.sellQty);
+    for (let i = 0; i < limit; i++) {
       const t = await getBodyText(page);
       if (/товар отсутствует/i.test(t)) break;
       if (!/Продажа успешна/i.test(t)) {
@@ -175,11 +199,13 @@ async function sellFriedFishIfDue(page) {
         break;
       }
       n += 1;
+      // Дожали до резерва - дальше не продаём, даже если ссылка «Ещё» на странице есть.
+      if (n >= limit) break;
       if (!(await clickLinkText(page, /^Е[щш]е$|^Ещё$/))) break;
     }
     sold += n;
     earned += n * item.price;
-    console.log(`Продажа в лавке: ${item.name} - продано ${n} шт. по ${item.price} дин.`);
+    console.log(`Продажа в лавке: ${item.name} - продано ${n} шт. по ${item.price} дин${item.keep ? `, в сумке оставляю ${item.keep}` : ''}.`);
     // После «товар отсутствует» мы уже не в списке - возвращаемся к нему для следующей позиции.
     await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
     for (const re of [/^Магазин$/, /^Лавка боевых ресурсов$/, /^Продать$/]) await clickLinkText(page, re);
