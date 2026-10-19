@@ -1310,6 +1310,14 @@ async function loginIfNeeded(page) {
           return false;
         });
         didAnything = didAnything || farmed;
+        // 19.10.2026: сессия теперь сама прерывается на подошедший голем, но шаг «Голем по просьбе»
+        // стоит в НАЧАЛЕ круга - и после выхода из сессии цикл шёл по остальным шагам, а просьба
+        // ждала следующего круга. Так я 18.10 и пропустил 18:51:48. Поэтому сразу после сессии:
+        if (golemDueWithinMs(GOLEM_CLEAR_AHEAD_MS)) {
+          r = await runCycleStep(page, 'Голем по просьбе (сразу после фарма)', () => runGolemRequestsIfDue(page));
+          didAnything = didAnything || r.didAnything;
+          if (r.ko) continue;
+        }
       }
 
       if (Number.isFinite(stats.questsAvailable) && stats.questsAvailable > 0) {
@@ -1404,6 +1412,9 @@ async function loginIfNeeded(page) {
             console.log('Фарм-сессия (из простоя) упала:', e.message);
             return false;
           });
+          if (golemDueWithinMs(GOLEM_CLEAR_AHEAD_MS)) {
+            await runGolemRequestsIfDue(page).catch((e) => console.log('Голем после простоя:', e.message));
+          }
           if (farmedIdle) {
             idleStreak = 0;
             await pause(page, 800, 1500);

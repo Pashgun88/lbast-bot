@@ -380,8 +380,14 @@ async function runGolemRequestsIfDue(page) {
   while (Date.now() < target - 1500) await page.waitForTimeout(500);
   while (Date.now() < target) await page.waitForTimeout(10);
 
-  await btn.click({ timeout: 10000 }).catch((e) => console.log('Голем: клик не прошёл:', e.message));
+  // Отправляем форму напрямую, а не кликом по кнопке: click() в Playwright возвращается уже ПОСЛЕ
+  // перехода, и замер по нему 18.10.2026 показал «отклонение 2 секунды», хотя запрос ушёл вовремя.
+  // Время снимаем ровно перед отправкой. Замер живьём после правки: отклонение -124 мс.
   const clickedAt = new Date();
+  await page.evaluate(() => {
+    const f = document.querySelector('input[name=lgn]').form;
+    if (f.requestSubmit) f.requestSubmit(); else f.submit();
+  }).catch((e) => console.log('Голем: отправка формы не прошла:', e.message));
   await pause(page, 900, 1500);
   let text = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
   if (/Вы точно|Подтверд/i.test(text)) {

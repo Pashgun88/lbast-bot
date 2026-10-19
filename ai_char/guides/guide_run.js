@@ -101,11 +101,27 @@ async function inScene(page) {
 // «Подойти ближе» честно сказал mismatch. То же самое было у сапёра - лечим только отдельной вкладкой.
 // Ждём, отмечаясь пульсом каждые пять минут: один сон на полчаса (лечение с нуля - это 33 минуты
 // при 14 hp/мин) внешний сторож 01.10.2026 принял за зависание и перезапустил рабочий драйвер.
+// 19.10.2026. Паша попросил голема на 12:39, а драйвер в это время спал в сцене квеста 19 минут,
+// дожидаясь лечения, - и просьбу бы пропустил. Этот сон - самое длинное ожидание во всём драйвере,
+// поэтому он тоже обязан просыпаться к назначенной секунде. Шаг сна сделан коротким, а флаг
+// golemWokeUs говорит вызывающему, что ждать больше нельзя.
+let golemWokeUs = false;
+function golemDueSoon() {
+  try {
+    const { golemDueWithinMs, GOLEM_CLEAR_AHEAD_MS } = require('../lib/golem');
+    return golemDueWithinMs(GOLEM_CLEAR_AHEAD_MS);
+  } catch (e) { return false; }
+}
 async function sleepBeating(ms) {
   const until = Date.now() + ms;
   do {
     beat();
-    await sleep(Math.min(5 * 60000, Math.max(1000, until - Date.now())));
+    if (golemDueSoon()) {
+      golemWokeUs = true;
+      console.log('Ожидание в сцене: подошёл голем по просьбе - прекращаю ждать.');
+      return;
+    }
+    await sleep(Math.min(30000, Math.max(1000, until - Date.now())));
   } while (Date.now() < until);
   beat();
 }
@@ -119,7 +135,11 @@ async function healQuietly(page, frac) {
     const rate = s.rate > 0 ? s.rate : 14;
     const ms = Math.ceil(((target - s.hp) / rate) * 60000) + 10000;
     console.log(`HP ${s.hp}/${s.max}, нужно ${target}, ${rate}/мин -> жду ${Math.round(ms / 1000)}с в сцене`);
+    golemWokeUs = false;
     await sleepBeating(ms);
+    // Голем важнее одного шага маршрута: выходим из лечения, маршрут возобновится следующим кругом
+    // (сцены квестов между заходами сохраняются - на этом построен весь раннер).
+    if (golemWokeUs) return null;
   }
   return null;
 }
