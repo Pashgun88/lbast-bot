@@ -27,6 +27,12 @@ const EVERY_MS = 2 * 24 * 60 * 60 * 1000;
 const RETRY_MS = 60 * 60 * 1000;
 const NAME_RE = /^эликсир каменного голема$/i;
 
+// 20.10.2026, поправка Паши: «в клан магазин только то что принимает, рыбу в лавку боевых
+// ресурсов». Значит привычку сдавать эликсиры нельзя включать, пока не известно, берёт ли их
+// клановый магазин: первые две штуки уже предложены казне по 40 - по её ответу и узнаем.
+// Пока ответа нет, шаг молчит (включается AI_GOLEM_ELIXIR_HANDIN=1).
+const HANDIN_ENABLED = process.env.AI_GOLEM_ELIXIR_HANDIN === '1';
+
 // Эликсир лежит на второй странице сумки, поэтому обе и смотрим.
 const BAG_PAGES = [`inv.php?lgn=${NICK}`, `inv.php?lgn=${NICK}&cpage=2`, `inv.php?lgn=${NICK}&cpage=3`];
 
@@ -76,6 +82,7 @@ async function sendOne(page, stack, qty) {
 }
 
 async function sendGolemElixirsIfDue(page) {
+  if (!HANDIN_ENABLED) return false; // ждём слова Паши, берёт ли клановый магазин эликсиры
   const now = Date.now();
   if (now - (S.golemElixirSentAt || 0) < EVERY_MS) return false;
   if (now - (S.golemElixirTriedAt || 0) < RETRY_MS) return false;
