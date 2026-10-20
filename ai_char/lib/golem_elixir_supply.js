@@ -7,8 +7,8 @@
 // (inv.php?lgn=...), «Передать» -> форма kol/price/cmnp. Цена в форме - ОБЩАЯ за пачку.
 // Успех проверяем ПО ИГРЕ (перечитываем сумку), а не по тексту ответа - урок 09.10.2026.
 //
-// Цена: 40 дин за штуку - это цена самой вещи в игре. Своего числа не придумываю: Паша назовёт -
-// поправлю через AI_GOLEM_ELIXIR_PRICE.
+// Цена: 280 дин за штуку - назвал Паша (20.10.2026). В игре вещь стоит 40, то есть казна платит
+// за эликсир семь цен - как с черепами (2 в магазине, 70 в казну).
 //
 // Срок «раз в 2 дня» и порог «не меньше 2 штук излишка» - из того же урока с черепами: мелкие
 // посылки по одной штуке Паша просил не делать. Варка даёт примерно один эликсир в сутки, значит
@@ -20,7 +20,7 @@ const { S, persistDailyQuestState } = require('./state');
 const { getBodyText, pause } = require('./core');
 
 const NICK = process.env.AI_CLAN_SHOP_NICK || process.env.AI_SKULL_NICK || 'Bogi_vojny';
-const PRICE_PER_ITEM = Number(process.env.AI_GOLEM_ELIXIR_PRICE || 40);
+const PRICE_PER_ITEM = Number(process.env.AI_GOLEM_ELIXIR_PRICE || 280); // Паша, 20.10.2026: «цена - 280»
 const KEEP = Number(process.env.AI_GOLEM_ELIXIR_KEEP || 2);
 const MIN_SURPLUS = Number(process.env.AI_GOLEM_ELIXIR_MIN || 5); // Паша, 20.10.2026: «передавай в казну но от 5 штук»
 const EVERY_MS = 2 * 24 * 60 * 60 * 1000;
