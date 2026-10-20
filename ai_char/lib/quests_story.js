@@ -455,6 +455,19 @@ async function progressOrdoQuest(page, q) {
     S.ordoDeadRideUntil = Date.now() + 30 * 60 * 1000;
     return false;
   }
+  if (!ORDO_REPORT_ENABLED) {
+    // Бой пройден (опыт получен), доклад запрещён - освобождаем слот отказом и идём дальше.
+    console.log(`${q.label}: бой пройден. Доклад не делаю (Паша: «просто не делай доклады»), освобождаю слот отказом.`);
+    const dropped = await require('./quest_menu').dropCurrentAssignment(page, `${q.label}: доклады Ордо запрещены`).catch((e) => {
+      console.log(`${q.label}: отказ от задания не вышел: ${e.message}`);
+      return false;
+    });
+    S.ordoTaskTakenLabel = null;
+    S.ordoTaskTakenAt = 0;
+    if (dropped) require('./task_slot').forgetSlotOwner();
+    else console.log(`${q.label}: ВНИМАНИЕ - слот мог остаться занятым, смотри следующий круг.`);
+    return true;
+  }
   console.log(`${q.label}: бой пройден, иду докладывать в башню.`);
   await walkToOrdoTower(page);
   await reportOrdoTaskHere(page, q.label);
@@ -470,11 +483,19 @@ async function progressOrdoQuest(page, q) {
 // взятое и не сданное задание держит единственный слот задания, а это остановило бы Штольни,
 // Бунгало, Варьете, Колодец и половину квестов (урок feedback_order_covers_all_callsites -
 // запрет должен закрывать и то, что без него теряет смысл).
-const ORDO_QUEST_LINE_ENABLED = false;
+// 20.10.2026, уточнение Паши: «взятие заданий Ордо - это делается, так?» Да, делается: он ещё
+// 07.10 сказал «в башню все еще ходим за заданиями». Я же, выключая доклады, снёс и взятие -
+// лишнее. Поэтому флага два, и у них разная судьба:
+const ORDO_TAKE_ENABLED = true;    // задания берём и проходим: бой даёт опыт и мораль
+const ORDO_REPORT_ENABLED = false; // доклад НЕ делаем: ровно он и выдаёт медаль
+// Без доклада задание остаётся в слоте, а слот один на всё (Штольни, Бунгало, Варьете, Колодец).
+// Поэтому после пройденного боя слот освобождаем отказом (анкета, mod=dropquest) - медали за это
+// не дают, а слот снова свободен. Отказ целимся по href, НЕ по тексту «отказаться»: рядом в анкете
+// стоит строка Статуи славы, и клик по надписи однажды снял её бафф.
 
 // Стоим в башне Ордо. «Доложить о выполнении задания» - мораль +3, медаль, 7 дин, слот свободен.
 async function reportOrdoTaskHere(page, label) {
-  if (!ORDO_QUEST_LINE_ENABLED) {
+  if (!ORDO_REPORT_ENABLED) {
     console.log(`${label}: доклад не делаю - Паша запретил доклады Ордо (20.10.2026), медали больше не копим.`);
     return false;
   }
@@ -664,12 +685,16 @@ async function runOrdoMedalTurnIn(page) {
 // весь день «Ордо: жду, пока возьмётся задание на демона». Ожидание убрано.
 let ordoLineOffLogged = false;
 async function runOrdoQuestsIfAvailable(page) {
-  if (!ORDO_QUEST_LINE_ENABLED) {
+  if (!ORDO_TAKE_ENABLED) {
     if (!ordoLineOffLogged) {
       ordoLineOffLogged = true;
-      console.log('Ордо: задания не беру и не докладываю (Паша, 20.10.2026: «просто не делай доклады»). Задание без доклада держало бы слот, поэтому выключена вся линия. Обмен медалей и предметов выключен с 09.10.');
+      console.log('Ордо: задания не беру (выключено флагом ORDO_TAKE_ENABLED).');
     }
     return false;
+  }
+  if (!ordoLineOffLogged) {
+    ordoLineOffLogged = true;
+    console.log('Ордо: задания беру и прохожу, доклад НЕ делаю (Паша, 20.10.2026) - после боя освобождаю слот отказом. Медалей за это не дают. Обмен медалей и предметов выключен с 09.10.');
   }
   if (!(await resetToQuestMenu(page))) return false;
   await pause(page, 700, 1300);
