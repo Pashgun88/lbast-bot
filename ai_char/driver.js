@@ -533,7 +533,7 @@ const FARM_ORDER = MOLEG_ENABLED
   : ['gargoyle'];
 
 const NONE_MODE_ALLOWED_STEPS = new Set(['Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
-  'Эликсиры голема в клановый магазин',
+  'Эликсиры голема в казну',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -1053,8 +1053,8 @@ async function loginIfNeeded(page) {
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
-      // Эликсиры каменного голема: себе 2, остальное в клановый магазин (Паша, 20.10.2026).
-      r = await runCycleStep(page, 'Эликсиры голема в клановый магазин', () => sendGolemElixirsIfDue(page));
+      // Эликсиры каменного голема: себе 2, излишек от 5 штук - передачей в казну клана (Паша, 20.10.2026).
+      r = await runCycleStep(page, 'Эликсиры голема в казну', () => sendGolemElixirsIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

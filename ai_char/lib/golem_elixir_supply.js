@@ -1,4 +1,4 @@
-// Эликсиры каменного голема - излишки в клановый магазин.
+// Эликсиры каменного голема - излишки в казну клана.
 // Паша, 20.10.2026: «по поводу эликсира каменного голема, оставляй у себя 2, остальное сдавай в
 // клановый магазин, как рыбу и черепа». У себя держим ровно KEEP штук - это запас под просьбы
 // «нужен голем» (lib/golem.js), их тратить нельзя.
@@ -22,16 +22,21 @@ const { getBodyText, pause } = require('./core');
 const NICK = process.env.AI_CLAN_SHOP_NICK || process.env.AI_SKULL_NICK || 'Bogi_vojny';
 const PRICE_PER_ITEM = Number(process.env.AI_GOLEM_ELIXIR_PRICE || 40);
 const KEEP = Number(process.env.AI_GOLEM_ELIXIR_KEEP || 2);
-const MIN_SURPLUS = Number(process.env.AI_GOLEM_ELIXIR_MIN || 2);
+const MIN_SURPLUS = Number(process.env.AI_GOLEM_ELIXIR_MIN || 5); // Паша, 20.10.2026: «передавай в казну но от 5 штук»
 const EVERY_MS = 2 * 24 * 60 * 60 * 1000;
 const RETRY_MS = 60 * 60 * 1000;
 const NAME_RE = /^эликсир каменного голема$/i;
 
-// 20.10.2026, поправка Паши: «в клан магазин только то что принимает, рыбу в лавку боевых
-// ресурсов». Значит привычку сдавать эликсиры нельзя включать, пока не известно, берёт ли их
-// клановый магазин: первые две штуки уже предложены казне по 40 - по её ответу и узнаем.
-// Пока ответа нет, шаг молчит (включается AI_GOLEM_ELIXIR_HANDIN=1).
-const HANDIN_ENABLED = process.env.AI_GOLEM_ELIXIR_HANDIN === '1';
+// Куда именно сдавать - выяснилось в три приёма (всё 20.10.2026):
+//  1) «оставляй у себя 2, остальное сдавай в клановый магазин, как рыбу и черепа»;
+//  2) «ошибся, в клан магазин только то что принимает, рыбу в лавку боевых ресурсов» - и проверка
+//     показала, что эликсир голема не берёт никто: клановый магазин (Стоунгард, shop.php?flag=clan_shop)
+//     работает только на покупку и держит четыре вида товара, лавка боевых ресурсов эликсир не выкупает;
+//  3) «значит опять ошибся, передавай в казну но от 5 штук» - то есть сдаём ПЕРЕДАЧЕЙ казне клана,
+//     как черепа, и посылка должна быть не меньше пяти штук.
+// Итог: на руках держим KEEP штук под просьбы «нужен голем», а излишек уходит казне, когда его
+// наберётся не меньше MIN_SURPLUS. Варка даёт примерно один эликсир в сутки, значит посылка
+// случается примерно раз в неделю - мелкими передачами казну не беспокоим (урок черепов).
 
 // Эликсир лежит на второй странице сумки, поэтому обе и смотрим.
 const BAG_PAGES = [`inv.php?lgn=${NICK}`, `inv.php?lgn=${NICK}&cpage=2`, `inv.php?lgn=${NICK}&cpage=3`];
@@ -72,7 +77,7 @@ async function sendOne(page, stack, qty) {
   await page.goto(new URL(stack.pered, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.locator('input[name="kol"]').fill(String(qty));
   await page.locator('input[name="price"]').fill(String(total));
-  await page.locator('input[name="cmnp"]').fill(`эликсиры каменного голема в клановый магазин, ${PRICE_PER_ITEM} за штуку`).catch(() => {});
+  await page.locator('input[name="cmnp"]').fill(`эликсиры каменного голема в казну клана, ${PRICE_PER_ITEM} за штуку`).catch(() => {});
   await Promise.all([
     page.waitForLoadState('domcontentloaded'),
     page.locator('input[type="submit"]').first().click(),
@@ -82,7 +87,6 @@ async function sendOne(page, stack, qty) {
 }
 
 async function sendGolemElixirsIfDue(page) {
-  if (!HANDIN_ENABLED) return false; // ждём слова Паши, берёт ли клановый магазин эликсиры
   const now = Date.now();
   if (now - (S.golemElixirSentAt || 0) < EVERY_MS) return false;
   if (now - (S.golemElixirTriedAt || 0) < RETRY_MS) return false;
@@ -118,7 +122,7 @@ async function sendGolemElixirsIfDue(page) {
   if (after <= KEEP) {
     S.golemElixirSentAt = Date.now();
     persistDailyQuestState();
-    console.log(`Эликсиры голема: сдал ${sent} шт в клановый магазин (${NICK}) за ${money} дин, по ${PRICE_PER_ITEM}; себе оставил ${after}.`);
+    console.log(`Эликсиры голема: сдал ${sent} шт в казну клана (${NICK}) за ${money} дин, по ${PRICE_PER_ITEM}; себе оставил ${after}.`);
     return true;
   }
   console.log(`Эликсиры голема: было ${have}, сдал ${sent}, на руках ${after} (держим ${KEEP}) - попробую через час.`);
