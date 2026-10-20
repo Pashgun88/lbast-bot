@@ -456,16 +456,17 @@ async function progressOrdoQuest(page, q) {
     return false;
   }
   if (!ORDO_REPORT_ENABLED) {
-    // Бой пройден (опыт получен), доклад запрещён - освобождаем слот отказом и идём дальше.
-    console.log(`${q.label}: бой пройден. Доклад не делаю (Паша: «просто не делай доклады»), освобождаю слот отказом.`);
-    const dropped = await require('./quest_menu').dropCurrentAssignment(page, `${q.label}: доклады Ордо запрещены`).catch((e) => {
-      console.log(`${q.label}: отказ от задания не вышел: ${e.message}`);
-      return false;
-    });
+    // 20.10.2026, поправка Паши: «нет, не остается, задание слетает после того как ты убиваешь
+    // бота». Я было поставил здесь отказ от задания (mod=dropquest), чтобы освободить слот без
+    // доклада - и это было ОПАСНО: к моменту отказа в слоте могло уже лежать другое задание
+    // (Жертвоприношение, Варьете), и я снял бы чужой прогресс. Отказ убран; слот освобождает сама
+    // игра по убитому боту. Мы только читаем анкету и пишем в лог, что в слоте - без клика.
+    console.log(`${q.label}: бой пройден. Доклад не делаю (Паша: «просто не делай доклады»), задание слетает само.`);
     S.ordoTaskTakenLabel = null;
     S.ordoTaskTakenAt = 0;
-    if (dropped) require('./task_slot').forgetSlotOwner();
-    else console.log(`${q.label}: ВНИМАНИЕ - слот мог остаться занятым, смотри следующий круг.`);
+    require('./task_slot').forgetSlotOwner();
+    const slot = await require('./quest_menu').readCurrentAssignment(page).catch(() => null);
+    if (slot) console.log(`${q.label}: в слоте после боя - ${typeof slot === 'string' ? slot.slice(0, 120) : JSON.stringify(slot).slice(0, 160)}`);
     return true;
   }
   console.log(`${q.label}: бой пройден, иду докладывать в башню.`);
