@@ -476,6 +476,7 @@ const { acceptOrdoOffersIfAny } = require('./lib/offers');
 const { runFortressPowerIfDue } = require('./lib/fortress');
 const { checkLevelUpIfDue, readHealRateHere } = require('./lib/levelup');
 const { sendSkullsIfDue } = require('./lib/skulls');
+const { sendGolemElixirsIfDue } = require('./lib/golem_elixir_supply');
 const { runCitizenWorkIfDue } = require('./lib/citizen_work');
 const { runTitanSchoolIfDue } = require('./lib/titan_school');
 const { runHerbGuildIfDue } = require('./lib/herb_guild');
@@ -532,6 +533,7 @@ const FARM_ORDER = MOLEG_ENABLED
   : ['gargoyle'];
 
 const NONE_MODE_ALLOWED_STEPS = new Set(['Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
+  'Эликсиры голема в клановый магазин',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
 
@@ -1048,6 +1050,11 @@ async function loginIfNeeded(page) {
 
       // Черепа с молега - в казну клана раз в 2 дня (Паша, 04.10.2026: «отправляй раз в 2 дня»).
       r = await runCycleStep(page, 'Черепа в казну', () => sendSkullsIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Эликсиры каменного голема: себе 2, остальное в клановый магазин (Паша, 20.10.2026).
+      r = await runCycleStep(page, 'Эликсиры голема в клановый магазин', () => sendGolemElixirsIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

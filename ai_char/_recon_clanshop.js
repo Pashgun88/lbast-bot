@@ -1,38 +1,32 @@
-// Только чтение: структура покупки в клановом магазине и в «Свитках и эликсирах».
 const { chromium } = require('playwright');
-const m = require('./module');
+const { getBodyText } = require('./module');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const out = [];
 (async () => {
   const ctx = await chromium.launchPersistentContext('C:/lbast-bot/ai_char/chrome-profile-ai-char', { headless: false, viewport: null });
   const page = ctx.pages()[0] || (await ctx.newPage());
-  const open = async (u, w = 800) => { await page.goto(new URL(u, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 }); await sleep(w); };
-  const goText = async (t) => {
-    const h = await page.evaluate((txt) => {
-      const a = Array.from(document.querySelectorAll('a')).find((x) => (x.innerText || '').trim() === txt);
-      return a ? a.getAttribute('href') : null;
-    }, t);
-    if (!h) return false;
-    await open(h);
-    return true;
+  const open = async (label, url) => {
+    await page.goto('http://lbast.ru/' + url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await sleep(700);
+    const t = (await getBodyText(page).catch(() => '')).replace(/[ \t]+/g, ' ');
+    console.log(`\n=== ${label} (${url}) ===\n` + t.slice(0, 1800));
+    const links = await page.$$eval('a', (as) => as.map((a) => `«${(a.textContent||'').trim()}» -> ${a.getAttribute('href')}`));
+    console.log('--- ссылки: ' + links.filter((l) => /магаз|склад|казн|лавк|сдать|товар/i.test(l)).join(' | '));
   };
-  const anchors = () => page.evaluate(() => Array.from(document.querySelectorAll('a'))
-    .map((a, i) => `${i}: "${(a.innerText || '').trim()}" -> ${a.getAttribute('href') || ''}`));
-  const forms = () => page.evaluate(() => Array.from(document.querySelectorAll('form')).map((f) => ({
-    action: f.getAttribute('action') || '', method: f.getAttribute('method') || '',
-    fields: Array.from(f.querySelectorAll('input,select,option,button')).map((e) => `${e.tagName}:${e.getAttribute('name') || ''}=${e.getAttribute('value') || e.textContent || ''}`).slice(0, 25),
-  })));
-
-  await open('shop.php');
-  await goText('Клановый магазин');
-  out.push(`===== КЛАНОВЫЙ МАГАЗИН =====\nURL: ${page.url()}\nТЕКСТ: ${(await m.getBodyText(page)).replace(/\s+/g, ' ').slice(0, 1200)}`);
-  out.push(`ССЫЛКИ:\n  ${(await anchors()).join('\n  ').slice(0, 2000)}`);
-  out.push(`ФОРМЫ: ${JSON.stringify(await forms(), null, 1).slice(0, 1500)}`);
-
-  await open('shop.php');
-  await goText('Свитки и эликсиры');
-  out.push(`\n===== СВИТКИ И ЭЛИКСИРЫ =====\nURL: ${page.url()}`);
-  out.push(`ССЫЛКИ (первые 30):\n  ${(await anchors()).slice(0, 30).join('\n  ').slice(0, 2000)}`);
-  require('fs').writeFileSync(process.argv[2], out.join('\n'), 'utf8');
+  await open('ЗАМОК', 'zamok.php');
+  // строка эликсира каменного голема в сумке и её ссылки
+  await page.goto('http://lbast.ru/inv.php?cpage=2', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await sleep(700);
+  const rows = await page.evaluate(() => {
+    const all = Array.from(document.querySelectorAll('a'));
+    const out = [];
+    all.forEach((a, i) => {
+      if (!/эликсир каменного голема/i.test((a.textContent || '').trim())) return;
+      const near = [];
+      for (let k = i; k < Math.min(i + 6, all.length); k++) near.push(`«${(all[k].textContent||'').trim()}» -> ${all[k].getAttribute('href')}`);
+      out.push(near.join('\n    '));
+    });
+    return out;
+  });
+  console.log('\n=== ЭЛИКСИР ГОЛЕМА в сумке ===\n' + rows.join('\n--\n'));
   await ctx.close();
-})().catch((e) => { require('fs').writeFileSync(process.argv[2], `ОШИБКА: ${e.stack}`, 'utf8'); process.exit(1); });
+})();

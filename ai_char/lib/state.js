@@ -161,6 +161,10 @@ S.ordoAdSmallLoggedDay = null; // «копим» в лог раз в сутки,
 S.skullsSentAt = 0;
 S.skullsTriedAt = 0; // когда последний раз ПЫТАЛИСЬ отправить черепа (переживает перезапуск)
 S.skullsSmallLoggedAt = 0; // когда писали «черепов меньше 15, копим» - не чаще раза в сутки
+// Эликсиры каменного голема: излишки сверх двух - в клановый магазин (lib/golem_elixir_supply.js).
+S.golemElixirSentAt = 0;
+S.golemElixirTriedAt = 0;
+S.golemElixirSmallLoggedAt = 0;
 S.citizenWorkDayKey = null; // работа гражданина (камнетёс) - раз в сутки
 S.titanSchoolDayKey = null; // школа «Титан» - заход на тренировку раз в сутки
 S.herbGuildDayKey = null; // гильдия травников - варка эликсиров раз в сутки
@@ -411,6 +415,9 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.skullsSentAt)) S.skullsSentAt = s.skullsSentAt;
   if (Number.isFinite(s.skullsTriedAt)) S.skullsTriedAt = s.skullsTriedAt;
   if (Number.isFinite(s.skullsSmallLoggedAt)) S.skullsSmallLoggedAt = s.skullsSmallLoggedAt;
+  if (Number.isFinite(s.golemElixirSentAt)) S.golemElixirSentAt = s.golemElixirSentAt;
+  if (Number.isFinite(s.golemElixirTriedAt)) S.golemElixirTriedAt = s.golemElixirTriedAt;
+  if (Number.isFinite(s.golemElixirSmallLoggedAt)) S.golemElixirSmallLoggedAt = s.golemElixirSmallLoggedAt;
   if (typeof s.citizenWorkDayKey === 'string' || s.citizenWorkDayKey === null) S.citizenWorkDayKey = s.citizenWorkDayKey;
   if (typeof s.titanSchoolDayKey === 'string' || s.titanSchoolDayKey === null) S.titanSchoolDayKey = s.titanSchoolDayKey;
   if (s.farmAltNext === 'moleg' || s.farmAltNext === 'gargoyle') S.farmAltNext = s.farmAltNext;
@@ -513,7 +520,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, fishingNoRodDayKey: S.fishingNoRodDayKey, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, expDayKey: S.expDayKey, farmMolegDebt: S.farmMolegDebt, golemUsedAt: S.golemUsedAt, golemLastTarget: S.golemLastTarget, ordoAdSentAt: S.ordoAdSentAt, ordoAdSmallLoggedDay: S.ordoAdSmallLoggedDay, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, fishingNoRodDayKey: S.fishingNoRodDayKey, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, expDayKey: S.expDayKey, farmMolegDebt: S.farmMolegDebt, golemUsedAt: S.golemUsedAt, golemLastTarget: S.golemLastTarget, ordoAdSentAt: S.ordoAdSentAt, ordoAdSmallLoggedDay: S.ordoAdSmallLoggedDay, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, golemElixirSentAt: S.golemElixirSentAt, golemElixirTriedAt: S.golemElixirTriedAt, golemElixirSmallLoggedAt: S.golemElixirSmallLoggedAt, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,
