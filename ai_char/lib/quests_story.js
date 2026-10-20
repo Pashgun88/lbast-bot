@@ -462,8 +462,22 @@ async function progressOrdoQuest(page, q) {
   return true;
 }
 
+// 20.10.2026, Паша: «я ведь уже много раз сказал не менять на медали вещи ордо. Ты опять все
+// поменял. Медаль Ордо экзекуторс 17» - и сразу решение: «просто не делай доклады».
+// Обмена не было ни разу (гейт ORDO_TOWER_ENABLED отказал 93 раза, вещи комплекта целы - проверил
+// сумку и экипировку), медали шли НАГРАДОЙ за доклад: 9 докладов с 15.10 = ровно +9 медалей к семи.
+// Значит источник - сам доклад, и он выключен. Вместе с ним выключено и ВЗЯТИЕ заданий Ордо:
+// взятое и не сданное задание держит единственный слот задания, а это остановило бы Штольни,
+// Бунгало, Варьете, Колодец и половину квестов (урок feedback_order_covers_all_callsites -
+// запрет должен закрывать и то, что без него теряет смысл).
+const ORDO_QUEST_LINE_ENABLED = false;
+
 // Стоим в башне Ордо. «Доложить о выполнении задания» - мораль +3, медаль, 7 дин, слот свободен.
 async function reportOrdoTaskHere(page, label) {
+  if (!ORDO_QUEST_LINE_ENABLED) {
+    console.log(`${label}: доклад не делаю - Паша запретил доклады Ордо (20.10.2026), медали больше не копим.`);
+    return false;
+  }
   if (!(await existsAnyText(page, ['Доложить о выполнении задания']))) return false;
   await clickByTexts(page, ['Доложить о выполнении задания'], `${label}: доклад`);
   await pause(page, 800, 1500);
@@ -648,7 +662,15 @@ async function runOrdoMedalTurnIn(page) {
 // Ордо и демон делят один слот «ответственного задания», и поставил Ордо ждать демона до трёх
 // попыток в день. Это было неверно: квесты независимы, и ожидание просто съедало Ордо - в логе
 // весь день «Ордо: жду, пока возьмётся задание на демона». Ожидание убрано.
+let ordoLineOffLogged = false;
 async function runOrdoQuestsIfAvailable(page) {
+  if (!ORDO_QUEST_LINE_ENABLED) {
+    if (!ordoLineOffLogged) {
+      ordoLineOffLogged = true;
+      console.log('Ордо: задания не беру и не докладываю (Паша, 20.10.2026: «просто не делай доклады»). Задание без доклада держало бы слот, поэтому выключена вся линия. Обмен медалей и предметов выключен с 09.10.');
+    }
+    return false;
+  }
   if (!(await resetToQuestMenu(page))) return false;
   await pause(page, 700, 1300);
   const names = parseQuestNamesFromQMenuText(await getBodyText(page));
