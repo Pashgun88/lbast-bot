@@ -262,6 +262,8 @@ async function runHarpyFarmRound(page, buffed = false) {
     stats0.hpCurrent <= 0 ||
     stats0.hpCurrent < stats0.hpMax * floor
   ) {
+    // Молчаливый отказ однажды увёл меня искать причину в игре (молег, 16.10) - называем её.
+    console.log(`Harpy farm: HP ${stats0.hpCurrent}/${stats0.hpMax} ниже порога ${Math.round(floor * 100)}% - гарпий отложу.`);
     return false;
   }
   const text0 = await getBodyText(page);
