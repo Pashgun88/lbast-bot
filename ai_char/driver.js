@@ -393,11 +393,12 @@ async function runFarmSession(page) {
       // HP берём из st - замера, сделанного в начале этого же круга сессии (переменная stats
       // здесь не существует, в сессии замер называется st).
       const hpFrac = st && st.hpMax ? st.hpCurrent / st.hpMax : 0;
-      if (hpFrac >= molegFloor && (S.farmMolegDebt || 0) > 0) {
+      // Долг по молегу имеет смысл только когда молег вообще разрешён.
+      if (MOLEG_ENABLED && hpFrac >= molegFloor && (S.farmMolegDebt || 0) > 0) {
         pick = 'moleg';
         S.farmMolegDebt = Math.max(0, (S.farmMolegDebt || 0) - 1);
         console.log(`Фарм-сессия: отдаю долг по молегу (осталось ${S.farmMolegDebt}), HP хватает.`);
-      } else if (pick === 'moleg' && hpFrac < molegFloor) {
+      } else if (MOLEG_ENABLED && pick === 'moleg' && hpFrac < molegFloor) {
         // Долг копим, но не бесконечно: три круга - уже половина кольца, больше незачем.
         S.farmMolegDebt = Math.min(3, (S.farmMolegDebt || 0) + 1);
         console.log(`Фарм-сессия: молегу нужно ${Math.round(molegFloor * 100)}% HP, сейчас ${Math.round(hpFrac * 100)}% - беру горгулью, молег в долг (${S.farmMolegDebt}).`);
@@ -410,9 +411,16 @@ async function runFarmSession(page) {
       };
       let mo = await round(pick);
       if (!mo) {
-        const other = pick === 'gargoyle' ? 'moleg' : 'gargoyle';
-        console.log(`Фарм-сессия: ${pick} недоступен - пробую ${other} в этом же круге.`);
-        mo = await round(other);
+        // Если молег запрещён, подменять им горгулью нельзя - ждём горгулью.
+        const other = pick === 'gargoyle' ? (MOLEG_ENABLED ? 'moleg' : null) : 'gargoyle';
+        if (!other) {
+          // БЕЗ скобок здесь была дыра: строка round(other) выполнялась бы и при запрете, а
+          // round(null) берёт ветку «не горгулья», то есть пошла бы ровно на молега.
+          console.log('Фарм-сессия: горгулья недоступна, а молег запрещён (сложных ботов не бьём) - жду.');
+        } else {
+          console.log(`Фарм-сессия: ${pick} недоступен - пробую ${other} в этом же круге.`);
+          mo = await round(other);
+        }
       }
       if (mo) fights += 1;
       if (!mo) {
@@ -515,7 +523,13 @@ const SINGLE_FIGHT_STEPS = new Set([
 // только на дейлики». Фарм на кожи целиком остаётся в коде и включается переменной AI_FARM_SPOT=hides
 // (тогда farmSpot() !== 'moleg', и длинная фарм-сессия сама идёт по прежней ветке).
 const HIDE_FARM_ENABLED = process.env.AI_FARM_SPOT === 'hides';
-const FARM_ORDER = ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg'];
+// 20.10.2026, Паша: «не бей сложных ботов». Самый тяжёлый у нас молег: 733 HP за бой из 930 и
+// 6 нокаутов против 3 у горгульи за всё время лога. Его из кольца убрал, осталась горгулья (307 HP
+// за бой). Прежняя доля 3/7 сохранена в комментарии: вернуть - поставить MOLEG_ENABLED = true.
+const MOLEG_ENABLED = false;
+const FARM_ORDER = MOLEG_ENABLED
+  ? ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg']
+  : ['gargoyle'];
 
 const NONE_MODE_ALLOWED_STEPS = new Set(['Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
