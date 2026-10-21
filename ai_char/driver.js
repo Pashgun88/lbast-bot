@@ -23,6 +23,7 @@ function activeGuideState() {
   return out;
 }
 const { runBungaloIfDue } = require('./guides/bungalo');
+const { watchBungaloTasksIfDue } = require('./guides/bungalo_watch');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
 // вовсе, и AI_LOGIN/AI_PASS появлялись только если их вручную экспортировали в шелле. До сих
@@ -532,7 +533,7 @@ const FARM_ORDER = MOLEG_ENABLED
   ? ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg']
   : ['gargoyle'];
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Бунгало: дозор за заданиями', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
   'Эликсиры голема в казну',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
@@ -1159,6 +1160,12 @@ async function loginIfNeeded(page) {
 
 
       r = await runCycleStep(page, 'Ордо экзекуторс', () => runOrdoQuestsIfAvailable(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Дозор за бунгало стоит ПЕРЕД взятием задания: взятое задание уходит из «Событий», и
+      // если бы порядок был обратным, в зал мы бы о нём уже не написали.
+      r = await runCycleStep(page, 'Бунгало: дозор за заданиями', () => watchBungaloTasksIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
