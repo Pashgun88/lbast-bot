@@ -23,6 +23,13 @@
 // клановый зал (room=12) через chat_outbox.json, как дозор за бунгало. Если в один день несколько
 // аукционов, они собираются в ОДНУ строку: три сообщения подряд в зале - это спам, а не польза.
 //
+// Последнее напоминание - иначе. Паша, 21.10.2026: «последнее информирование за 10 минут - сделай
+// через спам - письма - доска событий - дать спам. Там в поле текстовое вводишь и жмешь написать».
+// Это letters.php?mod=clan_spam&go=create: поле mess, два списка уровней (from_lev по умолчанию 0,
+// to_lev почему-то 4) и галка «либо своему уровню». Ставим весь диапазон, от первого значения до
+// последнего, - за десять минут до торгов новость нужна всем, а не четвёртым уровням. Галку
+// mylevel не трогаем: она сужает рассылку до своего уровня.
+//
 // Отсчёт игра печатает грубо, пока далеко («еще 3 дн.»), и точно, когда близко («еще 2 дн. 7 ч.
 // 30 мин.»). Поэтому доску перечитываем раз в 2 часа: к самому дню аукциона время уже точное.
 
@@ -51,6 +58,30 @@ const PROFESSIONS = [
   { name: 'Кузнец', level: 15, what: 'латные поножи' },
   { name: 'Перчаточник', level: 16, what: 'перчатки' },
 ];
+
+// Спам на доску событий - рассылка всем уровням. Отчёт игры пишем в лог целиком: цену и возможный
+// запрет «не чаще чем...» я ещё не видел, и узнать их можно только по живому ответу.
+async function sendSpam(page, text) {
+  await page.goto('http://lbast.ru/letters.php?mod=clan_spam&go=create', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const hasForm = await page.locator('input[name="mess"]').count().catch(() => 0);
+  if (!hasForm) { console.log('Спам: поля mess на странице нет - рассылка не ушла.'); return false; }
+  await page.locator('input[name="mess"]').fill(text);
+  const from = await page.$eval('select[name="from_lev"]', (s2) => s2.options[0].value).catch(() => null);
+  const to = await page.$eval('select[name="to_lev"]', (s2) => s2.options[s2.options.length - 1].value).catch(() => null);
+  if (from !== null) await page.selectOption('select[name="from_lev"]', from).catch(() => {});
+  if (to !== null) await page.selectOption('select[name="to_lev"]', to).catch(() => {});
+  await Promise.all([
+    page.waitForLoadState('domcontentloaded'),
+    page.locator('input[type="submit"]').first().click(),
+  ]);
+  const after = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+  // Истина - игра: ищем свою строку на доске, а не верим ответу страницы.
+  await page.goto('http://lbast.ru/letters.php?mod=clan_spam', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const board = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ');
+  const landed = board.includes(text.slice(0, 40));
+  console.log(`Спам: ${landed ? 'строка на доске' : 'на доске НЕ НАШЁЛ'}; уровни ${from}-${to}; ответ страницы: ${after.slice(0, 200)}`);
+  return landed;
+}
 
 function appendOutbox(text) {
   let items = [];
@@ -139,8 +170,13 @@ async function runAuctionRemindersIfDue(page) {
   const head = { 'утро': 'Сегодня аукцион', '3ч': 'Через 3 часа аукцион', '10м': 'Через 10 минут аукцион' };
   for (const [kind, parts] of groups) {
     const text = `${head[kind]}${parts.length > 1 ? 'ы' : ''} в Городе Мастеров: ${parts.join(', ')}`;
-    appendOutbox(text);
-    console.log(`АУКЦИОН (${kind}) -> клановый зал room=${CLAN_HALL_ROOM}: «${text}»`);
+    if (kind === '10м') {
+      await sendSpam(page, text);
+      console.log(`АУКЦИОН (10м) -> спам на доску событий: «${text}»`);
+    } else {
+      appendOutbox(text);
+      console.log(`АУКЦИОН (${kind}) -> клановый зал room=${CLAN_HALL_ROOM}: «${text}»`);
+    }
   }
   return true;
 }
