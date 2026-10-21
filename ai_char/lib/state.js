@@ -83,7 +83,10 @@ const SHTOLNI_ENABLED_FOR_AI = false;
 // let ugoDayKey = '';
 // let ugoRunsToday = 0;
 
-const STATE_PATH = path.join(__dirname, '..', 'daily_quests_piraty.state.json');
+// 21.10.2026: мой тест подставил в S поддельную доску аукционов, функция её ЗАПИСАЛА в этот файл,
+// драйвер прочитал её при старте и разослал спамом несуществующий аукцион. Отсюда переменная:
+// проверочные прогоны обязаны писать в свой файл (AI_STATE_FILE), а не в рабочий.
+const STATE_PATH = process.env.AI_STATE_FILE || path.join(__dirname, '..', 'daily_quests_piraty.state.json');
 
 function loadStateFromDisk() {
   try {

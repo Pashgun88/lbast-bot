@@ -128,6 +128,24 @@ function dueReminder(endsAt, sentKinds, now = Date.now()) {
   return null;
 }
 
+// Сверка с живой страницей: каждое «Ремесло в ЧЧ:ММ» должно найтись на доске с тем же временем
+// (допуск 3 минуты - страница печатает отсчёт с округлением до минуты).
+async function boardConfirms(page, parts) {
+  await page.goto(BOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  const text = await getBodyText(page).catch(() => '');
+  const live = parseAuctionBoard(text, Date.now()).rows;
+  if (!live.length) return false;
+  return parts.every((p) => {
+    const [prof, time] = p.split(' в ');
+    const row = live.find((r) => r.prof === prof.trim());
+    if (!row) return false;
+    const [h, m] = time.trim().split(':').map(Number);
+    const want = new Date(row.endsAt);
+    const diffMin = Math.abs((want.getHours() * 60 + want.getMinutes()) - (h * 60 + m));
+    return diffMin <= 3;
+  });
+}
+
 async function runAuctionRemindersIfDue(page) {
   const now = Date.now();
   if (now - (S.auctionBoardAt || 0) >= READ_EVERY_MS) {
@@ -171,6 +189,14 @@ async function runAuctionRemindersIfDue(page) {
   for (const [kind, parts] of groups) {
     const text = `${head[kind]}${parts.length > 1 ? 'ы' : ''} в Городе Мастеров: ${parts.join(', ')}`;
     if (kind === '10м') {
+      // Рассылка идёт на весь мир, поэтому перед ней ПЕРЕСПРАШИВАЕМ игру. 21.10.2026 мой
+      // проверочный прогон оставил в состоянии поддельную доску, драйвер прочитал её при старте и
+      // разослал спамом аукцион, которого нет. Запись в состоянии - не основание для действия
+      // наружу; основание - живая страница.
+      if (!(await boardConfirms(page, parts))) {
+        console.log(`АУКЦИОН (10м): живая доска не подтверждает «${text}» - рассылку отменил.`);
+        continue;
+      }
       await sendSpam(page, text);
       console.log(`АУКЦИОН (10м) -> спам на доску событий: «${text}»`);
     } else {
