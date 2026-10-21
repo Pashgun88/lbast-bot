@@ -1,114 +1,121 @@
-// Напоминалки про аукционы из городской ратуши.
+// Аукционы Города Мастеров: напоминания Паше.
 //
 // Паша, 21.10.2026: «нужна разведка в городской ратуше - там пишут когда какой аукцион будет,
 // каждый обновляется раз в неделю, шли по утрам напоминалки если какой то аукцион в текущий день.
-// 2 раз утром в 8-9, второй за 3 часа и последний за 10 минут».
+// 2 раз утром в 8-9, второй за 3 часа и последний за 10 минут». И поправка про место: «нет не та
+// ратуша. Твоя - на севере из стоуна (3-5 раз) до первого поворота на запад, там еще 3 шага на
+// запад» - это ГОРОД МАСТЕРОВ, а не ратуша Стоунгарда (туда ходит работа гражданина).
 //
-// Три напоминания на каждый аукцион дня: утреннее (окно 8-9 по игровому времени суток), за 3 часа
-// и за 10 минут. Каждое - по одному разу в день на аукцион, отметки лежат в состоянии, поэтому
-// перезапуск драйвера их не сбрасывает.
+// Дорога (пройдена вживую 21.10.2026): Стоунгард -> Северные ворота -> Идти на север -> север ->
+// север (на третьем шаге появляется поворот на запад) -> запад, запад, запад -> Город Мастеров ->
+// Городская ратуша. Но ходить НЕ НУЖНО: страница аукциона открывается прямой ссылкой
+// loc.php?obj=5116&flag=100&mod=auction - проверено.
 //
-// ЧТО ПОКА НЕ ВЫЯСНЕНО (поэтому чтение доски стоит за флагом AI_AUCTION_WATCH=1):
-// страница ратуши (goroda.php?mod=ratusha) 21.10.2026 ответила «Вы уже посещали ратушу сегодня» -
-// в тот день там уже сдавались камни работой гражданина (lib/citizen_work.js, 210 дин в сутки).
-// Если заход на страницу тратит суточное посещение, разведка отнимала бы у нас этот доход. Пока
-// Паша не скажет, как оно устроено, читать доску сама я не даю.
+// Как устроено (из «О городе», замер 21.10.2026): семь ремёсел, каждое занято игроком на неделю, у
+// каждого в ратуше свой отсчёт («Винокур - BlackOpium еще 3 дн.»). Отсчёт кончился - по этому
+// ремеслу идёт аукцион. Платят не динами, а СЕМЕНАМИ оливкового дерева: шаг не меньше 3 семян,
+// ставка держится 6 минут, не перебили - аукцион закрыт. Семена падают в боях с шансом уровень/4,
+// на руках больше 150 не держится, перебитая ставка семян не теряет.
+// Ценз по уровню: Винокур 10, Травник 11, Аптекарь 12, Мэр города 13 (1000 дин в день и ничего не
+// делает), Мясник 14, Кузнец 15, Перчаточник 16.
+//
+// Отсчёт игра печатает грубо, пока далеко («еще 3 дн.»), и точно, когда близко («еще 2 дн. 7 ч.
+// 30 мин.»). Поэтому доску перечитываем раз в 2 часа: к самому дню аукциона время уже точное.
 
 module.exports = { runAuctionRemindersIfDue, parseAuctionBoard, dueReminder };
 
 const { S, persistDailyQuestState } = require('./state');
 const { getBodyText } = require('./core');
 
-const BOARD_URL = 'http://lbast.ru/goroda.php?mod=ratusha';
-const ENABLED = process.env.AI_AUCTION_WATCH === '1';
-const MORNING_FROM = 8;   // утреннее напоминание - в окне 8:00-9:59
+const BOARD_URL = 'http://lbast.ru/loc.php?obj=5116&flag=100&mod=auction';
+const READ_EVERY_MS = 2 * 60 * 60 * 1000;
+const MORNING_FROM = 8;
 const MORNING_TO = 10;
 const HOURS_3 = 3 * 60 * 60 * 1000;
 const MIN_10 = 10 * 60 * 1000;
 
-const dayKey = (d = new Date()) => d.toLocaleDateString('ru-RU');
-const WEEKDAYS = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+const PROFESSIONS = [
+  { name: 'Винокур', level: 10, what: 'древний эль' },
+  { name: 'Травник', level: 11, what: 'эликсир лечения кханту' },
+  { name: 'Аптекарь', level: 12, what: 'эликсир лечения 900 hp' },
+  { name: 'Мэр города', level: 13, what: '1000 дин в день' },
+  { name: 'Мясник', level: 14, what: 'жареное мясо' },
+  { name: 'Кузнец', level: 15, what: 'латные поножи' },
+  { name: 'Перчаточник', level: 16, what: 'перчатки' },
+];
 
-// Строки доски: всё, где есть слово «аукцион» и время. Форму записи в игре я ещё не видел, поэтому
-// разбираем обе обычные: «дд-мм-гггг чч:мм» и «<день недели> в чч:мм». Что не разобралось - уходит
-// в лог целиком, чтобы дописать шаблон по живому тексту, а не по догадке.
-function parseAuctionBoard(text) {
-  const out = [];
+const dayKey = (t) => new Date(t).toLocaleDateString('ru-RU');
+const hhmm = (t) => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+// Строки вида «Винокур - BlackOpium еще 3 дн.» или «... еще 2 дн. 7 ч. 30 мин.».
+// Абсолютный срок считаем сразу: отсчёт в игре тикает, а записанная метка - нет.
+function parseAuctionBoard(text, now = Date.now()) {
+  const rows = [];
   const unknown = [];
+  const seeds = Number((String(text).match(/Семян оливкового дерева:\s*(\d+)/i) || [])[1]);
   for (const raw of String(text || '').split('\n')) {
     const line = raw.replace(/\s+/g, ' ').trim();
-    if (!/аукцион/i.test(line)) continue;
-    const time = line.match(/(\d{1,2}):(\d{2})/);
-    if (!time) { unknown.push(line); continue; }
-    const date = line.match(/(\d{1,2})[-.](\d{1,2})[-.](\d{4})/);
-    // Основа слова, а не всё слово: в тексте стоит «в среду», «в пятницу» - падежи.
-  const wd = WEEKDAYS.findIndex((w) => new RegExp(w.slice(0, 4), 'i').test(line));
-    out.push({
-      line,
-      hh: Number(time[1]),
-      mm: Number(time[2]),
-      date: date ? `${date[1].padStart(2, '0')}.${date[2].padStart(2, '0')}.${date[3]}` : null,
-      weekday: wd >= 0 ? wd : null,
-    });
+    if (!line) continue;
+    const prof = PROFESSIONS.find((p) => line.toLowerCase().startsWith(p.name.toLowerCase()));
+    if (!prof) continue;
+    const m = line.match(/ещ[её]\s*(?:(\d+)\s*дн)?\.?\s*(?:(\d+)\s*ч)?\.?\s*(?:(\d+)\s*мин)?/i);
+    if (!m || (!m[1] && !m[2] && !m[3])) { unknown.push(line); continue; }
+    const ms = (Number(m[1] || 0) * 24 * 60 + Number(m[2] || 0) * 60 + Number(m[3] || 0)) * 60 * 1000;
+    const holder = (line.match(/-\s*(\S+)\s+ещ[её]/i) || [])[1] || '?';
+    rows.push({ prof: prof.name, level: prof.level, what: prof.what, holder, endsAt: now + ms, coarse: !m[2] && !m[3] });
   }
-  return { auctions: out, unknown };
+  return { rows, unknown, seeds };
 }
 
-// Сегодняшний ли это аукцион: либо дата совпала, либо день недели, либо (если в строке нет ни того,
-// ни другого) считаем, что доска говорит про ближайший день - такую строку в сегодняшние НЕ берём,
-// чтобы не будить Пашу зря.
-function isToday(a, now = new Date()) {
-  if (a.date) return a.date === dayKey(now);
-  if (a.weekday !== null) return a.weekday === now.getDay();
-  return false;
-}
-
-function whenToday(a, now = new Date()) {
-  const d = new Date(now);
-  d.setHours(a.hh, a.mm, 0, 0);
-  return d.getTime();
-}
-
-// Какое напоминание пора послать (или null). Вынесено отдельной функцией, чтобы проверять тестом
-// без игры: сроки - это то, где легче всего ошибиться на час.
-function dueReminder(a, sentKinds, now = new Date()) {
-  const left = whenToday(a, now) - now.getTime();
-  if (left <= -MIN_10) return null; // аукцион уже прошёл
-  if (left <= MIN_10 && !sentKinds.includes('10м')) return { kind: '10м', text: `через 10 минут` };
-  if (left <= HOURS_3 && !sentKinds.includes('3ч')) return { kind: '3ч', text: `через 3 часа` };
-  const h = now.getHours();
-  if (h >= MORNING_FROM && h < MORNING_TO && !sentKinds.includes('утро')) return { kind: 'утро', text: 'сегодня' };
+// Какое напоминание пора послать (или null). Отдельная функция - чтобы проверять тестом без игры:
+// на часах ошибиться легче всего.
+function dueReminder(endsAt, sentKinds, now = Date.now()) {
+  const left = endsAt - now;
+  if (left <= -MIN_10) return null;
+  if (left <= MIN_10 && !sentKinds.includes('10м')) return { kind: '10м', text: 'через 10 минут' };
+  if (left <= HOURS_3 && !sentKinds.includes('3ч')) return { kind: '3ч', text: 'через 3 часа' };
+  const h = new Date(now).getHours();
+  if (h >= MORNING_FROM && h < MORNING_TO && !sentKinds.includes('утро')) {
+    return { kind: 'утро', text: `сегодня в ${hhmm(endsAt)}` };
+  }
   return null;
 }
 
 async function runAuctionRemindersIfDue(page) {
-  if (!ENABLED) return false;
-  const today = dayKey();
-  if (S.auctionBoardDay !== today) {
+  const now = Date.now();
+  if (now - (S.auctionBoardAt || 0) >= READ_EVERY_MS) {
     await page.goto(BOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     const text = await getBodyText(page).catch(() => '');
-    const { auctions, unknown } = parseAuctionBoard(text);
-    S.auctionBoardDay = today;
-    S.auctionBoard = auctions;
-    S.auctionSent = {};
+    const parsed = parseAuctionBoard(text, Date.now());
+    S.auctionBoardAt = now;
+    if (!parsed.rows.length) {
+      // В Telegram молчим, в лог пишем: пустая доска - повод посмотреть глазами.
+      console.log(`Аукционы: доска не разобралась. Текст: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
+      persistDailyQuestState();
+      return false;
+    }
+    if (Number.isFinite(parsed.seeds)) S.auctionSeeds = parsed.seeds;
+    S.auctionBoard = parsed.rows.map(({ prof, level, what, holder, endsAt }) => ({ prof, level, what, holder, endsAt }));
     persistDailyQuestState();
-    if (unknown.length) console.log(`Аукционы: строки без времени, разобрать не смог: ${unknown.join(' // ')}`);
-    console.log(`Аукционы: доска прочитана, записей с временем ${auctions.length}${auctions.length ? ': ' + auctions.map((a) => a.line).join(' // ') : ''}.`);
+    if (parsed.unknown.length) console.log(`Аукционы: строки без отсчёта: ${parsed.unknown.join(' // ')}`);
+    const soon = parsed.rows.slice().sort((a, b) => a.endsAt - b.endsAt)[0];
+    console.log(`Аукционы: доска прочитана, семян ${Number.isFinite(parsed.seeds) ? parsed.seeds : '?'}; ближайший - ${soon.prof}, ${dayKey(soon.endsAt)} ${hhmm(soon.endsAt)}.`);
   }
 
   const board = Array.isArray(S.auctionBoard) ? S.auctionBoard : [];
+  const today = dayKey(now);
   let sentAny = false;
   for (const a of board) {
-    if (!isToday(a)) continue;
-    const key = `${a.hh}:${String(a.mm).padStart(2, '0')}`;
-    const sent = (S.auctionSent && S.auctionSent[key]) || [];
-    const due = dueReminder(a, sent);
+    if (dayKey(a.endsAt) !== today) continue;
+    const sentMap = (S.auctionSent && S.auctionSent.day === today && S.auctionSent.kinds) || {};
+    const sent = sentMap[a.prof] || [];
+    const due = dueReminder(a.endsAt, sent, now);
     if (!due) continue;
-    S.auctionSent = S.auctionSent || {};
-    S.auctionSent[key] = [...sent, due.kind];
+    S.auctionSent = { day: today, kinds: { ...sentMap, [a.prof]: [...sent, due.kind] } };
     persistDailyQuestState();
-    // Строка уходит в Telegram: шаблон /^АУКЦИОН/ в telegram_alerts.js.
-    console.log(`АУКЦИОН ${due.text} (${key}): ${a.line}`);
+    const mine = (S.charLevel || 0) >= a.level ? 'нам по уровню' : `нужен ${a.level} ур.`;
+    // Строка уходит в Telegram по шаблону /^АУКЦИОН/ в telegram_alerts.js.
+    console.log(`АУКЦИОН ${due.text}: ${a.prof} (${a.what}), держит ${a.holder}, ${mine}. Семян у нас ${S.auctionSeeds ?? '?'}, шаг 3.`);
     sentAny = true;
   }
   return sentAny;
