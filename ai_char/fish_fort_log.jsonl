@@ -1,0 +1,13 @@
+{"ts": "2026-10-21T12:30:00", "stopStep": 2, "gapMs": 150, "escaped": false, "fish": "карась", "kg": 0.32, "chance": "очень высокий", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 10, "gapMs": 150, "escaped": true, "fish": "рак", "kg": 0.16, "chance": "средний", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 5, "gapMs": 150, "escaped": false, "fish": "окунь", "kg": 0.48, "chance": "высокий", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 7, "gapMs": 150, "escaped": false, "fish": "окунь", "kg": 0.46, "chance": "высокий", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 9, "gapMs": 150, "escaped": true, "fish": "рак", "kg": 0.11, "chance": "средний", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 11, "gapMs": 150, "escaped": false, "fish": "плотва", "kg": 0.83, "chance": "невысокий", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 13, "gapMs": 150, "escaped": true, "fish": "рак", "kg": 0.19, "chance": "?", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 15, "gapMs": 150, "escaped": true, "fish": "рак", "kg": 0.12, "chance": "?", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 18, "gapMs": 150, "escaped": true, "fish": "рак", "kg": 0.19, "chance": "?", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 22, "gapMs": 150, "escaped": true, "fish": "рак", "kg": 0.18, "chance": "?", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 14, "gapMs": 1300, "escaped": true, "fish": "рак", "kg": 0.16, "chance": "невысокий", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 16, "gapMs": 1300, "escaped": true, "fish": "рак", "kg": 0.15, "chance": "высокий", "writeError": false, "note": "разведка 21.10.2026"}
+{"ts": "2026-10-21T12:30:00", "stopStep": 18, "gapMs": 1300, "escaped": true, "fish": "рак", "kg": 0.15, "chance": "невысокий", "writeError": false, "note": "разведка 21.10.2026"}

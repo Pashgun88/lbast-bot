@@ -25,6 +25,7 @@ function activeGuideState() {
 const { runBungaloIfDue } = require('./guides/bungalo');
 const { watchBungaloTasksIfDue } = require('./guides/bungalo_watch');
 const { runAuctionRemindersIfDue } = require('./lib/auction_watch');
+const { runFortFishingIfDue } = require('./lib/fort_fishing');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
 // вовсе, и AI_LOGIN/AI_PASS появлялись только если их вручную экспортировали в шелле. До сих
@@ -534,7 +535,7 @@ const FARM_ORDER = MOLEG_ENABLED
   ? ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg']
   : ['gargoyle'];
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Аукционы: напоминания', 'Бунгало: дозор за заданиями', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Рыбалка в форте', 'Аукционы: напоминания', 'Бунгало: дозор за заданиями', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
   'Эликсиры голема в казну',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
@@ -1173,6 +1174,11 @@ async function loginIfNeeded(page) {
       // Напоминания про аукционы из городской ратуши (Паша, 21.10.2026): утром, за 3 часа и за
       // 10 минут. Шаг дешёвый - доска читается раз в сутки, остальное считается по часам.
       r = await runCycleStep(page, 'Аукционы: напоминания', () => runAuctionRemindersIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Рыбалка в форте Жжёного листа: 10 попыток в сутки по 10 дин, боёв нет (Паша, 21.10.2026).
+      r = await runCycleStep(page, 'Рыбалка в форте', () => runFortFishingIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
