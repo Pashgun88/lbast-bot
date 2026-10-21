@@ -19,15 +19,23 @@
 // Ценз по уровню: Винокур 10, Травник 11, Аптекарь 12, Мэр города 13 (1000 дин в день и ничего не
 // делает), Мясник 14, Кузнец 15, Перчаточник 16.
 //
+// Куда пишем: Паша, 21.10.2026 - «напоминания в клан зал шли». Значит не в Telegram, а строкой в
+// клановый зал (room=12) через chat_outbox.json, как дозор за бунгало. Если в один день несколько
+// аукционов, они собираются в ОДНУ строку: три сообщения подряд в зале - это спам, а не польза.
+//
 // Отсчёт игра печатает грубо, пока далеко («еще 3 дн.»), и точно, когда близко («еще 2 дн. 7 ч.
 // 30 мин.»). Поэтому доску перечитываем раз в 2 часа: к самому дню аукциона время уже точное.
 
 module.exports = { runAuctionRemindersIfDue, parseAuctionBoard, dueReminder };
 
+const fs = require('fs');
+const path = require('path');
 const { S, persistDailyQuestState } = require('./state');
 const { getBodyText } = require('./core');
 
 const BOARD_URL = 'http://lbast.ru/loc.php?obj=5116&flag=100&mod=auction';
+const OUTBOX_FILE = path.join(__dirname, '..', 'chat_outbox.json');
+const CLAN_HALL_ROOM = 12;
 const READ_EVERY_MS = 2 * 60 * 60 * 1000;
 const MORNING_FROM = 8;
 const MORNING_TO = 10;
@@ -43,6 +51,14 @@ const PROFESSIONS = [
   { name: 'Кузнец', level: 15, what: 'латные поножи' },
   { name: 'Перчаточник', level: 16, what: 'перчатки' },
 ];
+
+function appendOutbox(text) {
+  let items = [];
+  try { items = JSON.parse(fs.readFileSync(OUTBOX_FILE, 'utf8')); } catch (e) { /* файла нет */ }
+  if (!Array.isArray(items)) items = [];
+  items.push({ room: CLAN_HALL_ROOM, text });
+  fs.writeFileSync(OUTBOX_FILE, JSON.stringify(items));
+}
 
 const dayKey = (t) => new Date(t).toLocaleDateString('ru-RU');
 const hhmm = (t) => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -104,19 +120,27 @@ async function runAuctionRemindersIfDue(page) {
 
   const board = Array.isArray(S.auctionBoard) ? S.auctionBoard : [];
   const today = dayKey(now);
-  let sentAny = false;
+  const sentMap = (S.auctionSent && S.auctionSent.day === today && S.auctionSent.kinds) || {};
+  const groups = new Map(); // вид напоминания -> [что сказать про каждое ремесло]
+  const kinds = { ...sentMap };
   for (const a of board) {
     if (dayKey(a.endsAt) !== today) continue;
-    const sentMap = (S.auctionSent && S.auctionSent.day === today && S.auctionSent.kinds) || {};
     const sent = sentMap[a.prof] || [];
     const due = dueReminder(a.endsAt, sent, now);
     if (!due) continue;
-    S.auctionSent = { day: today, kinds: { ...sentMap, [a.prof]: [...sent, due.kind] } };
-    persistDailyQuestState();
-    const mine = (S.charLevel || 0) >= a.level ? 'нам по уровню' : `нужен ${a.level} ур.`;
-    // Строка уходит в Telegram по шаблону /^АУКЦИОН/ в telegram_alerts.js.
-    console.log(`АУКЦИОН ${due.text}: ${a.prof} (${a.what}), держит ${a.holder}, ${mine}. Семян у нас ${S.auctionSeeds ?? '?'}, шаг 3.`);
-    sentAny = true;
+    kinds[a.prof] = [...sent, due.kind];
+    if (!groups.has(due.kind)) groups.set(due.kind, []);
+    groups.get(due.kind).push(`${a.prof} в ${hhmm(a.endsAt)}`);
   }
-  return sentAny;
+  if (!groups.size) return false;
+
+  S.auctionSent = { day: today, kinds };
+  persistDailyQuestState();
+  const head = { 'утро': 'Сегодня аукцион', '3ч': 'Через 3 часа аукцион', '10м': 'Через 10 минут аукцион' };
+  for (const [kind, parts] of groups) {
+    const text = `${head[kind]}${parts.length > 1 ? 'ы' : ''} в Городе Мастеров: ${parts.join(', ')}`;
+    appendOutbox(text);
+    console.log(`АУКЦИОН (${kind}) -> клановый зал room=${CLAN_HALL_ROOM}: «${text}»`);
+  }
+  return true;
 }
