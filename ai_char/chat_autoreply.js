@@ -312,7 +312,7 @@ function handleChatTrigger(trigger, roomText) {
 // Ответ на письмо: возвращает текст или null. owner=true - письмо от Tsunami (Паша): это
 // распоряжение командира, отвечаем по делу и без байки (20.09.2026: «если получаешь письмо от меня -
 // реагируй, а не просто пересылай его мне же в телеграм»).
-async function composeLetterReply(sender, body, { owner = false } = {}) {
+async function composeLetterReply(sender, body, { owner = false, offer = false } = {}) {
   const who = cleanInput(sender, 30).trim();
   memory.remember({ kind: 'letter', nick: who, text: body });
   const mem = memory.recall({ nick: who, query: cleanInput(body, 400), kind: 'letter' });
@@ -326,7 +326,13 @@ async function composeLetterReply(sender, body, { owner = false } = {}) {
     : `Тебе пришло личное письмо от игрока ${who}. Ответь письмом в 1-3 предложения (до 400 символов).`
       + ' Чем ты занят сегодня - пиши только если это есть в <сегодня>; выдумывать место, бой или добычу нельзя.'
       + ' Про цены, аренду, покупку и обмен своих чисел не называй и за старшего не решай: скажи, что спросишь у своих, и всё.';
-  const user = `${task}\n`
+  // 22.10.2026: на предложения что-то нам продать раньше молчали, теперь отвечаем сами
+  // («ты можешь сам на письма отвечать»). Согласия не даём, зато спрашиваем цену - она Паше
+  // и нужна, чтобы решить.
+  const offerTask = offer
+    ? ' Тебе предлагают что-то продать. Поблагодари, скажи прямо, что покупку решает старший и ты спросишь, а если цену не назвали - спроси цену. Своей цены не предлагай и покупку не обещай.'
+    : '';
+  const user = `${task}${offerTask}\n`
     + selfBlock()
     + todayBlock()
     + affairsBlock()

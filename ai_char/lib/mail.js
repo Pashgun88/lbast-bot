@@ -436,15 +436,20 @@ async function handleUnreadMailIfAny(page) {
         console.log(`Письмо «от ${sender}» системное (автоуведомление игры) - переслал Паше, в игре не отвечаю.`);
         continue;
       }
+      let offer = false;
       if (TRADE_LETTER_RE.test(body)) {
         await sendTelegram(`письмо про сделку от ${sender}: ${body}`);
+        // 22.10.2026, Паша: «ты можешь сам на письма отвечать)» - сказано после письма _LEKS_ с
+        // предложением браслета, на которое мы промолчали. Молчать больше не надо: человеку
+        // отвечаем сами, но ПОКУПКУ по-прежнему решает Паша, поэтому ответ без чисел и без
+        // согласия - только «спрошу у своих» и, если цены не назвали, вопрос о цене.
         if (SELL_TO_US_RE.test(body) && !ORDO_GOODS_RE.test(body)) {
-          console.log(`Письмо от ${sender}: предлагают продать не ордо - переслал Паше, в игре без ответа.`);
-          continue;
+          offer = true;
+          console.log(`Письмо от ${sender}: предлагают продать не ордо - переслал Паше и отвечаю сам, без согласия на покупку.`);
         }
         console.log(`Письмо от ${sender}: про сделку, переслал Паше и отвечаю сам (цена на ордо задана).`);
       }
-      const reply = await composeLetterReply(sender, body);
+      const reply = await composeLetterReply(sender, body, { offer });
       if (!reply) continue;
       const ok = await replyToLetter(page, sender, reply);
       console.log(`Автоответ на письмо ${sender}: ${ok ? 'отправлен' : 'НЕ отправлен'} - ${reply}`);
