@@ -28,6 +28,12 @@ const NOT_ENOUGH_RE = /Не хватает ингредиентов/i;
 const MAX_PER_RECIPE = 40;  // предохранитель от бесконечного цикла, а не ограничение запаса
 const MAX_TOTAL = 150;
 
+// 23.10.2026, Паша: «И леки на 480 не варишь». Варка работала, но стояла на суточном ключе и
+// заходила в гильдию около 05:00 - а травы собираются ПОЗЖЕ по кругу. Молодица, из которой
+// (и только из неё) делается эликсир исцеления на 480, появлялась в сумке после варки и ждала
+// сутки. Поэтому теперь варим раз в 6 часов: травы к этому времени уже в сумке.
+const BREW_EVERY_MS = 6 * 60 * 60 * 1000;
+
 async function links(page) {
   return page.evaluate(() => Array.from(document.querySelectorAll('a'))
     .map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') || '' }))
@@ -80,7 +86,7 @@ async function readRecipes(page) {
 
 async function runHerbGuildIfDue(page) {
   const day = getDayKeyNow();
-  if (S.herbGuildDayKey === day) return false;
+  if (Date.now() - (S.herbGuildAt || 0) < BREW_EVERY_MS) return false;
 
   if (!(await enterGuild(page))) return false;
   const recipes = await readRecipes(page);
@@ -112,7 +118,18 @@ async function runHerbGuildIfDue(page) {
   }
 
   S.herbGuildDayKey = day;
+  S.herbGuildAt = Date.now();
+  if (made.length) {
+    persistDailyQuestState();
+    console.log(`Гильдия травников: сварено ${made.join(', ')}`);
+    return true;
+  }
+  // «Нечего варить» теперь случается до четырёх раз в сутки - в лог пишем об этом раз в день,
+  // чтобы заход раз в 6 часов не превратился в шум.
+  if (S.herbGuildEmptyDay !== day) {
+    S.herbGuildEmptyDay = day;
+    console.log('Гильдия травников: варить было нечего');
+  }
   persistDailyQuestState();
-  console.log(made.length ? `Гильдия травников: сварено ${made.join(', ')}` : 'Гильдия травников: варить было нечего');
   return true;
 }

@@ -21,3 +21,13 @@
 {"ts":"2026-10-22T02:19:19.222Z","stopStep":10,"gapMs":700,"escaped":false,"fish":"плотву","kg":0.98,"chance":"средний","writeError":false}
 {"ts":"2026-10-22T02:19:23.978Z","stopStep":10,"gapMs":700,"escaped":true,"fish":"рака","kg":0.19,"chance":"очень высокий","writeError":false}
 {"ts":"2026-10-22T02:19:37.113Z","stopStep":10,"gapMs":700,"escaped":false,"fish":"щучку","kg":0.59,"chance":"средний","writeError":false}
+{"ts":"2026-10-23T02:08:07.934Z","stopStep":10,"gapMs":700,"escaped":false,"fish":"плотву","kg":0.74,"chance":"средний","writeError":false}
+{"ts":"2026-10-23T02:08:22.780Z","stopStep":10,"gapMs":700,"escaped":false,"fish":"щучку","kg":0.55,"chance":"средний","writeError":false}
+{"ts":"2026-10-23T02:08:37.766Z","stopStep":10,"gapMs":700,"escaped":true,"fish":"рака","kg":0.19,"chance":"средний","writeError":false}
+{"ts":"2026-10-23T02:08:52.558Z","stopStep":10,"gapMs":700,"escaped":false,"fish":"щучку","kg":0.51,"chance":"средний","writeError":false}
+{"ts":"2026-10-23T02:09:07.777Z","stopStep":10,"gapMs":700,"escaped":false,"fish":"щучку","kg":0.53,"chance":"средний","writeError":false}
+{"ts":"2026-10-23T02:09:14.901Z","stopStep":10,"gapMs":700,"escaped":true,"fish":"рака","kg":0.18,"chance":"очень высокий","writeError":false}
+{"ts":"2026-10-23T02:09:28.613Z","stopStep":10,"gapMs":700,"escaped":true,"fish":"рака","kg":0.15,"chance":"высокий","writeError":false}
+{"ts":"2026-10-23T02:09:38.682Z","stopStep":10,"gapMs":700,"escaped":true,"fish":"рака","kg":0.15,"chance":"высокий","writeError":false}
+{"ts":"2026-10-23T02:09:53.518Z","stopStep":10,"gapMs":700,"escaped":true,"fish":"рака","kg":0.15,"chance":"средний","writeError":false}
+{"ts":"2026-10-23T02:10:09.440Z","stopStep":10,"gapMs":700,"escaped":false,"fish":"щучку","kg":0.67,"chance":"средний","writeError":false}

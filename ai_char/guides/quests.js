@@ -526,6 +526,40 @@ async function runGuideQuestIfDue(page, q) {
       console.log(`КВЕСТ ЗАСТРЯЛ: ${q.name} - игра говорит «делать уже нечего» на шаге ${r.index}: квест ушёл дальше записанного маршрута, нужна перезапись. Слот отпустил, пауза 12 ч.`);
       return true;
     }
+    // 23.10.2026, Паша: «ты штольни не делаешь почему? И многие квесты». Причина нашлась здесь:
+    // «Неожиданная встреча» взяла слот задания, дошла до своей сцены и получила от игры
+    // «Похоже еще не время... Приходите через 6 дн.». Это не срыв маршрута, а СРОК самой игры -
+    // но прежний код считал это обычным расхождением, слот не отпускал (отпускаем только при
+    // срыве на первых трёх шагах), и задание висело в слоте сутками. А слот один на всё: Штольни,
+    // Колодец Страха, Передвижная ярмарка, Унесённые ветром, Огни Девтауна - все стояли в очереди
+    // с «слот задания занят другим квестом».
+    //
+    // Теперь срок игры читается как срок: квест спит до названного дня, а слот отдаём сразу - он
+    // нужен тем, кому делать ЕСТЬ что. Отказ только от своего (чужое не трогаем, урок 09.10.2026).
+    const pageNow = await m.getBodyText(page).catch(() => '');
+    const waitDays = pageNow.match(/Приходите\s+через\s*(\d+)\s*дн/i);
+    if (r.status !== 'done' && (waitDays || /ещ[её]\s+не\s+время/i.test(pageNow))) {
+      const days = waitDays ? Number(waitDays[1]) : 1;
+      delete qs.part;
+      qs.failCount = 0;
+      qs.suppressedUntil = Date.now() + days * 24 * 60 * 60000;
+      st[q.name] = qs;
+      saveState(st);
+      clearProgress(q);
+      if (q.needsSlot || q.takesSlot) {
+        const { dropAssignmentByOrder, forgetSlotOwner, slotOwner } = require('../lib/task_slot');
+        const owner = (slotOwner() || {}).label || null;
+        if (owner && owner !== q.name) {
+          console.log(`${q.name}: слот держит «${owner}» - отказываться не мне.`);
+        } else {
+          await dropAssignmentByOrder(page, `${q.name}: игра говорит «приходите через ${days} дн.», слот нужен другим`, { quiet: true }).catch(() => false);
+          forgetSlotOwner();
+        }
+      }
+      console.log(`${q.name}: игра говорит «ещё не время, приходите через ${days} дн.» - сплю до срока, слот отпустил.`);
+      return true;
+    }
+
     if (r.status === 'mismatch' && SLOT_BUSY_TEXT_RE.test(await m.getBodyText(page).catch(() => ''))) {
       // Слот заняли между проверкой и стартом: начать заново позже, а не ждать человека 3 часа.
       delete qs.part;
