@@ -1,0 +1,20 @@
+const { chromium } = require('playwright');
+const { getBodyText } = require('./module');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  const ctx = await chromium.launchPersistentContext('C:/lbast-bot/ai_char/chrome-profile-ai-char', { headless: false, viewport: null });
+  const page = ctx.pages()[0] || (await ctx.newPage());
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await sleep(600);
+  let t = (await getBodyText(page).catch(()=>'')).replace(/[ \t]+/g,' ');
+  console.log('слот до: ' + ((t.match(/Текущее задание:[^\n]*/)||[])[0] || '?'));
+  const { dropAssignmentByOrder, forgetSlotOwner, slotOwner } = require('./lib/task_slot');
+  console.log('по нашим записям слот держит: ' + JSON.stringify(slotOwner()));
+  const ok = await dropAssignmentByOrder(page, 'Огни Девтауна отменены Пашей 23.10.2026 - слот нужен Штольням');
+  forgetSlotOwner();
+  await page.goto('http://lbast.ru/pers.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await sleep(600);
+  t = (await getBodyText(page).catch(()=>'')).replace(/[ \t]+/g,' ');
+  console.log(`отказ: ${ok ? 'выполнен' : 'не потребовался/не вышел'}; слот после: ` + ((t.match(/Текущее задание:[^\n]*/)||[])[0] || '?'));
+  await ctx.close();
+})();
