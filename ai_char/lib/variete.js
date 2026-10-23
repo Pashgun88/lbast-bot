@@ -185,7 +185,24 @@ async function progressVarieteQuest(page, { questCount } = {}) {
       return false;
     }
 
+    // 23.10.2026: добавив одну пропущенную реплику, проход сдвинулся ровно на экран и встал на
+    // следующей («- Очень приятно, AI__.»). Дописывать их по одной - это по кругу драйвера на
+    // каждую, а квест тем временем стоит. Поэтому правило: если на экране РОВНО ОДНА неслужебная
+    // ссылка и она похожа на реплику (начинается с тире), выбора нет - жмём её, не спрашивая
+    // список. Там, где выбор есть, работает прежний разбор по VARIETE_OPTIONS: туда это правило
+    // не лезет.
+    const fresh = links.filter((l) => !CHROME.has(norm(l.t)));
+    const soleReply = fresh.length === 1 && /^[-—]/.test(fresh[0].t.trim()) ? fresh[0] : null;
+
     const option = findOption(links, VARIETE_OPTIONS, used);
+    if (!option && soleReply) {
+      idle = 0;
+      seenTimes.clear();
+      console.log(`Варьете: единственная реплика на экране - жму «${soleReply.t.slice(0, 60)}»`);
+      await page.goto(new URL(soleReply.h, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await pause(page, 700, 1200);
+      continue;
+    }
     if (option) {
       idle = 0;
       used.add(option.needle);
