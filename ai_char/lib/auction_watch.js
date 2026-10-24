@@ -286,47 +286,96 @@ function decideBid(live, seeds) {
   return next <= seeds ? next : null;
 }
 
-async function tryBid(page, prof) {
-  const links = await page.$$eval('a', (as) => as.map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') }))).catch(() => []);
-  // 24.10.2026, живые торги Кузнеца: вход в ставки называется «Начать аукцион» - под прежний
-  // шаблон он не попадал, и ставку мы не пробовали вовсе. Строка ремесла в это время выглядит
-  // так: «Кузнец - ставка 150 от Linda еще 222 сек».
-  const bidLink = links.find((l) => /начать аукцион|ставк|поставить|торг|участв|перебить/i.test(l.t));
-  if (bidLink) {
-    console.log(`Аукцион ${prof}: жму «${bidLink.t}»`);
-    await page.goto(new URL(bidLink.h, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await pause(page, 400, 700);
-  }
-  const forms = await page.$$eval('form', (fs) => fs.map((f) => ({
-    action: f.getAttribute('action'),
-    fields: Array.from(f.querySelectorAll('input,select,textarea')).map((i) => ({ name: i.name, type: i.type || i.tagName, value: i.value })),
+// Досконально снять экран ставки. Паша, 24.10.2026: «не любая, там кнопки есть. исследуй
+// досконально след аукцион». Снимаем текст, все ссылки С АДРЕСАМИ (в адресе видна сумма), все формы
+// с именами полей и значениями кнопок и кусок сырого html. Ничего не нажимаем: сначала понять.
+async function studyBidScreen(page, prof, live) {
+  const links = await page.$$eval('a', (as) => as.map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') })).filter((x) => x.t)).catch(() => []);
+  const entry = links.find((l) => /начать аукцион|ставк|поставить|перебить|участв/i.test(l.t));
+  if (!entry) { console.log(`Аукцион ${prof}: на доске нет ссылки, похожей на вход в ставки.`); return null; }
+  console.log(`Аукцион ${prof}: ИЗУЧАЮ экран ставки, вход «${entry.t}» -> ${entry.h}`);
+  await page.goto(new URL(entry.h, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 400, 700);
+  const text = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').trim();
+  const links2 = await page.$$eval('a', (as) => as.map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') })).filter((x) => x.t)).catch(() => []);
+  const forms = await page.$$eval('form', (fs2) => fs2.map((f) => ({
+    action: f.getAttribute('action'), method: f.getAttribute('method'),
+    fields: Array.from(f.querySelectorAll('input,select,textarea,button')).map((i) => ({
+      name: i.name || null, type: i.type || i.tagName, value: i.value || null,
+      options: i.tagName === 'SELECT' ? Array.from(i.options).map((o) => o.value) : undefined,
+    })),
   }))).catch(() => []);
-  if (!forms.length) return false;
-  console.log(`Аукцион ${prof}: форма ставки ${JSON.stringify(forms)}`);
+  const html = await page.content().catch(() => '');
+  const cut = html.indexOf('</h');
+  const chunk = html.slice(Math.max(0, cut), cut + 3000);
+  console.log(`Аукцион ${prof}: экран ставки: ${text.slice(0, 500)}`);
+  console.log(`Аукцион ${prof}: ссылки: ${links2.map((l) => `${l.t} -> ${l.h}`).join(' | ').slice(0, 800)}`);
+  console.log(`Аукцион ${prof}: формы: ${JSON.stringify(forms).slice(0, 800)}`);
+  try {
+    fs.appendFileSync(OBSERVE_FILE, JSON.stringify({
+      ts: new Date().toISOString(), prof, label: 'экран ставки', live: live || null,
+      text: text.slice(0, 3000), links: links2, forms, html: chunk,
+    }) + String.fromCharCode(10));
+  } catch (e) { /* журнал не критичен */ }
+  return { text, links: links2, forms };
+}
+
+async function tryBid(page, prof) {
+  // Паша, 24.10.2026: «не любая, там кнопки есть». Значит сумму не вписываем, а ВЫБИРАЕМ из того,
+  // что даёт экран. Собираем всё, на что можно нажать (ссылки и кнопки форм), вытаскиваем из
+  // подписи и из адреса число - это и есть предлагаемая ставка, - и берём самую маленькую, которая
+  // и перебивает текущую, и влезает в наши семена. Не нашли подходящей - не жмём ничего и честно
+  // пишем, что видели: лучше пропустить торги, чем ткнуть вслепую в чужие семена.
+  const screen = await studyBidScreen(page, prof, parseLiveRow(await getBodyText(page).catch(() => ''), prof));
+  if (!screen) return false;
   const seeds = Number(S.auctionSeeds || 0);
-  const live = parseLiveRow(await getBodyText(page).catch(() => ''), prof);
-  const amount = decideBid(live, seeds);
-  if (!amount) {
-    console.log(`Аукцион ${prof}: не ставлю - ${live && live.bidder && OWN_BIDDERS.includes(String(live.bidder).toLowerCase())
-      ? `ставку держит свой (${live.bidder})`
-      : `нужно ${Math.max(BID_STEP, ((live && live.bid) || 0) + BID_STEP)} семян, а у нас ${seeds}`}.`);
+  const live = parseLiveRow(screen.text, prof) || { bid: null, bidder: null };
+  const want = decideBid(live, seeds);
+  if (!want) {
+    console.log(`Аукцион ${prof}: ставить не буду - ${live.bidder && OWN_BIDDERS.includes(String(live.bidder).toLowerCase())
+      ? `ставку держит свой (${live.bidder})` : `нужно больше ${live.bid || 0}, а семян ${seeds}`}.`);
     return false;
   }
-  for (const f of forms) {
-    for (const fld of f.fields) {
-      if (!fld.name || !/^(text|number)$/i.test(fld.type)) continue;
-      await page.locator(`input[name="${fld.name}"]`).first().fill(String(amount)).catch(() => {});
+
+  // Кандидаты: ссылки и кнопки, у которых в подписи или в адресе есть число.
+  const cands = [];
+  for (const l of screen.links) {
+    const n = Number((String(l.t).match(/(\d+)/) || [])[1] || (String(l.h || '').match(/(?:stavka|bid|sum|kol)=(\d+)/i) || [])[1]);
+    if (Number.isFinite(n) && n > 0) cands.push({ kind: 'link', label: l.t, amount: n, href: l.h });
+  }
+  for (const f of screen.forms || []) {
+    for (const fld of f.fields || []) {
+      const n = Number((String(fld.value || '').match(/(\d+)/) || [])[1]);
+      if (Number.isFinite(n) && n > 0 && /submit|button/i.test(String(fld.type))) {
+        cands.push({ kind: 'button', label: fld.value, amount: n, name: fld.name });
+      }
     }
   }
-  const before = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
-  await Promise.all([
-    page.waitForLoadState('domcontentloaded').catch(() => {}),
-    page.locator('input[type="submit"]').first().click().catch(() => {}),
-  ]);
-  await pause(page, 600, 1000);
-  const after = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
-  console.log(`Аукцион ${prof}: поставил ${amount} семян. Было: ${before.slice(0, 120)} | Стало: ${after}`);
-  try { fs.appendFileSync(OBSERVE_FILE, JSON.stringify({ ts: new Date().toISOString(), prof, bid: amount, answer: after }) + String.fromCharCode(10)); } catch (e) { /* не критично */ }
+  if (!cands.length) {
+    console.log(`Аукцион ${prof}: кнопок со ставками не нашёл - ничего не нажимаю. Экран записан в журнал.`);
+    return false;
+  }
+  console.log(`Аукцион ${prof}: кнопки ставок: ${cands.map((c) => `${c.label}=${c.amount}`).join(', ')}; хотел ${want}, семян ${seeds}`);
+  const fit = cands.filter((c) => c.amount <= seeds && c.amount > (live.bid || 0)).sort((a, b) => a.amount - b.amount)[0];
+  if (!fit) {
+    console.log(`Аукцион ${prof}: ни одна кнопка не влезает: нужно больше ${live.bid || 0} и не дороже ${seeds} семян.`);
+    return false;
+  }
+  console.log(`Аукцион ${prof}: нажимаю «${fit.label}» (${fit.amount} семян)`);
+  if (fit.kind === 'link') {
+    await page.goto(new URL(fit.href, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  } else {
+    await Promise.all([
+      page.waitForLoadState('domcontentloaded').catch(() => {}),
+      page.locator(`input[value="${fit.label}"]`).first().click().catch(() => {}),
+    ]);
+  }
+  await pause(page, 500, 900);
+  const answer = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').trim();
+  console.log(`Аукцион ${prof}: ответ на ставку ${fit.amount}: ${answer.slice(0, 300)}`);
+  try {
+    fs.appendFileSync(OBSERVE_FILE, JSON.stringify({ ts: new Date().toISOString(), prof, label: 'ответ на ставку', bid: fit.amount, answer: answer.slice(0, 1500) }) + String.fromCharCode(10));
+  } catch (e) { /* журнал не критичен */ }
   return true;
 }
 
@@ -338,7 +387,8 @@ async function observeAuction(page, prof, endsAt) {
   let firstBidAt = 0;
   let fastMs = FAST_STEP_MS;
   let floodHits = 0;
-  let fastOff = false; // быстрый режим выключен (вышло время или защита от флуда), но счёт ставок цел
+  let fastOff = false; // быстрый режим выключен (вышло время или защита от флуда), счёт ставок цел
+  let studied = false;  // экран ставки снимаем один раз за торги
   console.log(`Аукцион ${prof}: сроки подошли - иду смотреть торги (снимаю доску до ${Math.round(OBSERVE_MAX_MS / 60000)} мин).`);
   while (Date.now() - started < OBSERVE_MAX_MS) {
     // Просьбу «нужен голем» не задерживаем ни на минуту: у неё названная секунда.
@@ -369,7 +419,9 @@ async function observeAuction(page, prof, endsAt) {
     if (flat !== lastSig) {
       lastSig = flat;
       seen += 1;
-      const links = await page.$$eval('a', (as) => as.map((a) => (a.innerText || '').trim()).filter(Boolean)).catch(() => []);
+      // Паша, 24.10.2026: «не любая, там кнопки есть. исследуй досконально след аукцион».
+      // Значит мало знать подписи - нужны АДРЕСА: в них и видно, какую сумму предлагает кнопка.
+      const links = await page.$$eval('a', (as) => as.map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') })).filter((x) => x.t)).catch(() => []);
       const forms = await page.$$eval('form', (fs) => fs.map((f) => ({
         action: f.getAttribute('action'),
         fields: Array.from(f.querySelectorAll('input,select,textarea')).map((i) => `${i.name || '-'}:${i.type || i.tagName}`),
@@ -377,10 +429,17 @@ async function observeAuction(page, prof, endsAt) {
       const row = { ts: new Date().toISOString(), prof, endsAt: new Date(endsAt).toISOString(), text: flat.slice(0, 2000), links, forms };
       try { fs.appendFileSync(OBSERVE_FILE, JSON.stringify(row) + String.fromCharCode(10)); } catch (e) { /* журнал не критичен */ }
       console.log(`Аукцион ${prof}: экран ${seen} - ${flat.slice(0, 200)}`);
+      console.log(`Аукцион ${prof}: ссылки экрана: ${links.map((l) => `${l.t} -> ${l.h}`).join(' | ').slice(0, 500)}`);
       if (forms.length) console.log(`Аукцион ${prof}: НА СТРАНИЦЕ ФОРМА: ${JSON.stringify(forms)}`);
       // Появился способ поставить - ставим (Паша разрешил ради изучения), но не больше
       // BID_MAX_TRIES раз за эти торги.
-      if (BID_ENABLED && bids < BID_MAX_TRIES && (forms.length || links.some((t) => /начать аукцион|ставк|поставить|перебить|участв/i.test(t)))) {
+      // Идут торги и экран ставки ещё не изучен - изучаем (один раз за аукцион).
+      const liveRow = parseLiveRow(text, prof);
+      if (!studied && liveRow && (liveRow.bid !== null || liveRow.free)) {
+        studied = true;
+        await studyBidScreen(page, prof, liveRow).catch((e) => console.log(`Аукцион ${prof}: изучить экран не вышло: ${e.message}`));
+      }
+      if (BID_ENABLED && bids < BID_MAX_TRIES && (forms.length || links.some((l) => /начать аукцион|ставк|поставить|перебить|участв/i.test(l.t)))) {
         const ok = await tryBid(page, prof).catch((e) => { console.log(`Аукцион ${prof}: ставка не вышла: ${e.message}`); return false; });
         if (ok) { bids += 1; if (!firstBidAt) firstBidAt = Date.now(); }
       }
