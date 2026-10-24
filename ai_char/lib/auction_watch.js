@@ -205,6 +205,17 @@ const OBSERVE_FILE = path.join(__dirname, '..', 'auction_observe.jsonl');
 const OBSERVE_LEAD_MS = 3 * 60 * 1000;
 const OBSERVE_MAX_MS = Number(process.env.AI_AUCTION_OBSERVE_MS || 20 * 60 * 1000);
 const OBSERVE_STEP_MS = 30 * 1000;
+// 24.10.2026, Паша: «после первой ставки там обновляй 2 раза в секунду, а лучше 3 если не
+// поймаешь автобан». Смысл в сроке: ставка держится 6 минут, и если её перебили - узнать об
+// этом надо сразу, иначе торги уйдут. Поэтому после СВОЕЙ первой ставки наблюдение переходит
+// на быстрый шаг и обновляет саму страницу аукциона (один запрос), а не ходит по маршруту.
+// Про автобан: признаки флуда («слишком часто», «подождите», «флуд», пустая страница) гасят
+// скорость вдвое, и каждый такой случай пишется в лог - это и есть ответ на «если не поймаешь
+// автобан». Быстрая фаза ограничена по времени: лишние полчаса по три запроса в секунду никому
+// не нужны.
+const FAST_STEP_MS = Number(process.env.AI_AUCTION_FAST_MS || 333);
+const FAST_MAX_MS = Number(process.env.AI_AUCTION_FAST_WINDOW_MS || 8 * 60 * 1000);
+const FLOOD_RE = /слишком часто|не так быстро|подождите|флуд|превышен|забанен|бан на|слишком много запросов/i;
 
 // СТАВКА. Паша, 24.10.2026: «можешь ставить для изучения, важно чтобы ты разобрался в процессе».
 // Поэтому наблюдение теперь не только смотрит: как на странице появляется способ поставить -
@@ -256,6 +267,10 @@ async function observeAuction(page, prof, endsAt) {
   let seen = 0;
   let lastSig = '';
   let bids = 0;
+  let firstBidAt = 0;
+  let fastMs = FAST_STEP_MS;
+  let floodHits = 0;
+  let fastOff = false; // быстрый режим выключен (вышло время или защита от флуда), но счёт ставок цел
   console.log(`Аукцион ${prof}: сроки подошли - иду смотреть торги (снимаю доску до ${Math.round(OBSERVE_MAX_MS / 60000)} мин).`);
   while (Date.now() - started < OBSERVE_MAX_MS) {
     // Просьбу «нужен голем» не задерживаем ни на минуту: у неё названная секунда.
@@ -265,7 +280,22 @@ async function observeAuction(page, prof, endsAt) {
         break;
       }
     } catch (e) { /* модуль мог не загрузиться - наблюдение не повод падать */ }
-    const text = await openBoard(page);
+    // Быстрая фаза: обновляем ту же страницу аукциона одним запросом. Маршрут ногами тут не
+    // годится - он сам по себе десяток загрузок.
+    let text;
+    if (bids > 0 && !fastOff) {
+      text = await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 })
+        .then(() => getBodyText(page)).catch(() => '');
+      if (!text || FLOOD_RE.test(text)) {
+        floodHits += 1;
+        fastMs = Math.min(4000, Math.max(fastMs * 2, 500));
+        console.log(`Аукцион ${prof}: похоже на защиту от частых запросов (${floodHits}-й раз) - сбавляю до ${fastMs} мс. Ответ: ${(text || 'пусто').replace(/\s+/g, ' ').slice(0, 150)}`);
+        if (floodHits >= 5) { console.log(`Аукцион ${prof}: защита срабатывает подряд - быстрый режим выключаю.`); fastOff = true; }
+      }
+      if (!text) { await new Promise((r) => setTimeout(r, fastMs)); continue; }
+    } else {
+      text = await openBoard(page);
+    }
     if (!text) { console.log(`Аукцион ${prof}: доска не открылась - бросаю наблюдение.`); break; }
     const flat = text.replace(/\s+/g, ' ').replace(/\d{1,2}:\d{2}:\d{2}/g, '').trim();
     if (flat !== lastSig) {
@@ -284,10 +314,20 @@ async function observeAuction(page, prof, endsAt) {
       // BID_MAX_TRIES раз за эти торги.
       if (BID_ENABLED && bids < BID_MAX_TRIES && (forms.length || links.some((t) => /ставк|поставить|перебить|участв/i.test(t)))) {
         const ok = await tryBid(page, prof).catch((e) => { console.log(`Аукцион ${prof}: ставка не вышла: ${e.message}`); return false; });
-        if (ok) bids += 1;
+        if (ok) { bids += 1; if (!firstBidAt) firstBidAt = Date.now(); }
       }
     }
-    await new Promise((r) => setTimeout(r, OBSERVE_STEP_MS));
+    // Пока своей ставки нет - смотрим раз в полминуты. После ставки шаг быстрый (см. FAST_STEP_MS):
+    // надо успеть заметить, что нас перебили, пока идут шесть минут.
+    if (bids > 0 && !fastOff) {
+      if (Date.now() - firstBidAt > FAST_MAX_MS) {
+        console.log(`Аукцион ${prof}: быстрая фаза вышла по времени (${Math.round(FAST_MAX_MS / 60000)} мин) - дальше смотрю спокойно.`);
+        fastOff = true;
+      }
+      await new Promise((r) => setTimeout(r, fastMs));
+    } else {
+      await new Promise((r) => setTimeout(r, OBSERVE_STEP_MS));
+    }
   }
   console.log(`Аукцион ${prof}: наблюдение закончил, разных экранов ${seen}. Запись в auction_observe.jsonl.`);
 }
