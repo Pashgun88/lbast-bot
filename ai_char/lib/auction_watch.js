@@ -206,10 +206,56 @@ const OBSERVE_LEAD_MS = 3 * 60 * 1000;
 const OBSERVE_MAX_MS = Number(process.env.AI_AUCTION_OBSERVE_MS || 20 * 60 * 1000);
 const OBSERVE_STEP_MS = 30 * 1000;
 
+// СТАВКА. Паша, 24.10.2026: «можешь ставить для изучения, важно чтобы ты разобрался в процессе».
+// Поэтому наблюдение теперь не только смотрит: как на странице появляется способ поставить -
+// жмём его и ставим минимальный шаг (3 семени, так сказано в правилах Кумуса). Ставок за торги
+// не больше BID_MAX_TRIES: цель - понять механику, а не выиграть любой ценой. Больше, чем есть
+// семян, не ставим; перебитая ставка семян не теряет (это тоже из правил, проверим на деле).
+const BID_ENABLED = process.env.AI_AUCTION_BID !== '0';
+const BID_STEP = Number(process.env.AI_AUCTION_BID_STEP || 3);
+const BID_MAX_TRIES = Number(process.env.AI_AUCTION_BID_TRIES || 2);
+
+// Ставка одним заходом: ссылка торгов -> форма -> submit. Всё, что видим, пишем в лог: по этой
+// записи и будет разбор, обещанный Паше.
+async function tryBid(page, prof) {
+  const links = await page.$$eval('a', (as) => as.map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') }))).catch(() => []);
+  const bidLink = links.find((l) => /ставк|поставить|торг|участв|перебить/i.test(l.t));
+  if (bidLink) {
+    console.log(`Аукцион ${prof}: жму «${bidLink.t}»`);
+    await page.goto(new URL(bidLink.h, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 400, 700);
+  }
+  const forms = await page.$$eval('form', (fs) => fs.map((f) => ({
+    action: f.getAttribute('action'),
+    fields: Array.from(f.querySelectorAll('input,select,textarea')).map((i) => ({ name: i.name, type: i.type || i.tagName, value: i.value })),
+  }))).catch(() => []);
+  if (!forms.length) return false;
+  console.log(`Аукцион ${prof}: форма ставки ${JSON.stringify(forms)}`);
+  const seeds = Number(S.auctionSeeds || 0);
+  const amount = Math.min(BID_STEP, seeds > 0 ? seeds : BID_STEP);
+  for (const f of forms) {
+    for (const fld of f.fields) {
+      if (!fld.name || !/^(text|number)$/i.test(fld.type)) continue;
+      await page.locator(`input[name="${fld.name}"]`).first().fill(String(amount)).catch(() => {});
+    }
+  }
+  const before = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+  await Promise.all([
+    page.waitForLoadState('domcontentloaded').catch(() => {}),
+    page.locator('input[type="submit"]').first().click().catch(() => {}),
+  ]);
+  await pause(page, 600, 1000);
+  const after = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
+  console.log(`Аукцион ${prof}: поставил ${amount} семян. Было: ${before.slice(0, 120)} | Стало: ${after}`);
+  try { fs.appendFileSync(OBSERVE_FILE, JSON.stringify({ ts: new Date().toISOString(), prof, bid: amount, answer: after }) + String.fromCharCode(10)); } catch (e) { /* не критично */ }
+  return true;
+}
+
 async function observeAuction(page, prof, endsAt) {
   const started = Date.now();
   let seen = 0;
   let lastSig = '';
+  let bids = 0;
   console.log(`Аукцион ${prof}: сроки подошли - иду смотреть торги (снимаю доску до ${Math.round(OBSERVE_MAX_MS / 60000)} мин).`);
   while (Date.now() - started < OBSERVE_MAX_MS) {
     // Просьбу «нужен голем» не задерживаем ни на минуту: у неё названная секунда.
@@ -234,6 +280,12 @@ async function observeAuction(page, prof, endsAt) {
       try { fs.appendFileSync(OBSERVE_FILE, JSON.stringify(row) + String.fromCharCode(10)); } catch (e) { /* журнал не критичен */ }
       console.log(`Аукцион ${prof}: экран ${seen} - ${flat.slice(0, 200)}`);
       if (forms.length) console.log(`Аукцион ${prof}: НА СТРАНИЦЕ ФОРМА: ${JSON.stringify(forms)}`);
+      // Появился способ поставить - ставим (Паша разрешил ради изучения), но не больше
+      // BID_MAX_TRIES раз за эти торги.
+      if (BID_ENABLED && bids < BID_MAX_TRIES && (forms.length || links.some((t) => /ставк|поставить|перебить|участв/i.test(t)))) {
+        const ok = await tryBid(page, prof).catch((e) => { console.log(`Аукцион ${prof}: ставка не вышла: ${e.message}`); return false; });
+        if (ok) bids += 1;
+      }
     }
     await new Promise((r) => setTimeout(r, OBSERVE_STEP_MS));
   }
