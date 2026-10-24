@@ -60,3 +60,7 @@ ai_char/driver_cycle.heartbeat
 ai_char/z.html
 ai_char/zlata_blog.txt
 ai_char/zlata_ctx.txt
+# локальные журналы оповещений и перезапусков (не код, у каждой машины свои)
+ai_char/tg_dedup.json
+ai_char/restart_log.txt
+ai_char/restart_storm_notified.txt
