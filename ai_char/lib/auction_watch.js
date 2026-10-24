@@ -230,7 +230,10 @@ const BID_MAX_TRIES = Number(process.env.AI_AUCTION_BID_TRIES || 2);
 // записи и будет разбор, обещанный Паше.
 async function tryBid(page, prof) {
   const links = await page.$$eval('a', (as) => as.map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') }))).catch(() => []);
-  const bidLink = links.find((l) => /ставк|поставить|торг|участв|перебить/i.test(l.t));
+  // 24.10.2026, живые торги Кузнеца: вход в ставки называется «Начать аукцион» - под прежний
+  // шаблон он не попадал, и ставку мы не пробовали вовсе. Строка ремесла в это время выглядит
+  // так: «Кузнец - ставка 150 от Linda еще 222 сек».
+  const bidLink = links.find((l) => /начать аукцион|ставк|поставить|торг|участв|перебить/i.test(l.t));
   if (bidLink) {
     console.log(`Аукцион ${prof}: жму «${bidLink.t}»`);
     await page.goto(new URL(bidLink.h, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -312,7 +315,7 @@ async function observeAuction(page, prof, endsAt) {
       if (forms.length) console.log(`Аукцион ${prof}: НА СТРАНИЦЕ ФОРМА: ${JSON.stringify(forms)}`);
       // Появился способ поставить - ставим (Паша разрешил ради изучения), но не больше
       // BID_MAX_TRIES раз за эти торги.
-      if (BID_ENABLED && bids < BID_MAX_TRIES && (forms.length || links.some((t) => /ставк|поставить|перебить|участв/i.test(t)))) {
+      if (BID_ENABLED && bids < BID_MAX_TRIES && (forms.length || links.some((t) => /начать аукцион|ставк|поставить|перебить|участв/i.test(t)))) {
         const ok = await tryBid(page, prof).catch((e) => { console.log(`Аукцион ${prof}: ставка не вышла: ${e.message}`); return false; });
         if (ok) { bids += 1; if (!firstBidAt) firstBidAt = Date.now(); }
       }
@@ -355,17 +358,6 @@ async function runAuctionRemindersIfDue(page) {
   const board = Array.isArray(S.auctionBoard) ? S.auctionBoard : [];
   const today = dayKey(now);
 
-  // Наблюдение за торгами: один раз на ремесло в день, когда до срока меньше трёх минут.
-  const watchDay = (S.auctionWatched && S.auctionWatched.day === today && S.auctionWatched.profs) || [];
-  const soon = board.find((a) => dayKey(a.endsAt) === today && a.endsAt - now <= OBSERVE_LEAD_MS
-    && a.endsAt - now > -OBSERVE_MAX_MS && !watchDay.includes(a.prof));
-  if (soon) {
-    S.auctionWatched = { day: today, profs: [...watchDay, soon.prof] };
-    persistDailyQuestState();
-    await observeAuction(page, soon.prof, soon.endsAt);
-    return true;
-  }
-
   const sentMap = (S.auctionSent && S.auctionSent.day === today && S.auctionSent.kinds) || {};
   const groups = new Map(); // вид напоминания -> [что сказать про каждое ремесло]
   const kinds = { ...sentMap };
@@ -378,7 +370,24 @@ async function runAuctionRemindersIfDue(page) {
     if (!groups.has(due.kind)) groups.set(due.kind, []);
     groups.get(due.kind).push(`${a.prof} в ${hhmm(a.endsAt)}`);
   }
-  if (!groups.size) return false;
+  // 24.10.2026, Паша: «ты почему спам не дал за 10 минут до кузнеца?». Причина была здесь:
+  // наблюдение за торгами стояло ПЕРЕД рассылкой и выходило из шага (return) на двадцать минут.
+  // Окна пересекаются - за 10 минут напоминание и за 3 минуты наблюдение, - и если шаг не успел
+  // отработать в эти семь минут (шла фарм-сессия), спам терялся. Теперь сначала напоминания,
+  // наблюдение - после них.
+  if (!groups.size) {
+  // Наблюдение за торгами: один раз на ремесло в день, когда до срока меньше трёх минут.
+  const watchDay = (S.auctionWatched && S.auctionWatched.day === today && S.auctionWatched.profs) || [];
+  const soon = board.find((a) => dayKey(a.endsAt) === today && a.endsAt - now <= OBSERVE_LEAD_MS
+    && a.endsAt - now > -OBSERVE_MAX_MS && !watchDay.includes(a.prof));
+  if (soon) {
+    S.auctionWatched = { day: today, profs: [...watchDay, soon.prof] };
+    persistDailyQuestState();
+    await observeAuction(page, soon.prof, soon.endsAt);
+    return true;
+  }
+    return false;
+  }
 
   S.auctionSent = { day: today, kinds };
   persistDailyQuestState();
