@@ -210,18 +210,23 @@ function cleanOutput(raw) {
 function askModel(userText) {
   return new Promise((resolve) => {
     let out = '';
+    // 24.10.2026: в журнале было «Автоответ: ошибка вызова модели (exit 1)» и больше ничего - по
+    // такой строке причину не узнать. Собираем stderr: при неудаче его хвост идёт в лог.
+    let err = '';
     let done = false;
     const child = spawn(BASH, ['-c', CLAUDE_CMD], {
       cwd: WORK_DIR, windowsHide: true, env: { ...process.env, AI_PERSONA_FILE: PROMPT_FILE.split(path.sep).join('/') },
     });
     const timer = setTimeout(() => { if (!done) { done = true; child.kill(); resolve({ ok: false, err: 'timeout' }); } }, CALL_TIMEOUT_MS);
     child.stdout.on('data', (d) => { out += d.toString('utf8'); });
+    if (child.stderr) child.stderr.on('data', (d) => { err += d.toString('utf8'); });
     child.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); resolve({ ok: false, err: e.message }); } });
     child.on('close', (code) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      resolve(code === 0 ? { ok: true, text: out } : { ok: false, err: `exit ${code}` });
+      const tail = err.replace(/\s+/g, ' ').trim().slice(-300);
+      resolve(code === 0 ? { ok: true, text: out } : { ok: false, err: 'exit ' + code + (tail ? ': ' + tail : '') });
     });
     child.stdin.end(userText, 'utf8');
   });
