@@ -26,6 +26,8 @@ const { runBungaloIfDue } = require('./guides/bungalo');
 const { watchBungaloTasksIfDue } = require('./guides/bungalo_watch');
 const { runAuctionRemindersIfDue } = require('./lib/auction_watch');
 const { runFortFishingIfDue } = require('./lib/fort_fishing');
+const { sendGargoyleTeethIfDue } = require('./lib/teeth_supply');
+const { writeStockFactsIfDue } = require('./lib/stock_facts');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
 // вовсе, и AI_LOGIN/AI_PASS появлялись только если их вручную экспортировали в шелле. До сих
@@ -535,7 +537,7 @@ const FARM_ORDER = MOLEG_ENABLED
   ? ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg']
   : ['gargoyle'];
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Рыбалка в форте', 'Аукционы: напоминания', 'Бунгало: дозор за заданиями', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Сводка запасов', 'Зубы горгульи Ханку', 'Рыбалка в форте', 'Аукционы: напоминания', 'Бунгало: дозор за заданиями', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
   'Эликсиры голема в казну',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
@@ -1077,6 +1079,17 @@ async function loginIfNeeded(page) {
       // Гильдия травников: варка эликсиров из собранных трав. Паша, 13.10.2026: «Вари все».
       // Боёв и трат нет, трава всё равно копится - шаг идёт и в режиме без боёв.
       r = await runCycleStep(page, 'Гильдия травников', () => runHerbGuildIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Зубы горгульи: шаг стоит СРАЗУ ПОСЛЕ варки - сначала варим голема (зуб + лист змеевика),
+      // и только остаток уходит Ханку по 250 (Паша, 24.10.2026).
+      r = await runCycleStep(page, 'Зубы горгульи Ханку', () => sendGargoyleTeethIfDue(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+
+      // Сводка запасов для чата: чтобы автоответ не выдумывал, что у нас есть (Паша, 24.10.2026).
+      r = await runCycleStep(page, 'Сводка запасов', () => writeStockFactsIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 

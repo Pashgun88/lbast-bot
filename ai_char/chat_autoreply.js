@@ -131,6 +131,25 @@ ${block}
 }
 
 // Что AI__ делал сегодня - данные для промпта, чтобы разговор шёл про реальную жизнь персонажа.
+// Запасы и занятие - фактами, а не фантазией. 24.10.2026 автоответ сказал Паше «зубов у меня нет,
+// горгулий я не бил, только черепа с молега», тогда как зубов лежало 23, а горгулья - наша
+// единственная точка фарма. Файл пишет драйвер раз в 2 часа (lib/stock_facts.js).
+function stockBlock() {
+  let f;
+  try { f = JSON.parse(fs.readFileSync(require('./lib/stock_facts').STOCK_FILE, 'utf8')); } catch (e) { return ''; }
+  if (!f || !f.at) return '';
+  const ageH = (Date.now() - Date.parse(f.at)) / 3600000;
+  if (!(ageH >= 0) || ageH > 12) return ''; // устаревшей сводке верить нельзя - лучше промолчать
+  const items = Object.entries(f.items || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+  const parts = [];
+  if (items) parts.push(`в сумке: ${items}`);
+  if (f.farm) parts.push(`точка фарма: ${f.farm}`);
+  if (typeof f.money === 'number') parts.push(`денег ${f.money}`);
+  if (!parts.length) return '';
+  return `<запасы>${nlc()}${parts.join('; ')}${nlc()}О том, что у тебя ЕСТЬ и чего НЕТ, говори только по этому блоку. Чего тут не названо - не отрицай и не придумывай, скажи «гляну и отпишу». Чем занят - только по <today>.${nlc()}</запасы>${nlc()}`;
+}
+const nlc = () => String.fromCharCode(10);
+
 function todayBlock() {
   const d = dayLog.digest(400);
   return d ? `<today>\nСегодня с тобой было (в чате ещё не рассказывал): ${d}\n</today>\n` : '';
@@ -281,6 +300,7 @@ function handleChatTrigger(trigger, roomText) {
       + styleDigest(room)
       + (said ? `Сначала ответь ровно на это: «${said}». Потом, если есть что, добавь своё.\n` : '')
       + selfBlock()
+    + stockBlock()
       + todayBlock()
       + affairsBlock()
       + adviceBlock(room)
@@ -334,6 +354,7 @@ async function composeLetterReply(sender, body, { owner = false, offer = false }
     : '';
   const user = `${task}${offerTask}\n`
     + selfBlock()
+    + stockBlock()
     + todayBlock()
     + affairsBlock()
     + (mem ? `<memory>\n${mem}\n</memory>\n` : '')
