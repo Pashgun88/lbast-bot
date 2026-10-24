@@ -56,10 +56,25 @@ $stalled = $false
 # после подъёма: встаёт он в 05:00 плюс 0-15 случайных минут.
 $now = Get-Date
 $sleeping = ($now.Hour -ge 23) -or ($now.Hour -lt 5) -or ($now.Hour -eq 5 -and $now.Minute -lt 15)
+# 24.10.2026: если копий драйвера больше одной, они дерутся за профиль Chrome и обе висят на
+# page.goto. Оставляем САМУЮ СВЕЖУЮ, остальные гасим - это и есть «профиль не терпит двух копий».
+if ($alive.Count -gt 1) {
+  $keep = ($alive | Sort-Object CreationDate -Descending)[0]
+  Note "`n===== СТОРОЖ: драйверов $($alive.Count) - оставляю PID $($keep.ProcessId), остальные гашу ====="
+  $alive | Where-Object { $_.ProcessId -ne $keep.ProcessId } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Seconds 2
+  $alive = @($keep)
+}
+# Свежий процесс судить по старому пульсу нельзя: после разведки файл пульса остаётся
+# многочасовой давности, и сторож убивал только что поднятый драйвер, не дав ему дойти до первого
+# шага. Даём десять минут на старт.
+$youngMin = if ($alive.Count -gt 0) { ((Get-Date) - $alive[0].CreationDate).TotalMinutes } else { 999 }
+
 if ($alive.Count -gt 0 -and -not $sleeping) {
   if (Test-Path $beatFile) {
     $idleMin = [int]((Get-Date) - (Get-Item $beatFile).LastWriteTime).TotalMinutes
-    if ($idleMin -ge 40) {
+    if ($idleMin -ge 40 -and $youngMin -ge 10) {
       $stalled = $true
       Note "`n===== СТОРОЖ: главный цикл молчит $idleMin мин - перезапускаю драйвер ====="
       $alive | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
