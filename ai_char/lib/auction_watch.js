@@ -38,7 +38,7 @@
 // Отсчёт игра печатает грубо, пока далеко («еще 3 дн.»), и точно, когда близко («еще 2 дн. 7 ч.
 // 30 мин.»). Поэтому доску перечитываем раз в 2 часа: к самому дню аукциона время уже точное.
 
-module.exports = { runAuctionRemindersIfDue, parseAuctionBoard, dueReminder, confirmParts };
+module.exports = { runAuctionRemindersIfDue, parseAuctionBoard, dueReminder, confirmParts, parseLiveRow, decideBid };
 
 const fs = require('fs');
 const path = require('path');
@@ -208,6 +208,196 @@ async function boardConfirms(page, parts) {
   const text = await openBoard(page);
   if (!text) return [];
   return confirmParts(text, parts);
+}
+
+// НАБЛЮДЕНИЕ ЗА ТОРГАМИ. Паша, 24.10.2026: «сходи на 1 аукцион, изучи как это работает».
+// Пока ремесло занято, на странице только список с отсчётами - ни формы, ни ссылки ставки. Значит
+// устройство торгов видно ровно в те минуты, когда отсчёт кончился. Поэтому за три минуты до срока
+// приходим на доску и снимаем её каждые полминуты, пока идут торги: каждый НОВЫЙ вид страницы
+// пишется в auction_observe.jsonl - по этой записи потом и разбирать, а не по догадкам.
+//
+// Ставок НЕ делаем: Паша просил изучить. Семена - ресурс, и ставка это действие наружу.
+const OBSERVE_FILE = path.join(__dirname, '..', 'auction_observe.jsonl');
+const OBSERVE_LEAD_MS = 3 * 60 * 1000;
+const OBSERVE_MAX_MS = Number(process.env.AI_AUCTION_OBSERVE_MS || 20 * 60 * 1000);
+const OBSERVE_STEP_MS = 30 * 1000;
+// 24.10.2026, Паша: «после первой ставки там обновляй 2 раза в секунду, а лучше 3 если не
+// поймаешь автобан». Смысл в сроке: ставка держится 6 минут, и если её перебили - узнать об
+// этом надо сразу, иначе торги уйдут. Поэтому после СВОЕЙ первой ставки наблюдение переходит
+// на быстрый шаг и обновляет саму страницу аукциона (один запрос), а не ходит по маршруту.
+// Про автобан: признаки флуда («слишком часто», «подождите», «флуд», пустая страница) гасят
+// скорость вдвое, и каждый такой случай пишется в лог - это и есть ответ на «если не поймаешь
+// автобан». Быстрая фаза ограничена по времени: лишние полчаса по три запроса в секунду никому
+// не нужны.
+const FAST_STEP_MS = Number(process.env.AI_AUCTION_FAST_MS || 333);
+const FAST_MAX_MS = Number(process.env.AI_AUCTION_FAST_WINDOW_MS || 8 * 60 * 1000);
+const FLOOD_RE = /слишком часто|не так быстро|подождите|флуд|превышен|забанен|бан на|слишком много запросов/i;
+
+// СТАВКА. Паша, 24.10.2026: «можешь ставить для изучения, важно чтобы ты разобрался в процессе».
+// Поэтому наблюдение теперь не только смотрит: как на странице появляется способ поставить -
+// жмём его и ставим минимальный шаг (3 семени, так сказано в правилах Кумуса). Ставок за торги
+// не больше BID_MAX_TRIES: цель - понять механику, а не выиграть любой ценой. Больше, чем есть
+// семян, не ставим; перебитая ставка семян не теряет (это тоже из правил, проверим на деле).
+// ПРИНЦИП СТАВОК (Паша, 24.10.2026): «Максимальная ставка 150, кто первый поставит 150 тот и
+// забирает. Либо не перебьют ставку меньше, но если уже пошла борьба то почти наверняка дойдет до
+// 150». Отсюда стратегия, а не угадывание:
+//   * семян 150 и больше - ставим СРАЗУ 150 и забираем: выше потолка не бывает, перебить нечем;
+//   * семян меньше - ставим минимум (или текущую ставку плюс шаг) и ждём. Не перебили - взяли
+//     дешевле; пошла борьба - поднимаем, пока хватает семян, и выходим молча, когда не хватает;
+//   * против своих не торгуемся: ставку держит Tsunami или Hank - не перебиваем (24.10 Паша как
+//     раз брал Винокура за 150, мне там делать нечего).
+const BID_CAP = Number(process.env.AI_AUCTION_BID_CAP || 150);
+const OWN_BIDDERS = (process.env.AI_GOLEM_REQUESTERS || 'Hank,Tsunami').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+const BID_ENABLED = process.env.AI_AUCTION_BID !== '0';
+const BID_STEP = Number(process.env.AI_AUCTION_BID_STEP || 3);
+const BID_MAX_TRIES = Number(process.env.AI_AUCTION_BID_TRIES || 2);
+
+// Ставка одним заходом: ссылка торгов -> форма -> submit. Всё, что видим, пишем в лог: по этой
+// записи и будет разбор, обещанный Паше.
+// Строка ремесла в минуты торгов. Три вида, все замерены вживую 24.10.2026:
+//   «Винокур - BlackOpium еще 49 сек.»           - ещё занято, отсчёт до освобождения;
+//   «Винокур - ремесло не занято»                 - свободно, рядом ссылка «Начать аукцион»;
+//   «Винокур - ставка 150 от Tsunami еще 290 сек» - идут торги: ставка, кто держит, счёт до конца.
+function parseLiveRow(text, prof) {
+  const flat = String(text || '').replace(/\s+/g, ' ');
+  const i = flat.indexOf(`${prof} - `);
+  if (i < 0) return null;
+  // Резать по 140 знаков нельзя: строка залезала в СЛЕДУЮЩЕЕ ремесло, и «Винокур - ставка 150»
+  // получал «ремесло не занято» от Кузнеца (поймал тестом). Режем до имени следующей профессии.
+  const after = flat.slice(i + prof.length);
+  const nextAt = PROFESSIONS
+    .filter((pp) => pp.name !== prof)
+    .map((pp) => after.indexOf(`${pp.name} - `))
+    .filter((x) => x > 0)
+    .sort((a, b) => a - b)[0];
+  const row = flat.slice(i, i + prof.length + (nextAt === undefined ? 140 : nextAt));
+  if (/ремесло не занято/i.test(row)) return { free: true, bid: 0, bidder: null, secLeft: null, row };
+  const m = row.match(/ставка\s+(\d+)\s+от\s+(\S+)\s+еще\s+(\d+)\s*сек/i);
+  if (m) return { free: false, bid: Number(m[1]), bidder: m[2], secLeft: Number(m[3]), row };
+  return { free: false, bid: null, bidder: null, secLeft: null, row };
+}
+
+// Сколько ставить. null - не ставим вовсе: нечем или против своих.
+function decideBid(live, seeds) {
+  if (!live) return null;
+  if (live.bidder && OWN_BIDDERS.includes(String(live.bidder).toLowerCase())) return null;
+  if (seeds >= BID_CAP) return BID_CAP;
+  const next = Math.max(BID_STEP, (live.bid || 0) + BID_STEP);
+  return next <= seeds ? next : null;
+}
+
+async function tryBid(page, prof) {
+  const links = await page.$$eval('a', (as) => as.map((a) => ({ t: (a.innerText || '').trim(), h: a.getAttribute('href') }))).catch(() => []);
+  // 24.10.2026, живые торги Кузнеца: вход в ставки называется «Начать аукцион» - под прежний
+  // шаблон он не попадал, и ставку мы не пробовали вовсе. Строка ремесла в это время выглядит
+  // так: «Кузнец - ставка 150 от Linda еще 222 сек».
+  const bidLink = links.find((l) => /начать аукцион|ставк|поставить|торг|участв|перебить/i.test(l.t));
+  if (bidLink) {
+    console.log(`Аукцион ${prof}: жму «${bidLink.t}»`);
+    await page.goto(new URL(bidLink.h, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 400, 700);
+  }
+  const forms = await page.$$eval('form', (fs) => fs.map((f) => ({
+    action: f.getAttribute('action'),
+    fields: Array.from(f.querySelectorAll('input,select,textarea')).map((i) => ({ name: i.name, type: i.type || i.tagName, value: i.value })),
+  }))).catch(() => []);
+  if (!forms.length) return false;
+  console.log(`Аукцион ${prof}: форма ставки ${JSON.stringify(forms)}`);
+  const seeds = Number(S.auctionSeeds || 0);
+  const live = parseLiveRow(await getBodyText(page).catch(() => ''), prof);
+  const amount = decideBid(live, seeds);
+  if (!amount) {
+    console.log(`Аукцион ${prof}: не ставлю - ${live && live.bidder && OWN_BIDDERS.includes(String(live.bidder).toLowerCase())
+      ? `ставку держит свой (${live.bidder})`
+      : `нужно ${Math.max(BID_STEP, ((live && live.bid) || 0) + BID_STEP)} семян, а у нас ${seeds}`}.`);
+    return false;
+  }
+  for (const f of forms) {
+    for (const fld of f.fields) {
+      if (!fld.name || !/^(text|number)$/i.test(fld.type)) continue;
+      await page.locator(`input[name="${fld.name}"]`).first().fill(String(amount)).catch(() => {});
+    }
+  }
+  const before = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+  await Promise.all([
+    page.waitForLoadState('domcontentloaded').catch(() => {}),
+    page.locator('input[type="submit"]').first().click().catch(() => {}),
+  ]);
+  await pause(page, 600, 1000);
+  const after = (await getBodyText(page).catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
+  console.log(`Аукцион ${prof}: поставил ${amount} семян. Было: ${before.slice(0, 120)} | Стало: ${after}`);
+  try { fs.appendFileSync(OBSERVE_FILE, JSON.stringify({ ts: new Date().toISOString(), prof, bid: amount, answer: after }) + String.fromCharCode(10)); } catch (e) { /* не критично */ }
+  return true;
+}
+
+async function observeAuction(page, prof, endsAt) {
+  const started = Date.now();
+  let seen = 0;
+  let lastSig = '';
+  let bids = 0;
+  let firstBidAt = 0;
+  let fastMs = FAST_STEP_MS;
+  let floodHits = 0;
+  let fastOff = false; // быстрый режим выключен (вышло время или защита от флуда), но счёт ставок цел
+  console.log(`Аукцион ${prof}: сроки подошли - иду смотреть торги (снимаю доску до ${Math.round(OBSERVE_MAX_MS / 60000)} мин).`);
+  while (Date.now() - started < OBSERVE_MAX_MS) {
+    // Просьбу «нужен голем» не задерживаем ни на минуту: у неё названная секунда.
+    try {
+      if (require('./golem').golemDueWithinMs(2 * 60 * 1000)) {
+        console.log(`Аукцион ${prof}: подошёл срок голема - наблюдение прерываю.`);
+        break;
+      }
+    } catch (e) { /* модуль мог не загрузиться - наблюдение не повод падать */ }
+    // Быстрая фаза: обновляем ту же страницу аукциона одним запросом. Маршрут ногами тут не
+    // годится - он сам по себе десяток загрузок.
+    let text;
+    if (bids > 0 && !fastOff) {
+      text = await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 })
+        .then(() => getBodyText(page)).catch(() => '');
+      if (!text || FLOOD_RE.test(text)) {
+        floodHits += 1;
+        fastMs = Math.min(4000, Math.max(fastMs * 2, 500));
+        console.log(`Аукцион ${prof}: похоже на защиту от частых запросов (${floodHits}-й раз) - сбавляю до ${fastMs} мс. Ответ: ${(text || 'пусто').replace(/\s+/g, ' ').slice(0, 150)}`);
+        if (floodHits >= 5) { console.log(`Аукцион ${prof}: защита срабатывает подряд - быстрый режим выключаю.`); fastOff = true; }
+      }
+      if (!text) { await new Promise((r) => setTimeout(r, fastMs)); continue; }
+    } else {
+      text = await openBoard(page);
+    }
+    if (!text) { console.log(`Аукцион ${prof}: доска не открылась - бросаю наблюдение.`); break; }
+    const flat = text.replace(/\s+/g, ' ').replace(/\d{1,2}:\d{2}:\d{2}/g, '').trim();
+    if (flat !== lastSig) {
+      lastSig = flat;
+      seen += 1;
+      const links = await page.$$eval('a', (as) => as.map((a) => (a.innerText || '').trim()).filter(Boolean)).catch(() => []);
+      const forms = await page.$$eval('form', (fs) => fs.map((f) => ({
+        action: f.getAttribute('action'),
+        fields: Array.from(f.querySelectorAll('input,select,textarea')).map((i) => `${i.name || '-'}:${i.type || i.tagName}`),
+      }))).catch(() => []);
+      const row = { ts: new Date().toISOString(), prof, endsAt: new Date(endsAt).toISOString(), text: flat.slice(0, 2000), links, forms };
+      try { fs.appendFileSync(OBSERVE_FILE, JSON.stringify(row) + String.fromCharCode(10)); } catch (e) { /* журнал не критичен */ }
+      console.log(`Аукцион ${prof}: экран ${seen} - ${flat.slice(0, 200)}`);
+      if (forms.length) console.log(`Аукцион ${prof}: НА СТРАНИЦЕ ФОРМА: ${JSON.stringify(forms)}`);
+      // Появился способ поставить - ставим (Паша разрешил ради изучения), но не больше
+      // BID_MAX_TRIES раз за эти торги.
+      if (BID_ENABLED && bids < BID_MAX_TRIES && (forms.length || links.some((t) => /начать аукцион|ставк|поставить|перебить|участв/i.test(t)))) {
+        const ok = await tryBid(page, prof).catch((e) => { console.log(`Аукцион ${prof}: ставка не вышла: ${e.message}`); return false; });
+        if (ok) { bids += 1; if (!firstBidAt) firstBidAt = Date.now(); }
+      }
+    }
+    // Пока своей ставки нет - смотрим раз в полминуты. После ставки шаг быстрый (см. FAST_STEP_MS):
+    // надо успеть заметить, что нас перебили, пока идут шесть минут.
+    if (bids > 0 && !fastOff) {
+      if (Date.now() - firstBidAt > FAST_MAX_MS) {
+        console.log(`Аукцион ${prof}: быстрая фаза вышла по времени (${Math.round(FAST_MAX_MS / 60000)} мин) - дальше смотрю спокойно.`);
+        fastOff = true;
+      }
+      await new Promise((r) => setTimeout(r, fastMs));
+    } else {
+      await new Promise((r) => setTimeout(r, OBSERVE_STEP_MS));
+    }
+  }
+  console.log(`Аукцион ${prof}: наблюдение закончил, разных экранов ${seen}. Запись в auction_observe.jsonl.`);
 }
 
 async function runAuctionRemindersIfDue(page) {
