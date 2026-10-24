@@ -194,6 +194,52 @@ async function boardConfirms(page, parts) {
   });
 }
 
+// НАБЛЮДЕНИЕ ЗА ТОРГАМИ. Паша, 24.10.2026: «сходи на 1 аукцион, изучи как это работает».
+// Пока ремесло занято, на странице только список с отсчётами - ни формы, ни ссылки ставки. Значит
+// устройство торгов видно ровно в те минуты, когда отсчёт кончился. Поэтому за три минуты до срока
+// приходим на доску и снимаем её каждые полминуты, пока идут торги: каждый НОВЫЙ вид страницы
+// пишется в auction_observe.jsonl - по этой записи потом и разбирать, а не по догадкам.
+//
+// Ставок НЕ делаем: Паша просил изучить. Семена - ресурс, и ставка это действие наружу.
+const OBSERVE_FILE = path.join(__dirname, '..', 'auction_observe.jsonl');
+const OBSERVE_LEAD_MS = 3 * 60 * 1000;
+const OBSERVE_MAX_MS = Number(process.env.AI_AUCTION_OBSERVE_MS || 20 * 60 * 1000);
+const OBSERVE_STEP_MS = 30 * 1000;
+
+async function observeAuction(page, prof, endsAt) {
+  const started = Date.now();
+  let seen = 0;
+  let lastSig = '';
+  console.log(`Аукцион ${prof}: сроки подошли - иду смотреть торги (снимаю доску до ${Math.round(OBSERVE_MAX_MS / 60000)} мин).`);
+  while (Date.now() - started < OBSERVE_MAX_MS) {
+    // Просьбу «нужен голем» не задерживаем ни на минуту: у неё названная секунда.
+    try {
+      if (require('./golem').golemDueWithinMs(2 * 60 * 1000)) {
+        console.log(`Аукцион ${prof}: подошёл срок голема - наблюдение прерываю.`);
+        break;
+      }
+    } catch (e) { /* модуль мог не загрузиться - наблюдение не повод падать */ }
+    const text = await openBoard(page);
+    if (!text) { console.log(`Аукцион ${prof}: доска не открылась - бросаю наблюдение.`); break; }
+    const flat = text.replace(/\s+/g, ' ').replace(/\d{1,2}:\d{2}:\d{2}/g, '').trim();
+    if (flat !== lastSig) {
+      lastSig = flat;
+      seen += 1;
+      const links = await page.$$eval('a', (as) => as.map((a) => (a.innerText || '').trim()).filter(Boolean)).catch(() => []);
+      const forms = await page.$$eval('form', (fs) => fs.map((f) => ({
+        action: f.getAttribute('action'),
+        fields: Array.from(f.querySelectorAll('input,select,textarea')).map((i) => `${i.name || '-'}:${i.type || i.tagName}`),
+      }))).catch(() => []);
+      const row = { ts: new Date().toISOString(), prof, endsAt: new Date(endsAt).toISOString(), text: flat.slice(0, 2000), links, forms };
+      try { fs.appendFileSync(OBSERVE_FILE, JSON.stringify(row) + String.fromCharCode(10)); } catch (e) { /* журнал не критичен */ }
+      console.log(`Аукцион ${prof}: экран ${seen} - ${flat.slice(0, 200)}`);
+      if (forms.length) console.log(`Аукцион ${prof}: НА СТРАНИЦЕ ФОРМА: ${JSON.stringify(forms)}`);
+    }
+    await new Promise((r) => setTimeout(r, OBSERVE_STEP_MS));
+  }
+  console.log(`Аукцион ${prof}: наблюдение закончил, разных экранов ${seen}. Запись в auction_observe.jsonl.`);
+}
+
 async function runAuctionRemindersIfDue(page) {
   const now = Date.now();
   if (now - (S.auctionBoardAt || 0) >= READ_EVERY_MS) {
@@ -216,6 +262,18 @@ async function runAuctionRemindersIfDue(page) {
 
   const board = Array.isArray(S.auctionBoard) ? S.auctionBoard : [];
   const today = dayKey(now);
+
+  // Наблюдение за торгами: один раз на ремесло в день, когда до срока меньше трёх минут.
+  const watchDay = (S.auctionWatched && S.auctionWatched.day === today && S.auctionWatched.profs) || [];
+  const soon = board.find((a) => dayKey(a.endsAt) === today && a.endsAt - now <= OBSERVE_LEAD_MS
+    && a.endsAt - now > -OBSERVE_MAX_MS && !watchDay.includes(a.prof));
+  if (soon) {
+    S.auctionWatched = { day: today, profs: [...watchDay, soon.prof] };
+    persistDailyQuestState();
+    await observeAuction(page, soon.prof, soon.endsAt);
+    return true;
+  }
+
   const sentMap = (S.auctionSent && S.auctionSent.day === today && S.auctionSent.kinds) || {};
   const groups = new Map(); // вид напоминания -> [что сказать про каждое ремесло]
   const kinds = { ...sentMap };
