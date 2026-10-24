@@ -38,7 +38,26 @@ const IGNORE_PATTERNS = [
 
 const DEDUP_MS = 6 * 60 * 60 * 1000; // одна и та же строка - не чаще раза в 6 ч (Паша 22.09: много лишнего)
 const MAX_PER_HOUR = 12;
+// 24.10.2026: Паша получил пачку ошибок в Telegram. Главный усилитель - вот эта память: она жила
+// ТОЛЬКО в процессе. Драйвер перезапускался восемь раз за два часа, и каждая новая жизнь начинала
+// с чистого листа - одна и та же строка «Старт: переход на lbast.ru не удался» уходила ему снова и
+// снова, хотя дедуп на 6 часов её обязан был съесть. Теперь память на диске (тот же урок, что с
+// черепами 09.10.2026: отметка, которая не переживает перезапуск, не отметка).
+const DEDUP_FILE = require('path').join(__dirname, 'tg_dedup.json');
 const recent = new Map(); // нормализованный текст -> время отправки
+try {
+  const raw = JSON.parse(require('fs').readFileSync(DEDUP_FILE, 'utf8'));
+  const now0 = Date.now();
+  for (const [k, v] of Object.entries(raw)) if (now0 - v < DEDUP_MS) recent.set(k, v);
+} catch (e) { /* файла нет - первый запуск */ }
+function saveDedup() {
+  try {
+    const now0 = Date.now();
+    const obj = {};
+    for (const [k, v] of recent) if (now0 - v < DEDUP_MS) obj[k] = v;
+    require('fs').writeFileSync(DEDUP_FILE, JSON.stringify(obj));
+  } catch (e) { /* не критично */ }
+}
 let sentTimes = [];
 
 function normalizeForDedup(line) {
@@ -74,6 +93,7 @@ function alertIfNeeded(line) {
   const last = recent.get(key);
   if (last && now - last < DEDUP_MS) return;
   recent.set(key, now);
+  saveDedup();
   sendTelegram(s).catch(() => {});
 }
 

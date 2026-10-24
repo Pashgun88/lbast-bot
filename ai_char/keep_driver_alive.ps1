@@ -97,6 +97,44 @@ foreach ($n in 'SingletonLock', 'SingletonCookie', 'SingletonSocket') {
   if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 }
 
+# ШТОРМ ПЕРЕЗАПУСКОВ. Паша, 24.10.2026: «при шторме перезапусков в Telegram уходит ОДНА строка
+# вместо десятка ошибок, и по ней ты одним словом поднимаешь меня». Считаем свои перезапуски:
+# файл restart_log.txt, одна строка - одно время. Четыре и больше за час - это не случайность, а
+# круг, и чинить его должен человек. Сообщение посылаем не чаще раза в два часа, иначе шторм
+# сообщений заменит шторм ошибок.
+$restartLog = Join-Path $dir 'restart_log.txt'
+$stormMark = Join-Path $dir 'restart_storm_notified.txt'
+Add-Content -Path $restartLog -Value (Get-Date -Format o) -ErrorAction SilentlyContinue
+try {
+  $hourAgo = (Get-Date).AddHours(-1)
+  $times = @(Get-Content $restartLog -ErrorAction Stop | ForEach-Object { try { [datetime]::Parse($_) } catch { } } | Where-Object { $_ -gt $hourAgo })
+  # Файл не растим: держим только последние сутки.
+  $dayAgo = (Get-Date).AddDays(-1)
+  @(Get-Content $restartLog | ForEach-Object { try { if ([datetime]::Parse($_) -gt $dayAgo) { $_ } } catch { } }) | Set-Content -Path $restartLog -Encoding utf8
+  if ($times.Count -ge 4) {
+    $quiet = $true
+    if (Test-Path $stormMark) { $quiet = ((Get-Date) - (Get-Item $stormMark).LastWriteTime).TotalHours -ge 2 }
+    if ($quiet) {
+      $envFile = Join-Path (Split-Path -Parent $dir) '.env'
+      $tok = $null; $chat = $null
+      if (Test-Path $envFile) {
+        foreach ($line in Get-Content $envFile) {
+          if ($line -match '^\s*TELEGRAM_BOT_TOKEN\s*=\s*(.+)$') { $tok = $matches[1].Trim().Trim('"') }
+          if ($line -match '^\s*TELEGRAM_CHAT_ID\s*=\s*(.+)$') { $chat = $matches[1].Trim().Trim('"') }
+        }
+      }
+      if ($tok -and $chat) {
+        $msg = "AI__: драйвер перезапускается по кругу - $($times.Count) раз за час. Сам не выправлюсь, нужен ты."
+        try {
+          Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$tok/sendMessage" -Body @{ chat_id = $chat; text = $msg } -TimeoutSec 20 | Out-Null
+          Set-Content -Path $stormMark -Value (Get-Date -Format o) -Encoding utf8
+          Note "===== СТОРОЖ: шторм перезапусков ($($times.Count) за час) - сказал Паше одной строкой ====="
+        } catch { Note "===== СТОРОЖ: шторм перезапусков, но сообщение не ушло: $($_.Exception.Message) =====" }
+      }
+    }
+  }
+} catch { }
+
 Note "`n===== RESTART (сторож keep_driver_alive) $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss') ====="
 # Запуск именно через bash с '>>': Start-Process -RedirectStandardOutput ЗАТИРАЕТ файл, а лог
 # нужно дописывать - иначе теряется история дня и нечем ответить на «почему квест не делался».
