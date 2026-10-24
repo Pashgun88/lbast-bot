@@ -8,8 +8,13 @@
 //
 // Дорога (пройдена вживую 21.10.2026): Стоунгард -> Северные ворота -> Идти на север -> север ->
 // север (на третьем шаге появляется поворот на запад) -> запад, запад, запад -> Город Мастеров ->
-// Городская ратуша. Но ходить НЕ НУЖНО: страница аукциона открывается прямой ссылкой
-// loc.php?obj=5116&flag=100&mod=auction - проверено.
+// Городская ратуша.
+//
+// ВАЖНО, и на этом я обжёгся: 21.10.2026 я записал «ходить не нужно, страница открывается прямой
+// ссылкой - проверено». Проверка была негодная: я стоял тогда В Городе Мастеров. Номер объекта в
+// lbast ЛОКАЛЬНЫЙ - из любого другого места loc.php?obj=5116 отдаёт пустую страницу (тот же урок
+// уже был с гильдией травников, obj=5134). Поэтому за доской ХОДИМ, и до 24.10.2026 ни одного
+// напоминания не ушло: в журнале копилось «доска не разобралась».
 //
 // Как устроено (из «О городе», замер 21.10.2026): семь ремёсел, каждое занято игроком на неделю, у
 // каждого в ратуше свой отсчёт («Винокур - BlackOpium еще 3 дн.»). Отсчёт кончился - по этому
@@ -38,9 +43,8 @@ module.exports = { runAuctionRemindersIfDue, parseAuctionBoard, dueReminder };
 const fs = require('fs');
 const path = require('path');
 const { S, persistDailyQuestState } = require('./state');
-const { getBodyText } = require('./core');
+const { getBodyText, pause } = require('./core');
 
-const BOARD_URL = 'http://lbast.ru/loc.php?obj=5116&flag=100&mod=auction';
 const OUTBOX_FILE = path.join(__dirname, '..', 'chat_outbox.json');
 const CLAN_HALL_ROOM = 12;
 const READ_EVERY_MS = 2 * 60 * 60 * 1000;
@@ -128,11 +132,55 @@ function dueReminder(endsAt, sentKinds, now = Date.now()) {
   return null;
 }
 
+// Дорога до доски: Стоунгард -> Северные ворота -> на север, пока не появится «Идти на запад»
+// (это третья клетка) -> на запад три раза -> Город Мастеров -> Городская ратуша -> Аукцион.
+// Если ссылка «Городская ратуша» видна на текущей локации, мы уже на месте и никуда не идём.
+async function openBoard(page) {
+  const click = async (re) => {
+    const href = await page.evaluate((src) => {
+      const r = new RegExp(src, 'i');
+      const a = Array.from(document.querySelectorAll('a')).find((x) => r.test((x.innerText || '').trim()));
+      return a ? a.getAttribute('href') : null;
+    }, re.source).catch(() => null);
+    if (!href) return false;
+    await page.goto(new URL(href, 'http://lbast.ru/').href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await pause(page, 400, 700);
+    return true;
+  };
+  const atBoard = async () => {
+    if (!(await click(/^Городская ратуша$/))) return false;
+    if (!(await click(/^Аукцион$/))) return false;
+    return true;
+  };
+
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pause(page, 300, 600);
+  if (await atBoard()) return getBodyText(page).catch(() => '');
+
+  // Не на месте - идём от Стоунгарда.
+  await page.goto('http://lbast.ru/location.php?mod=fastway&lway=2', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 7000));
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 300, 600);
+  if (!(await click(/Северные ворота/))) return '';
+  if (!(await click(/^Идти на север/))) return '';
+  for (let i = 0; i < 5; i += 1) {
+    const hasWest = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
+      .some((a) => /^Идти на запад/i.test((a.innerText || '').trim()))).catch(() => false);
+    if (hasWest) break;
+    if (!(await click(/^Идти на север/))) return '';
+  }
+  for (let i = 0; i < 3; i += 1) {
+    if (!(await click(/^Идти на запад/))) break;
+    if (await atBoard()) return getBodyText(page).catch(() => '');
+  }
+  return (await atBoard()) ? getBodyText(page).catch(() => '') : '';
+}
+
 // Сверка с живой страницей: каждое «Ремесло в ЧЧ:ММ» должно найтись на доске с тем же временем
 // (допуск 3 минуты - страница печатает отсчёт с округлением до минуты).
 async function boardConfirms(page, parts) {
-  await page.goto(BOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  const text = await getBodyText(page).catch(() => '');
+  const text = await openBoard(page);
   const live = parseAuctionBoard(text, Date.now()).rows;
   if (!live.length) return false;
   return parts.every((p) => {
@@ -149,8 +197,7 @@ async function boardConfirms(page, parts) {
 async function runAuctionRemindersIfDue(page) {
   const now = Date.now();
   if (now - (S.auctionBoardAt || 0) >= READ_EVERY_MS) {
-    await page.goto(BOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const text = await getBodyText(page).catch(() => '');
+    const text = await openBoard(page);
     const parsed = parseAuctionBoard(text, Date.now());
     S.auctionBoardAt = now;
     if (!parsed.rows.length) {
