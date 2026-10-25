@@ -120,10 +120,14 @@ async function equipEmblemFromBag(page) {
   // Причина: в INV_PAGES перебирались только cpage=2, а инвентарь разросся до 207 предметов и пяти
   // страниц. Теперь страницы берём не из списка наугад, а по ССЫЛКАМ пагинации самой игры -
   // сколько бы их ни стало.
+  // 25.10.2026: перебор сорока страниц сумки подряд ловил автобан («не более 10 кликов за 2 сек»),
+  // и дальше всё падало - герб не нашёлся, в замке вместо прогресса была та же ругань. Теперь
+  // между страницами пауза, а автобан прерывает перебор, а не портит поход.
   const pages = [];
   for (const base of INV_VIEWS) {
     const ok = await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 }).then(() => true).catch(() => false);
     if (!ok) continue;
+    await pause(page, 400, 700);
     pages.push(base);
     const nums = await page.evaluate(() => Array.from(document.querySelectorAll('a'))
       .filter((a) => /^[0-9]+$/.test((a.textContent || '').trim()))
@@ -136,6 +140,12 @@ async function equipEmblemFromBag(page) {
   for (const url of pages) {
     const ok = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).then(() => true).catch(() => false);
     if (!ok) continue;
+    await pause(page, 400, 700);
+    const pageText = await getBodyText(page).catch(() => '');
+    if (/автобан/i.test(pageText)) {
+      console.log('Клановый герб: поймал автобан на переборе сумки - прерываю перебор, вернусь в следующем круге.');
+      return false;
+    }
     const equipHref = await page.evaluate(() => {
       let lastName = '';
       for (const a of Array.from(document.querySelectorAll('a'))) {

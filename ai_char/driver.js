@@ -489,6 +489,7 @@ const { canRunFishEyeFightNow, canRunDrabasNow, hasPendingFightQuests: hasPendin
 const { buyFestiveAleIfNeeded } = require('./lib/ale_shop');
 const { acceptPendingLeasesIfAny } = require('./lib/lease');
 const { takeClanEmblemIfDue } = require('./lib/clan_emblem');
+const { dropBrokenGearIfAny } = require('./lib/broken_gear');
 // Шаги цикла с ЦЕПОЧКОЙ боёв - выключены и в режиме 'single' (между боями не полечиться).
 const CHAIN_FIGHT_STEPS = new Set([
   'Шепот quest step',
@@ -1047,6 +1048,13 @@ async function loginIfNeeded(page) {
       // 23.09.2026, Паша: «будут писать письма о продаже - не забывай принимать в инвентаре.
       // Тебе нужно много предметов ордо». Принимаем ордо по цене из объявления (60 за штуку).
       r = await runCycleStep(page, 'Приём передач', () => acceptOrdoOffersIfAny(page));
+      didAnything = didAnything || r.didAnything;
+      if (r.ko) continue;
+      // 25.10.2026, Паша: «когда видишь такое, нужно нажать на красную надпись и потом - выбросить
+      // поломаное. И посмотреть что это, если герб - ты же знаешь что нужно новый взять».
+      // Идёт ПЕРЕД гербом: выброшенный сломанный герб освобождает слот клан-вещи, а пустой слот -
+      // это и есть триггер следующего шага, так что новый берётся в том же круге.
+      r = await runCycleStep(page, 'Сломанная экипировка', () => dropBrokenGearIfAny(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
       // 26.09.2026, Паша: «раз в неделю нужно взять клановый герб и одеть его... если в экипировке
