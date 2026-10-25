@@ -41,6 +41,17 @@ const LOG_FILE = path.join(__dirname, '..', 'fish_fort_log.jsonl');
 const STOP_STEP = Number(process.env.AI_FORT_FISH_STOP || 10);
 const PRESS_GAP_MS = Number(process.env.AI_FORT_FISH_GAP || 700);
 const MAX_PRESSES = 30; // предохранитель: игра сама кончает попытку раньше
+// 25.10.2026. Журнал за пять дней показал дыру в замере: 41 попытка из 53 сделана на шаге 10, а
+// на соседних шагах - по одной, и сравнивать не с чем. Шаг 10 даёт 46% срывов и 0.44 кг в среднем
+// с учётом раков; удачная подсечка там - 0.68 кг. Пока не доказано, что это максимум: ранняя
+// подсечка ловит почти всегда, но мелочь. Поэтому дневные попытки раскладываются по шагам 8-12 по
+// кругу - за неделю наберётся по полтора десятка на каждый, и тогда выбор будет по цифрам.
+// AI_FORT_FISH_STOP задан явно - значит Паша хочет фиксированный шаг, и разведка отключается.
+const PROBE_STEPS = [8, 9, 10, 11, 12];
+const PROBE_ON = !process.env.AI_FORT_FISH_STOP;
+function stepForCast(i) {
+  return PROBE_ON ? PROBE_STEPS[i % PROBE_STEPS.length] : STOP_STEP;
+}
 
 const dayKey = () => new Date().toLocaleDateString('ru-RU');
 
@@ -151,15 +162,15 @@ async function runFortFishingIfDue(page) {
 
   const caught = [];
   for (let i = used; i < limit; i += 1) {
-    const row = await playOneCast(page);
+    const row = await playOneCast(page, stepForCast(i));
     caught.push(row);
-    console.log(`Рыбалка в форте: попытка ${i + 1}/${limit} - ${row.escaped ? 'сошла, остался рак' : row.fish || 'улов'} ${row.kg ?? '?'} кг${row.writeError ? ' (игра ответила «Ошибка записи данных» - попытка могла не засчитаться)' : ''}.`);
+    console.log(`Рыбалка в форте: попытка ${i + 1}/${limit} (тяну до шага ${stepForCast(i)}) - ${row.escaped ? 'сошла, остался рак' : row.fish || 'улов'} ${row.kg ?? '?'} кг${row.writeError ? ' (игра ответила «Ошибка записи данных» - попытка могла не засчитаться)' : ''}.`);
   }
   const after = await readUsed(page);
   S.fortFishDayKey = dayKey();
   persistDailyQuestState();
   const sum = caught.reduce((a, r) => a + (r.kg || 0), 0);
-  console.log(`Рыбалка в форте: сделал ${caught.length} попыт(ок), вытащил ${sum.toFixed(2)} кг; по игре ${after.used} из ${after.limit}, улов дня ${after.totalKg} кг. Шаг остановки ${STOP_STEP}.`);
+  console.log(`Рыбалка в форте: сделал ${caught.length} попыт(ок), вытащил ${sum.toFixed(2)} кг; по игре ${after.used} из ${after.limit}, улов дня ${after.totalKg} кг. ${PROBE_ON ? `Шаги разведки: ${PROBE_STEPS.join('/')}.` : `Шаг остановки ${STOP_STEP}.`}`);
   return true;
 }
 
