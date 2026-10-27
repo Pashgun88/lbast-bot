@@ -59,7 +59,7 @@ async function writeStockFactsIfDue(page) {
     at: new Date().toISOString(),
     level: S.charLevel || null,
     money,
-    farm: process.env.AI_FARM_SPOT === 'hides' ? 'кабан и бизон' : 'горгулья (молега не бьём с 20.10.2026)',
+    farm: process.env.AI_FARM_SPOT === 'hides' ? 'кабан и бизон' : 'горгулья (молега не бьём до 11 уровня с новым комплектом - Паша, 27.10.2026)',
     items: counts,
   };
   try { fs.writeFileSync(STOCK_FILE, JSON.stringify(facts, null, 1)); } catch (e) { return false; }
