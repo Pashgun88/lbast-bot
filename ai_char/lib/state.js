@@ -186,6 +186,8 @@ S.herbGuildAt = 0;        // когда варили в последний ра�
 S.herbGuildEmptyDay = null; // «варить было нечего» пишем в лог раз в сутки
 // Зубы горгульи: под варку держим столько же, сколько листьев змеевика, остаток - Ханку по 250.
 S.teethSentAt = 0;
+S.healElixirSentAt = 0;
+S.healElixirTriedAt = 0;
 S.teethTriedAt = 0;
 S.teethSmallLoggedDay = null;
 S.stockFactsAt = 0; // когда последний раз писали сводку запасов для чата (chat_facts.json)
@@ -456,6 +458,8 @@ function restoreDailyQuestState() {
   if (Number.isFinite(s.herbGuildAt)) S.herbGuildAt = s.herbGuildAt;
   if (typeof s.herbGuildEmptyDay === 'string' || s.herbGuildEmptyDay === null) S.herbGuildEmptyDay = s.herbGuildEmptyDay;
   if (Number.isFinite(s.teethSentAt)) S.teethSentAt = s.teethSentAt;
+  if (Number.isFinite(s.healElixirSentAt)) S.healElixirSentAt = s.healElixirSentAt;
+  if (Number.isFinite(s.healElixirTriedAt)) S.healElixirTriedAt = s.healElixirTriedAt;
   if (Number.isFinite(s.teethTriedAt)) S.teethTriedAt = s.teethTriedAt;
   if (typeof s.teethSmallLoggedDay === 'string' || s.teethSmallLoggedDay === null) S.teethSmallLoggedDay = s.teethSmallLoggedDay;
   if (Number.isFinite(s.stockFactsAt)) S.stockFactsAt = s.stockFactsAt;
@@ -558,7 +562,7 @@ function persistDailyQuestState() {
     lastFishEyeRunAt: S.lastFishEyeRunAt, fishEyeDayKey: S.fishEyeDayKey, fishEyeFightsToday: S.fishEyeFightsToday, fishEyeRewardClaimedToday: S.fishEyeRewardClaimedToday,
     lastDrabasRunAt: S.lastDrabasRunAt, drabasDayKey: S.drabasDayKey, drabasRunsToday: S.drabasRunsToday,
     drabasNoPetUntil: S.drabasNoPetUntil, levelUpReported: S.levelUpReported,
-    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, herbGuildAt: S.herbGuildAt, herbGuildEmptyDay: S.herbGuildEmptyDay, teethSentAt: S.teethSentAt, teethTriedAt: S.teethTriedAt, teethSmallLoggedDay: S.teethSmallLoggedDay, stockFactsAt: S.stockFactsAt, brokenGearAt: S.brokenGearAt, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, fishingNoRodDayKey: S.fishingNoRodDayKey, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, expDayKey: S.expDayKey, farmMolegDebt: S.farmMolegDebt, golemUsedAt: S.golemUsedAt, golemLastTarget: S.golemLastTarget, ordoAdSentAt: S.ordoAdSentAt, ordoAdSmallLoggedDay: S.ordoAdSmallLoggedDay, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, golemElixirSentAt: S.golemElixirSentAt, golemElixirTriedAt: S.golemElixirTriedAt, golemElixirSmallLoggedAt: S.golemElixirSmallLoggedAt, bungaloWatchCheckedAt: S.bungaloWatchCheckedAt, bungaloWatchPostedAt: S.bungaloWatchPostedAt, bungaloWatchKinds: S.bungaloWatchKinds, auctionBoardAt: S.auctionBoardAt, auctionSeeds: S.auctionSeeds, auctionWatched: S.auctionWatched, fortFishDayKey: S.fortFishDayKey, auctionBoard: S.auctionBoard, auctionSent: S.auctionSent, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
+    charLevel: S.charLevel, citizenWorkDayKey: S.citizenWorkDayKey, titanSchoolDayKey: S.titanSchoolDayKey, herbGuildDayKey: S.herbGuildDayKey, herbGuildAt: S.herbGuildAt, herbGuildEmptyDay: S.herbGuildEmptyDay, teethSentAt: S.teethSentAt, teethTriedAt: S.teethTriedAt, healElixirSentAt: S.healElixirSentAt, healElixirTriedAt: S.healElixirTriedAt, teethSmallLoggedDay: S.teethSmallLoggedDay, stockFactsAt: S.stockFactsAt, brokenGearAt: S.brokenGearAt, farmAltNext: S.farmAltNext, farmRoundNo: S.farmRoundNo, farmKoDayKey: S.farmKoDayKey, farmKoCount: S.farmKoCount, fishingNoRodDayKey: S.fishingNoRodDayKey, ordoForeignSlotStreak: S.ordoForeignSlotStreak, slotUnknownLine: S.slotUnknownLine, slotUnknownSince: S.slotUnknownSince, questStuckStreak: S.questStuckStreak, questStuckUntil: S.questStuckUntil, expDayKey: S.expDayKey, farmMolegDebt: S.farmMolegDebt, golemUsedAt: S.golemUsedAt, golemLastTarget: S.golemLastTarget, ordoAdSentAt: S.ordoAdSentAt, ordoAdSmallLoggedDay: S.ordoAdSmallLoggedDay, skullsSentAt: S.skullsSentAt, skullsTriedAt: S.skullsTriedAt, skullsSmallLoggedAt: S.skullsSmallLoggedAt, golemElixirSentAt: S.golemElixirSentAt, golemElixirTriedAt: S.golemElixirTriedAt, golemElixirSmallLoggedAt: S.golemElixirSmallLoggedAt, bungaloWatchCheckedAt: S.bungaloWatchCheckedAt, bungaloWatchPostedAt: S.bungaloWatchPostedAt, bungaloWatchKinds: S.bungaloWatchKinds, auctionBoardAt: S.auctionBoardAt, auctionSeeds: S.auctionSeeds, auctionWatched: S.auctionWatched, fortFishDayKey: S.fortFishDayKey, auctionBoard: S.auctionBoard, auctionSent: S.auctionSent, questGapReportedDay: S.questGapReportedDay, healRatePerMin: S.healRatePerMin, healRateAt: S.healRateAt,
     lastVinogradRunAt: S.lastVinogradRunAt,
     lastFishSaleAt: S.lastFishSaleAt, fortressPowerUntil: S.fortressPowerUntil,
     ordoTaskTakenLabel: S.ordoTaskTakenLabel, ordoTaskTakenAt: S.ordoTaskTakenAt,

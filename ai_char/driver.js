@@ -27,6 +27,7 @@ const { watchBungaloTasksIfDue } = require('./guides/bungalo_watch');
 const { runAuctionRemindersIfDue } = require('./lib/auction_watch');
 const { runFortFishingIfDue } = require('./lib/fort_fishing');
 const { sendGargoyleTeethIfDue } = require('./lib/teeth_supply');
+const { sendHealingElixirsIfDue } = require('./lib/healing_elixir_sale');
 const { writeStockFactsIfDue } = require('./lib/stock_facts');
 
 // dotenv лежал в зависимостях, но его никто не подключал: .env в корне репозитория не читался
@@ -557,7 +558,7 @@ function farmOrder() {
     : ['gargoyle'];
 }
 
-const NONE_MODE_ALLOWED_STEPS = new Set(['Сводка запасов', 'Зубы горгульи Ханку', 'Рыбалка в форте', 'Аукционы: напоминания', 'Бунгало: дозор за заданиями', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
+const NONE_MODE_ALLOWED_STEPS = new Set(['Сводка запасов', 'Зубы горгульи Ханку', 'Эликсиры исцеления Паше', 'Рыбалка в форте', 'Аукционы: напоминания', 'Бунгало: дозор за заданиями', 'Гильдия травников', 'Объявление о продаже ордо', 'Голем по просьбе', 'Опыт: суточный замер',
   'Эликсиры голема в казну',
   'Дейлики по дню недели', 'Дейлики недели (как у Цунами)']);
 const noFightLoggedSteps = new Set();
@@ -1107,11 +1108,15 @@ async function loginIfNeeded(page) {
       // Боёв и трат нет, трава всё равно копится - шаг идёт и в режиме без боёв.
       r = await runCycleStep(page, 'Гильдия травников', () => runHerbGuildIfDue(page));
       didAnything = didAnything || r.didAnything;
-      if (r.ko) continue;
+      if (r.ko) continue;
+
 
       // Зубы горгульи: шаг стоит СРАЗУ ПОСЛЕ варки - сначала варим голема (зуб + лист змеевика),
       // и только остаток уходит Ханку по 250 (Паша, 24.10.2026).
       r = await runCycleStep(page, 'Зубы горгульи Ханку', () => sendGargoyleTeethIfDue(page));
+      // Эликсиры исцеления (HP+480) - Паше по 35 за штуку (29.10.2026). Нам они не по статам,
+      // надеть нельзя, а варятся из молодицы каждый день - что накопилось, то и уходит.
+      r = await runCycleStep(page, 'Эликсиры исцеления Паше', () => sendHealingElixirsIfDue(page));
       didAnything = didAnything || r.didAnything;
       if (r.ko) continue;
 
