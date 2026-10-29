@@ -28,8 +28,19 @@ function Note($text) {
   try { Add-Content -Path $log -Encoding utf8 -Value $text -ErrorAction Stop } catch { Write-Host $text }
 }
 
-$alive = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-  Where-Object { $_.CommandLine -like '*driver.js*' })
+# Отметка «сторож отработал»: 29.10.2026 драйвер стоял с 06:35 до 09:51, а в логе за это время
+# не было НИ ОДНОЙ строки сторожа - и нельзя было понять, молчал он или падал до первой записи.
+# Теперь каждый заход оставляет время в файле, а падение пишется в лог.
+try { Set-Content -Path (Join-Path $dir 'watchdog_last_run.txt') -Value (Get-Date -Format o) -Encoding utf8 -ErrorAction Stop } catch { }
+# Опрос WMI может висеть или падать, а $ErrorActionPreference = 'Stop' тогда обрывает сторожа
+# молча (окно скрыто через .vbs, жаловаться некуда). Даём опросу срок и говорим о провале в лог.
+try {
+  $alive = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -OperationTimeoutSec 30 -ErrorAction Stop |
+    Where-Object { $_.CommandLine -like '*driver.js*' })
+} catch {
+  Note "`n===== СТОРОЖ: не смог опросить процессы ($($_.Exception.Message)) - драйвер не трогаю, попробую через 5 мин ====="
+  exit 0
+}
 
 # Процесс жив - это ещё не значит, что он работает. 29.09.2026 главный цикл встал в 12:43 на шаге
 # «Fish Restaurant» и простоял 30 часов: процесс жив, браузер жив, вкладка чата бодро писала в лог. Поэтому

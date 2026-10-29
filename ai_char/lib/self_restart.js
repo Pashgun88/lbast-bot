@@ -12,6 +12,10 @@ function restartSelf(reason) {
   if (restarting) return;
   restarting = true;
   console.log(`Перезапуск драйвера: ${reason}.`);
+  // 29.10.2026: этот перезапуск НЕ СРАБОТАЛ. В логе осталась только строка про намерение
+  // перезапуститься - ни заголовка RESTART, ни жалобы на неудачу, а процесс прожил ещё три часа,
+  // пока его не поднял внешний сторож. Поэтому каждый шаг отмечается в логе, а выход страхуется.
+  let spawned = false;
   try {
     const { spawn } = require('child_process');
     const fs = require('fs');
@@ -19,11 +23,21 @@ function restartSelf(reason) {
     const out = fs.openSync(path.join(dir, 'driver_live.log'), 'a');
     const err = fs.openSync(path.join(dir, 'driver_err.log'), 'a');
     fs.writeSync(out, `\n===== RESTART (сам, браузер закрыт) ${new Date().toLocaleString('ru-RU')}\n`);
-    spawn(process.execPath, [DRIVER], { cwd: dir, detached: true, stdio: ['ignore', out, err] }).unref();
+    const child = spawn(process.execPath, [DRIVER], { cwd: dir, detached: true, stdio: ['ignore', out, err] });
+    child.unref();
+    spawned = !!child.pid;
+    console.log(`Самоперезапуск: новый драйвер запущен, PID ${child.pid}. Себя гашу.`);
   } catch (e) {
     console.log('Самоперезапуск не удался:', e.message);
   }
+  if (!spawned) console.log('Самоперезапуск: новый процесс НЕ поднялся - рассчитываю на внешнего сторожа.');
   setTimeout(() => process.exit(1), 3000);
+  // Страховка: если process.exit не сработал, через 15 секунд убиваем себя сигналом:
+  // две копии драйвера на один профиль Chrome хуже, чем грубый выход.
+  const hard = setTimeout(() => {
+    try { process.kill(process.pid, 'SIGKILL'); } catch (e) { process.abort(); }
+  }, 15000);
+  if (hard.unref) hard.unref();
 }
 
 // Пульс ГЛАВНОГО цикла. 29.09.2026 в 12:43 цикл встал на шаге «Fish Restaurant» и простоял 30 часов:
