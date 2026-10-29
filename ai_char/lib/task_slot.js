@@ -16,7 +16,7 @@
 // Внутрь можно ничего не писать (тогда снимется то, что висит) или написать кусок названия -
 // тогда отказ сработает только если строка анкеты с ним совпадает. Файл съедается после отказа.
 module.exports = {
-  readSlot, rememberSlotTaken, forgetSlotOwner, slotOwner, runDropOrderIfAny,
+  readSlot, rememberSlotTaken, forgetSlotOwner, slotOwner, runDropOrderIfAny, claimSlotRecord,
   dropAssignmentByOrder, ensureSlotFreeFor, get DROP_ORDER_FLAG() { return DROP_ORDER_FLAG; },
 };
 
@@ -43,6 +43,9 @@ const REPORT_EVERY_MS = 6 * 60 * 60 * 1000;
 const STORY_MISSION_RE = /сюжетную?\s+миссию?/i;
 const KNOWN_TASKS = [
   { re: /озеро в джунглях|бунгало/i, label: 'Задание в бунгало', droppable: true },
+  // 29.10.2026: эта простыня про мясо песчанника, огненной лисы и тушканчика - наша же «Харчевня».
+  // Без неё задание выглядело сиротой и снималось вместе с убитыми ботами.
+  { re: /харчевню Эвилгарда|песчанника для изготовления/i, label: 'Харчевня', droppable: false },
   { re: /ответственное задание/i, label: null, droppable: false },
 ];
 // Задания, которые не жалко снять ради квеста по гайду: короткие и повторяемые. Бунгало берётся
@@ -75,6 +78,22 @@ function rememberSlotTaken(label) {
   S.taskSlotTakenAt = Date.now();
   try { persistDailyQuestState(); } catch { /* состояние переживёт и без записи */ }
   console.log(`Слот задания: взяли под «${S.taskSlotOwner}».`);
+}
+
+// Записаться владельцем слота можно только если в слоте не узнаётся ЧУЖОЕ задание. 29.10.2026:
+// Харчевня взяла задание и про это не сказала, запись владельца осталась пустой - и следующий же
+// квест по гайду («Жертвоприношение») записал владельцем СЕБЯ. Дальше всё шло по ложной записи:
+// «Смерть ростовщика» получала от игры «другое задание», хотя по нашим бумагам слот держала сама.
+async function claimSlotRecord(page, label) {
+  const slot = await readSlot(page);
+  if (!slot.busy) return false;
+  const known = recognizeTask(slot.line);
+  if (known && known.label && known.label !== label) {
+    console.log(`Слот задания: в слоте по тексту ${known.label}, а не «${label}» - владельцем себя не записываю.`);
+    return false;
+  }
+  rememberSlotTaken(label);
+  return true;
 }
 
 function forgetSlotOwner() {
@@ -207,7 +226,14 @@ async function ensureSlotFreeFor(page, questName) {
 }
 
 // Задание «в работе», если у квеста с таким именем в guides_state.json начата часть маршрута.
+// Харчевня живёт не в guides_state.json, а в S: пока она взята и не сдана, её задание в работе -
+// но не дольше TAVERN_IN_PROGRESS_MS, иначе получится бессрочный гейт, которых у нас не бывает.
+const TAVERN_IN_PROGRESS_MS = 2 * 60 * 60 * 1000;
 function questInProgress(label) {
+  if (label === 'Харчевня' && S.tavernTakenToday && !S.tavernDoneToday) {
+    const age = Date.now() - (S.taskSlotTakenAt || 0);
+    if (age < TAVERN_IN_PROGRESS_MS) return true;
+  }
   try {
     const st = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'guides', 'guides_state.json'), 'utf8'));
     for (const [name, qs] of Object.entries(st)) {

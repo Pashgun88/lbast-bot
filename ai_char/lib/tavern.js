@@ -232,9 +232,12 @@ async function ensureTavernQuestBotsKilled(page, { initialReserveMinutes, questC
     }
 
     const nextIndex = kills + 1;
+    // 29.10.2026: гейт по резерву снят. Резерв в шапке почти всегда 0 или -1 (по нему уже сняты
+    // гейты в квестах и фарме), а здесь он останавливал Харчевню после первого боя: боты 2 и 3 не
+    // бились, доклад не проходил, и ВЗЯТОЕ задание оставалось в слоте - а слот один на всё, так что
+    // вместе с ним вставали Штольни, Колодец, Рыбацкая деревня и остальные. Резерв оставляю в логе.
     if (Number.isFinite(reserveMinutes) && reserveMinutes < BOT_RESERVE_COST) {
-      console.log(`Reserve is too low for bot ${nextIndex}/${BOT_LIMIT}: ${reserveMinutes}`);
-      return false;
+      console.log(`Харчевня: резерв в шапке ${reserveMinutes} - по нему больше не останавливаюсь, бой ${nextIndex}/${BOT_LIMIT} делаю.`);
     }
 
     console.log(`Tavern quest: bot ${nextIndex}/${BOT_LIMIT} -> ${matched.npc}`);
@@ -369,6 +372,10 @@ async function progressTavernQuest(page, { initialReserveMinutes, questCount } =
   if (taken) {
     S.tavernTakenToday = true;
     didAnything = true;
+    // Записываемся владельцем слота: Харчевня ЗАНИМАЕТ слот задания, а раньше про это не говорила -
+    // и сторож слота считал её задание сиротой («владелец нам неизвестен»), снимая его через 40
+    // минут вместе с убитыми ботами (29.10.2026).
+    require('./task_slot').rememberSlotTaken('Харчевня');
     // After taking the quest we must continue ONLY with this quest; bot steps are shown via Q -> инфо.
     // Try to progress bots/turn-in in the same cycle to avoid starting other quests in parallel.
   }
@@ -395,6 +402,7 @@ async function progressTavernQuest(page, { initialReserveMinutes, questCount } =
     if (turnedIn) {
       S.tavernDoneToday = true;
       S.tavernTakenToday = false;
+      require('./task_slot').forgetSlotOwner();
       S.tavernSuppressedUntil = 0;
       S.tavernFocusStartedAt = 0;
       persistDailyQuestState();

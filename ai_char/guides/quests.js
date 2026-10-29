@@ -426,7 +426,7 @@ async function runGuideQuestIfDue(page, q) {
     qs.startedAt = now;
     st[q.name] = qs;
     saveState(st);
-    if (q.takesSlot || q.needsSlot) require('../lib/task_slot').rememberSlotTaken(q.name);
+    if (q.takesSlot || q.needsSlot) await require('../lib/task_slot').claimSlotRecord(page, q.name);
     console.log(`${q.name}: квест доступен, начинаю по записанному маршруту.`);
   }
 
@@ -460,8 +460,8 @@ async function runGuideQuestIfDue(page, q) {
   // сорвались на входе и сняли из слота задание КОЛОДЦА, который уже шёл (игра потом вернула
   // его: «Восстановлено предыдущее задание»). Пустую запись заполняем собой; чужую не трогаем.
   if (q.needsSlot || q.takesSlot) {
-    const { slotOwner, rememberSlotTaken } = require('../lib/task_slot');
-    if (!(slotOwner() || {}).label) rememberSlotTaken(q.name);
+    const { slotOwner, claimSlotRecord } = require('../lib/task_slot');
+    if (!(slotOwner() || {}).label) await claimSlotRecord(page, q.name);
   }
   for (let p = qs.part; p < files.length; p++) {
     // dayGatedParts: части = игровые ДНИ, между ними игра сама говорит «расследование лучше начать
