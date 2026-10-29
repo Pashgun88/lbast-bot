@@ -22,6 +22,20 @@ const { clickByTexts, existsAnyClickable, existsAnyText, performStep } = require
 
 // Доля HP для гейта перед боем: берём свежее чтение, если оно есть, иначе последнее
 // достоверное. null означает "узнать не удалось" - вызывающий ОБЯЗАН считать это запретом боя.
+// Ниже этой доли в бой не идём даже с эликсирами: один ход сильного бота бывает дороже глотка.
+const STRONG_ELIXIR_MIN_FRACTION = 0.35;
+// Сколько «Эликсиров исцеления (HP+480)» у нас есть. Считает их сводка запасов (lib/stock_facts.js),
+// она же кладёт число в chat_facts.json каждый круг - отдельный поход в сумку ради гейта не нужен.
+function strongElixirCount() {
+  try {
+    const facts = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'chat_facts.json'), 'utf8'));
+    for (const [name, count] of Object.entries(facts)) {
+      if (/эликсир исцелени/i.test(name) && typeof count === 'number') return count;
+    }
+  } catch (e) { /* нет файла - считаем, что эликсиров нет */ }
+  return 0;
+}
+
 function hpFractionForGate(preStats) {
   const current = typeof preStats?.hpCurrent === 'number' ? preStats.hpCurrent : S.lastKnownHp.current;
   const max = typeof preStats?.hpMax === 'number' ? preStats.hpMax : S.lastKnownHp.max;
@@ -69,6 +83,15 @@ async function questFightHpGate(
   // ~14 hp/мин, до порога обычно 2-5 минут. Ждём восстановления во ВТОРОЙ вкладке, чтобы не
   // трогать сцену квеста (waitForHpAbove делает page.reload() - на экране NPC так нельзя).
   // Ждём только при ЧИТАЕМОМ HP: null означает "проверить нечем", и это по-прежнему отказ.
+  // Паша, 29.10.2026 (экран «ХОЛМЫ ... В бой!»): «тут же нужно заканчивать квест, почему на
+  // середине встаешь?» Стояли потому, что гейт ждал natural-лечения: 353/920 и +52 hp/мин - это
+  // шесть минут столбом в открытой сцене. А в сумке лежат эликсиры исцеления на 480 hp: один
+  // глоток перекрывает весь недобор, и бой их умеет пить (lib/fight.js). Поэтому: есть сильный
+  // эликсир и HP не ниже STRONG_ELIXIR_MIN_FRACTION - идём в бой сразу, а не ждём.
+  if (waitForRecovery && frac !== null && frac < floor && frac >= STRONG_ELIXIR_MIN_FRACTION && strongElixirCount() >= 2) {
+    console.log(`${label}: HP ${Math.round(frac * 100)}% < ${Math.round(floor * 100)}%, но за поясом эликсиры исцеления (${strongElixirCount()} шт., +480 каждый) - иду в бой, а не стою в сцене.`);
+    return true;
+  }
   if (waitForRecovery && frac !== null && frac < floor && S.lastKnownHp.max > 0) {
     const need = Math.ceil(S.lastKnownHp.max * floor);
     console.log(`${label}: HP ${Math.round(frac * 100)}% < ${Math.round(floor * 100)}% -> жду восстановления до ${need}/${S.lastKnownHp.max}, квест не бросаю.`);

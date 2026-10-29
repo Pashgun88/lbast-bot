@@ -106,7 +106,10 @@ function isOutfitSlotEmpty(outfitText, slotLabel) {
 // лечения (HP+80)»). Теперь правило простое: есть в инвентаре эликсир лечения с «Экипировать» -
 // надеваем, пока игра берёт (или до 3 раз за заход). «Экипировать» относим к ближайшему ПРЕДЫДУЩЕМУ
 // названию предмета, а не к блоку страницы: блок может охватывать весь список и надеть чужое.
-const ELIXIR_NAME_RE = /эликсир лечения/i;
+// 29.10.2026: правило ловило только «эликсир лечения», а в сумке тринадцать «Эликсиров исцеления
+// (HP+480)» - тех самых, что мы сами варим из молодицы. Они не надевались в подсумок и ни разу не
+// были выпиты в бою, пока персонаж стоял у «В бой!» и ждал, когда natural-лечение натикает 300 hp.
+const ELIXIR_NAME_RE = /эликсир (лечения|исцеления)/i;
 const ELIXIR_PAGES = [
   'http://lbast.ru/inv.php?mod=starred', 'http://lbast.ru/inv.php',
   'http://lbast.ru/inv.php?cpage=2', 'http://lbast.ru/inv.php?cpage=3',
@@ -127,7 +130,11 @@ async function findElixirEquipHref(page) {
       for (const a of Array.from(document.querySelectorAll('a'))) {
         const t = (a.textContent || '').trim();
         if (t === 'Экипировать') {
-          if (re.test(lastName)) out.push({ href: a.getAttribute('href'), big: /Большой/i.test(lastName) });
+          // Сила эликсира: исцеления (480) > большой лечения (80) > обычный (40).
+          if (re.test(lastName)) {
+            const rank = /исцелени/i.test(lastName) ? 2 : (/Большой/i.test(lastName) ? 1 : 0);
+            out.push({ href: a.getAttribute('href'), big: rank > 0, rank, name: lastName });
+          }
           continue;
         }
         // Названием считаем ссылку, не являющуюся числом (кол-во, страницы) и действием.
@@ -135,8 +142,8 @@ async function findElixirEquipHref(page) {
       }
       return out;
     }, ELIXIR_NAME_RE.source).catch(() => []);
-    const big = found.find((x) => x.big);
-    if (big) return big.href;
+    const best = found.slice().sort((x, y) => (y.rank || 0) - (x.rank || 0))[0];
+    if (best && best.rank > 0) return best.href;
     if (!fallback && found.length) fallback = found[0].href;
   }
   return fallback;
@@ -184,7 +191,35 @@ async function ensureHealingGearEquipped(page, { force = false } = {}) {
 // «Восстанавливает все хп в бою, а также снимает любое состояние». Код про него просто не знал.
 // Ставим первым: он лечит полностью, а не на +80.
 const HEALING_ELIXIR_IDS = [['1161', 'Эликсир регенерации'], ['1029', 'Большой эликсир лечения (HP+80)'], [HEALING_ELIXIR_ITEM_ID, 'Эликсир лечения (HP+40)']];
+// Сначала смотрим, ЧТО реально лежит за поясом, и пьём самое сильное. Жёсткий список номеров
+// (ниже) остаётся запасным путём: 29.10.2026 в нём не было «Эликсира исцеления (HP+480)», и бой
+// шёл без лечения при тринадцати таких эликсирах в сумке.
 async function tryUseHealingElixir(page) {
+  try {
+    await page.goto('http://lbast.ru/arena_go.php?poyas=1', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const picked = await page.evaluate(() => {
+      const out = [];
+      for (const a of Array.from(document.querySelectorAll('a'))) {
+        const t = (a.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!/эликсир (лечения|исцеления)/i.test(t)) continue;
+        const href = a.getAttribute('href') || '';
+        if (!/zapoyasom=/i.test(href)) continue;
+        out.push({ href, t, rank: /исцелени/i.test(t) ? 2 : (/Большой/i.test(t) ? 1 : 0) });
+      }
+      out.sort((x, y) => y.rank - x.rank);
+      return out[0] || null;
+    }).catch(() => null);
+    if (picked) {
+      await page.goto(new URL(picked.href, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      const t = await getBodyText(page);
+      if (!/Предмет не найден/i.test(t)) {
+        console.log(`Выпил за поясом: ${picked.t}`);
+        return true;
+      }
+    }
+  } catch (e) {
+    console.log('Пояс: не разобрал, что в подсумке:', String(e.message).split(String.fromCharCode(10))[0]);
+  }
   for (const [id, name] of HEALING_ELIXIR_IDS) {
     try {
       await page.goto(`http://lbast.ru/arena_go.php?poyas=1&zapoyasom=${id}`, {
