@@ -255,6 +255,9 @@ const FISHER_FOOD_MIN_RESERVE_MINUTES = 1;
 const CARAVAN_MIN_RESERVE_MINUTES = 8;
 const FISH_RESTAURANT_MIN_RESERVE_MINUTES = 15;
 const FISH_RESTAURANT_MIN_HP = 1300;
+// Выключатель ресторана: true -- квест не берётся и не считается целевым (не держит бота в городе
+// вместо фарма). Ставили на паузу 19.10.2026, вернули 24.10.2026.
+const FISH_RESTAURANT_PAUSED = false;
 // Мисттаунское событие "Тайны ...": дата+время старта для каждой из 4 тем, полученные от
 // уличного зазывалы и закэшированные, чтобы не ходить к нему каждый цикл (см. комментарий у
 // goToMisttownSecretArea/runMisttownSecretEventIfDue). misttownSecretAttemptedAt хранит,
@@ -1693,7 +1696,7 @@ async function runDailyQuests(page, stats) {
     'Еда для рыбака',
     'Грабим корованы',
     'Варьете',
-    'Рыбный ресторан',
+    ...(FISH_RESTAURANT_PAUSED ? [] : ['Рыбный ресторан']),
     'Галерея искусств',
     // Квесты по записанным маршрутам берём прямо из реестра guides/quests.js -- иначе каждый
     // новый .steps пришлось бы дублировать ещё и здесь, и забытый квест молча уступал бы ферме.
@@ -1929,7 +1932,9 @@ async function runDailyQuests(page, stats) {
   // Рыбный ресторан: ежедневный квест форта «Жженый лист». Ветка выбирается не здесь, а внутри
   // прохождения -- по [Журнал наград], который виден только у взятого задания (см. комментарий в
   // guides/fish_restaurant.js). Поэтому гейт тут обычный: квест в меню, есть резерв и HP.
-  if (isQQuestAllowed('Рыбный ресторан') && isQuestInMenu(listedQuests, 'Рыбный ресторан')) {
+  if (FISH_RESTAURANT_PAUSED && isQuestInMenu(listedQuests, 'Рыбный ресторан')) {
+    console.log('Ресторан: на паузе (FISH_RESTAURANT_PAUSED), пропускаю.');
+  } else if (isQQuestAllowed('Рыбный ресторан') && isQuestInMenu(listedQuests, 'Рыбный ресторан')) {
     const restMisttownSoon = misttownSecretDueWithinMs(GUIDE_QUEST_MISTTOWN_GUARD_MS);
     const restHp = typeof stats?.hpCurrent === 'number' ? stats.hpCurrent : null;
     if (restMisttownSoon) {
@@ -4690,7 +4695,8 @@ async function runIncomingAttackPvpLoop(page) {
   // When defending against an incoming attack, the fight UI can offer "where to hit" and
   // "where to block". We do random actions on a slow timer to look human-like.
   const DONE_RE = /(Бой\s*завершен!|Вернуться|вернуться|Вы\s+погибли|Восстановите\s+здоровье)/i;
-  const HIT_RE = /(Удар|Атак|Attack|Hit|Бить)/i;
+  // "Бить" -- это кнопка отправки хода (input), а не зона удара: её ищем отдельно ниже.
+  const HIT_RE = /(Удар|Атак|Attack|Hit)/i;
   const BLOCK_RE = /(Блок|Защит|Defense|Block|Прикрыть)/i;
   const ZONES_RE = /(голов|тулов|корпус|ног|живот|рук|плеч|шея)/i;
 
@@ -4719,9 +4725,10 @@ async function runIncomingAttackPvpLoop(page) {
       return;
     }
 
-    // Submit the selected zones by clicking "Ударить".
+    // Отправляем ход. В PvP кнопка называется "Бить" (24.10.2026: "Ударить" не находилась ни разу,
+    // ходы не отправлялись и бой шёл по таймауту соперника).
     await pause(page, 200, 500);
-    await clickByTexts(page, ['Ударить', 'ударить'], 'Incoming attack: Ударить').catch(() => {});
+    await clickByTexts(page, ['Бить', 'бить', 'Ударить', 'ударить'], 'Incoming attack: отправить ход').catch(() => {});
 
     const waitSec = randInt(100, 115);
     console.log(`Incoming attack: next random turn in ${waitSec}s`);
@@ -6146,7 +6153,10 @@ async function runLastHouseRecovery(page) {
     // пожарил рыбу").
     throwIfPausedByManager('Последний дом: цикл станций');
     await clickHealingRefreshLink(page);
-    let stats = parseStats(await getBodyText(page));
+    const houseText = await getBodyText(page);
+    let stats = parseStats(houseText);
+    const regenMatch = houseText.match(/Лечение:\s*(\d+)\s*hp\/мин/i);
+    const regenPerMin = regenMatch ? Number(regenMatch[1]) : null;
     const hpNow = typeof stats.hpCurrent === 'number' ? stats.hpCurrent : null;
 
     if (hpNow !== null && hpNow >= BLAKE_MIN_HP) {
@@ -6162,7 +6172,13 @@ async function runLastHouseRecovery(page) {
     lastHp = hpNow;
 
     if (uselessInARow >= STATIONS.length) {
-      const waitMinutes = 20 + Math.floor(Math.random() * 6);
+      // 24.10.2026: при HP 1580 (до порога 220 hp, 175 hp/мин -- полторы минуты) бот уснул на
+      // 22 минуты целиком. Ждём не дольше, чем нужно дому, чтобы дотянуть HP до порога.
+      let waitMinutes = 20 + Math.floor(Math.random() * 6);
+      if (hpNow !== null && regenPerMin > 0) {
+        const needMinutes = Math.ceil((BLAKE_MIN_HP - hpNow) / regenPerMin) + 1;
+        waitMinutes = Math.max(1, Math.min(waitMinutes, needMinutes));
+      }
       await waitStationCooldown(waitMinutes, `жду регенерацию дома (HP ${hpNow ?? 'n/a'}), мастерские, похоже, на откате`);
       uselessInARow = 0;
       continue;
@@ -7516,6 +7532,29 @@ async function goToMisttownSecretStreetSpot(page, theme) {
 // Возвращает { bowUsed }: если стрела была выпущена в этом бою, вызывающий код (см.
 // runMisttownSecretEventIfDue) должен потом сходить зафармить новую через runOldArcherWolfQuest --
 // если стрелы не было (кнопка "Лук" не появилась), фармить нечего.
+const MISTTOWN_EVENT_STOP_HP = 1000;
+const MISTTOWN_EVENT_WAIT_END_MS = 10 * 60 * 1000;
+
+// Перестали бить из-за низкого HP: просто ждём, пока бой закончится без нас, изредка жмём
+// "Обновить". Если за отведённое время конца так и не видно -- уходим на location.php, чтобы не
+// висеть в бою весь цикл.
+async function waitMisttownEventFightEnd(page, doneTexts) {
+  const REFRESH = ['Обновить', 'обновить'];
+  const deadline = Date.now() + MISTTOWN_EVENT_WAIT_END_MS;
+  while (Date.now() < deadline) {
+    if (await existsAnyText(page, doneTexts)) {
+      await clickByTexts(page, doneTexts, 'misttown event fight done/return');
+      return;
+    }
+    await pause(page, 3000, 5000);
+    if (await existsAnyText(page, REFRESH)) {
+      await clickByTexts(page, REFRESH, 'Обновить (мисттаунское событие, жду конца боя)').catch(() => {});
+    }
+  }
+  console.log('Мисттаунское событие: бой так и не закончился за отведённое время -> ухожу на location.php');
+  await page.goto('http://lbast.ru/location.php', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+}
+
 async function fightLoopMisttownEvent(page) {
   const UDAR = 'Ударить';
   const BOW = 'Лук';
@@ -7549,10 +7588,25 @@ async function fightLoopMisttownEvent(page) {
   }
 
   let stuck = 0;
+  let lastLoggedHp = null;
   for (let i = 0; i < 1200; i++) {
     if (await existsAnyText(page, DONE_TEXTS)) {
       const ok = await clickByTexts(page, DONE_TEXTS, 'misttown event fight done/return');
       if (!ok) throw new Error('misttown_event_fight_done_click_failed');
+      return { bowUsed };
+    }
+
+    // Наше HP -- первая пара "(hp/max)" на экране боя: "Tsunami [21] (1979/2890) урон: 0 VS. ...".
+    // Паша, 18.10.2026: не убиваться до конца -- при HP <= MISTTOWN_EVENT_STOP_HP больше не бить.
+    const hpMatch = (await getBodyText(page)).match(/\((-?\d+)\s*\/\s*(\d+)\)/);
+    const hpNow = hpMatch ? Number(hpMatch[1]) : null;
+    if (hpNow !== null && hpNow !== lastLoggedHp) {
+      console.log(`Мисттаунское событие: HP ${hpNow}/${hpMatch[2]}`);
+      lastLoggedHp = hpNow;
+    }
+    if (hpNow !== null && hpNow <= MISTTOWN_EVENT_STOP_HP) {
+      console.log(`Мисттаунское событие: HP ${hpNow} <= ${MISTTOWN_EVENT_STOP_HP} -> больше не бью, жду конца боя`);
+      await waitMisttownEventFightEnd(page, DONE_TEXTS);
       return { bowUsed };
     }
 
