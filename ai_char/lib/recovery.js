@@ -117,13 +117,20 @@ const ELIXIR_PAGES = [
 const ELIXIR_CHECK_EVERY_MS = 10 * 60 * 1000;
 let lastElixirCheckAt = 0;
 
-// Ссылка «Экипировать» для эликсира лечения в инвентаре: большой (HP+80) раньше обычного.
+// Эликсиры, которые игра отказалась надевать («Ваших статов нехватает»). 29.10.2026: «Эликсир
+// исцеления (HP+480)» нашей варки оказался НЕ ПО СТАТАМ - подсумок его не берёт. Пока статы не
+// вырастут, не предлагаем его снова, иначе каждый заход тратится на отказ, а подсумок остаётся
+// пустым. Список живёт в памяти процесса: после перезапуска проверим заново - статы растут.
+const refusedElixirNames = new Set();
+const REFUSED_RE = /статов\s*не\s*хватает|не\s*хватает\s*статов/i;
+
+// Ссылка «Экипировать» для эликсира лечения в инвентаре: сильный раньше слабого.
 async function findElixirEquipHref(page) {
   let fallback = null;
   for (const url of ELIXIR_PAGES) {
     const ok = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).then(() => true).catch(() => false);
     if (!ok) continue;
-    const found = await page.evaluate((src) => {
+    const found = await page.evaluate(({ src, refused }) => {
       const re = new RegExp(src, 'i');
       const out = [];
       let lastName = '';
@@ -131,7 +138,7 @@ async function findElixirEquipHref(page) {
         const t = (a.textContent || '').trim();
         if (t === 'Экипировать') {
           // Сила эликсира: исцеления (480) > большой лечения (80) > обычный (40).
-          if (re.test(lastName)) {
+          if (re.test(lastName) && !refused.includes(lastName)) {
             const rank = /исцелени/i.test(lastName) ? 2 : (/Большой/i.test(lastName) ? 1 : 0);
             out.push({ href: a.getAttribute('href'), big: rank > 0, rank, name: lastName });
           }
@@ -141,19 +148,25 @@ async function findElixirEquipHref(page) {
         if (t && !/^\d+$/.test(t) && !/^(Использовать|Передать|Экипировать)$/.test(t)) lastName = t;
       }
       return out;
-    }, ELIXIR_NAME_RE.source).catch(() => []);
+    }, { src: ELIXIR_NAME_RE.source, refused: Array.from(refusedElixirNames) }).catch(() => []);
     const best = found.slice().sort((x, y) => (y.rank || 0) - (x.rank || 0))[0];
-    if (best && best.rank > 0) return best.href;
-    if (!fallback && found.length) fallback = found[0].href;
+    if (best && best.rank > 0) return best;
+    if (!fallback && found.length) fallback = found[0];
   }
   return fallback;
 }
 
-async function equipElixirHref(page, href, label) {
+async function equipElixirHref(page, href, label, name) {
   const fullUrl = href.startsWith('http') ? href : `http://lbast.ru/${href.replace(/^\//, '')}`;
   await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   const t = (await getBodyText(page)).replace(/\s+/g, ' ');
-  console.log(`${label}: надеваю эликсир лечения в подсумок -> ${t.slice(0, 160)}`);
+  if (REFUSED_RE.test(t)) {
+    if (name) refusedElixirNames.add(name);
+    console.log(`${label}: «${name || 'эликсир'}» не по статам - игра его не надевает, беру следующий по силе.`);
+    return false;
+  }
+  console.log(`${label}: надеваю ${name || 'эликсир лечения'} в подсумок -> ${t.slice(0, 160)}`);
+  return true;
 }
 
 // Раз в 10 минут (и сразу после выпитого в бою) - дозаполнить подсумок эликсирами из инвентаря.
@@ -162,16 +175,17 @@ async function ensureHealingGearEquipped(page, { force = false } = {}) {
   lastElixirCheckAt = Date.now();
   let equipped = false;
   let prevHref = null;
-  for (let i = 0; i < 3; i++) {
-    const href = await findElixirEquipHref(page);
-    if (!href) break;
-    if (href === prevHref) {
+  for (let i = 0; i < 4; i++) {
+    const pick = await findElixirEquipHref(page);
+    if (!pick) break;
+    if (pick.href === prevHref) {
       console.log('Подсумок: игра не берёт больше эликсиров (подсумок полон?).');
       break;
     }
-    prevHref = href;
-    await equipElixirHref(page, href, 'Подсумок');
-    equipped = true;
+    prevHref = pick.href;
+    const ok = await equipElixirHref(page, pick.href, 'Подсумок', pick.name);
+    if (ok) equipped = true;
+    else prevHref = null; // отказ по статам: следующий круг ищет уже без этого эликсира
     await pause(page, 500, 900);
   }
   return equipped;
