@@ -66,3 +66,5 @@ ai_char/restart_log.txt
 ai_char/restart_storm_notified.txt
 # отметка последнего захода внешнего сторожа - у каждой машины своя
 ai_char/watchdog_last_run.txt
+# вход AI__ в куках - секрет, в репозиторий не кладём
+ai_char/session_cookies.json
