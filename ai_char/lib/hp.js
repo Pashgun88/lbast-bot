@@ -80,6 +80,15 @@ async function questFightHpGate(
     const need = Math.ceil(S.lastKnownHp.max * floor);
     console.log(`${label}: HP ${Math.round(frac * 100)}% < ${Math.round(floor * 100)}% -> жду восстановления до ${need}/${S.lastKnownHp.max}, квест не бросаю.`);
     const deadline = Date.now() + maxWaitMs;
+    // 04.11.2026, «Кораблекрушение» бой 2: стояли на экране «В бой!», а при висящем бое HP не
+    // растёт вовсе (десять замеров подряд ровно 459/920) - ожидание шло бы все 40 минут и кончилось
+    // уходом из квеста. Если HP не сдвинулось STALL_READS замеров подряд, ждать бессмысленно:
+    // при сносном HP идём в бой как есть (Паша: «нужно заканчивать квест, почему на середине
+    // встаешь?»), при совсем низком - прежний путь, без боя.
+    const STALL_READS = 3;
+    const STALL_FIGHT_MIN_FRAC = 0.4;
+    let lastHp = S.lastKnownHp.current;
+    let stalled = 0;
     while (Date.now() < deadline) {
       await fixedPause(page, 60_000);
       const hpNow = await readHpFromLocationInNewTab(page);
@@ -89,6 +98,16 @@ async function questFightHpGate(
       if (hpNow >= need) {
         console.log(`${label}: HP восстановилось -> иду в бой.`);
         return true;
+      }
+      stalled = hpNow <= lastHp ? stalled + 1 : 0;
+      lastHp = hpNow;
+      if (stalled >= STALL_READS) {
+        if (hpNow >= S.lastKnownHp.max * STALL_FIGHT_MIN_FRAC) {
+          console.log(`${label}: HP ${hpNow} не растёт ${STALL_READS} мин подряд (бой висит, лечения нет) -> иду в бой с тем, что есть.`);
+          return true;
+        }
+        console.log(`${label}: HP ${hpNow} не растёт и ниже ${Math.round(STALL_FIGHT_MIN_FRAC * 100)}% -> в бой не иду.`);
+        break;
       }
     }
     console.log(`${label}: HP не восстановилось за отведённое время -> ухожу с боевого экрана.`);

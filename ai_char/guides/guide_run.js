@@ -130,6 +130,9 @@ async function healQuietly(page, frac) {
     beat();
     const s = await readHpInNewTab(page);
     if (!s) { await sleep(60000); continue; }
+    // В минусе ждать в сцене бессмысленно: 31.10.2026 при -5040 и 35 hp/мин выходило ~3 часа, а
+    // сцена всё равно показывала только «Восстановите здоровье». Отдаём лечение главному циклу.
+    if (s.hp < 0) { console.log(`HP ${s.hp}/${s.max} в минусе - в сцене не жду, иду лечиться`); return { negative: true, ...s }; }
     const target = Math.ceil(s.max * frac);
     if (s.hp >= target) { console.log(`HP ${s.hp}/${s.max} >= ${target} (лечился, не покидая сцену)`); return s; }
     const rate = s.rate > 0 ? s.rate : 14;
@@ -419,7 +422,12 @@ async function runGuide(page, FILE, fromArg, opts = {}) {
           if (/Ударить/.test(ts) || /В бой/.test(ts)) {
             console.log('@heal skipped: fight pending, HP does not regenerate');
           } else {
-            await healQuietly(page, frac);
+            const healed = await healQuietly(page, frac);
+            if (healed && healed.negative) {
+              fs.writeFileSync(PROG, String(i));
+              result = { status: 'lost', index: i };
+              break;
+            }
           }
         } else {
         await backToScene(page);

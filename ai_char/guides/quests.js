@@ -421,6 +421,19 @@ async function runGuideQuestIfDue(page, q) {
       console.log(`${q.name}: нет Праздничного эля -> не начинаю (эль покупает драйвер в лавке Стоунгарда), проверю через 30 мин.`);
       return false;
     }
+    // 31.10.2026: после нападения AI__ был в -5040, статы цикла читались null (висел бой), и
+    // «Вспышки прошлого» стартовали прямо так - сцена встала на «Восстановите здоровье» и ждала
+    // лечения 35 hp/мин почти три часа. Начинаем маршрут только с прочитанным неотрицательным HP;
+    // минус лечит главный цикл (Кулак хаоса / Последний дом).
+    const { readHpFromLocationInNewTab } = require('../lib/hp');
+    const startHp = await readHpFromLocationInNewTab(page).catch(() => null);
+    if (typeof startHp !== 'number' || startHp < 0) {
+      qs.suppressedUntil = now + 10 * 60000;
+      st[q.name] = qs;
+      saveState(st);
+      console.log(`${q.name}: HP ${startHp ?? 'не читается'} - маршрут не начинаю, сначала лечение (проверю через 10 мин).`);
+      return false;
+    }
     clearProgress(q);
     qs.part = 0;
     qs.startedAt = now;

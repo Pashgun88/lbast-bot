@@ -163,7 +163,13 @@ function emitAttackAlert(payload) {
 function isPvpFightScreen(text) {
   const t = String(text || '');
   if (/Ударить/i.test(t)) return false;
-  return /(^|[^а-яё])Бить([^а-яё]|$)/i.test(t) && (/VS\.?/i.test(t) || /Сбр\.?\s*пары/i.test(t));
+  // 31.10.2026 (McTuTeJI): кнопка «Бить» - это <input>, в тексте страницы её нет, зоны выглядят
+  // как «Г: - / К: - / Н: -». Экран не узнали, бой прошёл без единого хода, HP ушло в -5040.
+  // Поэтому кроме «Бить» узнаём экран и по таймеру хода «(тайм: N)» и по строкам зон Г/К/Н.
+  const pvpMarks = /(^|[^а-яё])Бить([^а-яё]|$)/i.test(t)
+    || /\(тайм:\s*\d+\)/i.test(t)
+    || (/^\s*Г:/m.test(t) && /^\s*К:/m.test(t) && /^\s*Н:/m.test(t));
+  return pvpMarks && (/VS\.?/i.test(t) || /Сбр\.?\s*пары/i.test(t));
 }
 
 function isBattleScreenText(text) {
