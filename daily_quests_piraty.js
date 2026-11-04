@@ -4691,7 +4691,161 @@ async function clickRandomActionByRegex(page, regex, stepName) {
   }
 }
 
-async function runIncomingAttackPvpLoop(page) {
+// Схема при нападении игрока (Паша, 30.10.2026): оповещение сразу (его шлёт
+// handleIncomingAttackIfAny), минуту не ходим, потом через "Инв." свиток мага и сразу зелье
+// отравления. Удачно ли сработало, игра пишет в лог боя:
+//   "Tsunami использует древний свиток мага и восстанавливает ману на 30"
+//   "Tsunami использует эль отравления на Ericsson" / "Tsunami неудачно использует эль ..."
+// Неудачно -> пробуем ещё раз. Экран "Инв." в бою живьём ещё не разбирался, поэтому каждый
+// его экран пишется в лог (snapshotText) -- по первому живому нападению станет видно устройство.
+const PVP_OPENING_DELAY_MS = 60 * 1000;
+const PVP_OPENING_ITEMS = [
+  // Паша: свиток не может не сработать -- применяем один раз без проверки. Неудача бывает только
+  // у отравления, ему -- всего 2 попытки.
+  { label: 'Свиток мага', re: /свит\S*\s+мага/i, tries: 1, verify: false },
+  // В инвентаре Цунами это "Эликсир отравления (50)" (живой бой 30.10.2026), в логах боёв
+  // встречается и "эль отравления" -- берём все три написания.
+  { label: 'Эликсир отравления', re: /(зелье|эликсир|эль)\s+отравлени/i, tries: 2 },
+];
+
+// Кликает первый видимый a/button/input, чей текст подходит под regex. Возвращает текст или null.
+async function clickVisibleByRegex(page, re) {
+  return page.evaluate((src) => {
+    const rx = new RegExp(src, 'i');
+    const els = Array.from(document.querySelectorAll('a, button, input[type="submit"], input[type="button"]'));
+    for (const el of els) {
+      const t = String(el.tagName === 'INPUT' ? el.value : (el.innerText || el.textContent || '')).replace(/\s+/g, ' ').trim();
+      if (!t || !rx.test(t)) continue;
+      if (el.getClientRects().length === 0) continue;
+      el.click();
+      return t;
+    }
+    return null;
+  }, re.source).catch(() => null);
+}
+
+// Клик по самой надписи с названием предмета: она может быть ссылкой, а может -- просто текстом
+// с обработчиком. Берём самый глубокий видимый элемент, чей текст подходит (саму надпись, а не
+// строку таблицы вокруг неё).
+async function clickTextLabelByRegex(page, re) {
+  return page.evaluate((src) => {
+    const rx = new RegExp(src, 'i');
+    const textOf = (el) => String(el.tagName === 'INPUT' ? el.value : (el.innerText || el.textContent || '')).replace(/\s+/g, ' ').trim();
+    const hits = Array.from(document.body.querySelectorAll('*')).filter((el) => {
+      if (el.getClientRects().length === 0) return false;
+      const t = textOf(el);
+      // Строки лога боя ("Tsunami использует древний свиток мага ...") -- не надпись предмета.
+      return t && t.length <= 60 && rx.test(t) && !/использует/i.test(t);
+    });
+    const deepest = hits.filter((el) => !hits.some((o) => o !== el && el.contains(o)));
+    const target = deepest.find((el) => el.closest('a, button, [onclick]')) || deepest[0];
+    if (!target) return null;
+    (target.closest('a, button, [onclick]') || target).click();
+    return textOf(target);
+  }, re.source).catch(() => null);
+}
+
+function getFightSelfNick(text) {
+  const m = String(text || '').match(/^\s*(\S+)\s+\[\d+\]\s+\(-?\d+\/\d+\)/m);
+  return m ? m[1] : 'Tsunami';
+}
+
+// Строки лога боя про применение предмета нами: { ok, fail } -- сколько удачных и неудачных.
+function countItemUseLines(text, nick, itemRe) {
+  const lines = String(text || '').split('\n');
+  let ok = 0;
+  let fail = 0;
+  for (const line of lines) {
+    if (!line.includes(nick) || !itemRe.test(line)) continue;
+    const idx = line.indexOf(nick);
+    const rest = line.slice(idx + nick.length);
+    if (/^\s*неудачно\s+использует/i.test(rest)) fail += 1;
+    else if (/^\s*использует/i.test(rest)) ok += 1;
+  }
+  return { ok, fail };
+}
+
+async function backToFightScreen(page, fightUrl, label) {
+  if (/Ударить|Бить|тайм:/i.test(await getBodyText(page))) return;
+  const back = await clickVisibleByRegex(page, /^(Вернуться|Назад|В бой!?|Бой)$/i);
+  if (back) {
+    await pause(page, 700, 1200);
+    if (/Ударить|Бить|тайм:/i.test(await getBodyText(page))) return;
+  }
+  console.log(`${label}: возвращаюсь в бой по адресу ${fightUrl}`);
+  await page.goto(fightUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await pause(page, 700, 1200);
+}
+
+// Один предмет через "Инв.": до maxTries попыток, пока лог боя не покажет удачу.
+async function useFightInventoryItem(page, item) {
+  const label = `Нападение: ${item.label}`;
+  const maxTries = item.tries || 1;
+  for (let attempt = 1; attempt <= maxTries; attempt++) {
+    throwIfPausedByManager('входящий бой: предмет из инвентаря');
+    const fightUrl = page.url();
+    const beforeText = await getBodyText(page);
+    if (/Бой\s*завершен/i.test(beforeText)) return;
+    const nick = getFightSelfNick(beforeText);
+    const before = countItemUseLines(beforeText, nick, item.re);
+
+    const inv = await clickVisibleByRegex(page, /^Инв(\.|ентарь)/i);
+    if (!inv) {
+      console.log(`${label}: кнопки "Инв." нет -- экран: ${snapshotText(beforeText, 300)}`);
+      return;
+    }
+    await pause(page, 800, 1400);
+    const invText = await getBodyText(page);
+    console.log(`${label}: открыл "${inv}" -- экран: ${snapshotText(invText, 600)}`);
+
+    // Паша: "нужно нажать именно на надпись свиток мага или отравления" -- клик по самой надписи.
+    const picked = await clickTextLabelByRegex(page, item.re);
+    if (!picked) {
+      console.log(`${label}: предмета в инвентаре нет -- пропускаю.`);
+      await backToFightScreen(page, fightUrl, label);
+      return;
+    }
+    await pause(page, 800, 1400);
+    console.log(`${label}: нажал на надпись "${picked}" -- экран: ${snapshotText(await getBodyText(page), 400)}`);
+
+    await backToFightScreen(page, fightUrl, label);
+    if (item.verify === false) return;
+    const after = countItemUseLines(await getBodyText(page), nick, item.re);
+    if (after.ok > before.ok) {
+      console.log(`${label}: использовал УДАЧНО.`);
+      return;
+    }
+    if (after.fail > before.fail) {
+      console.log(`${label}: использовал НЕУДАЧНО (попытка ${attempt}/${maxTries}) -> ещё раз.`);
+      continue;
+    }
+    console.log(`${label}: в логе боя нет строки о применении (попытка ${attempt}/${maxTries}).`);
+  }
+  console.log(`${label}: за ${maxTries} попытки удачно не вышло -- дальше бой без него.`);
+}
+
+async function runPvpOpeningItems(page) {
+  console.log(`Нападение: жду ${PVP_OPENING_DELAY_MS / 1000} с без хода, потом свиток мага и отравление.`);
+  for (let waited = 0; waited < PVP_OPENING_DELAY_MS; waited += 5000) {
+    throwIfPausedByManager('входящий бой: ожидание перед свитком');
+    await fixedPause(page, Math.min(5000, PVP_OPENING_DELAY_MS - waited));
+    if (/Бой\s*завершен|Вернуться/i.test(await getBodyText(page))) return;
+  }
+  // Страница боя сама не обновляется -- освежаем перед действиями, чтобы видеть свежий лог.
+  await clickVisibleByRegex(page, /^Обновить/i);
+  await pause(page, 700, 1200);
+  for (const item of PVP_OPENING_ITEMS) {
+    await useFightInventoryItem(page, item);
+  }
+}
+
+async function runIncomingAttackPvpLoop(page, { openingItems = false } = {}) {
+  if (openingItems) {
+    await runPvpOpeningItems(page).catch((e) => {
+      if (isScenarioPausedError(e)) throw e;
+      console.log(`Нападение: свиток/отравление не вышли (${e.message}) -- продолжаю бой.`);
+    });
+  }
   // When defending against an incoming attack, the fight UI can offer "where to hit" and
   // "where to block". We do random actions on a slow timer to look human-like.
   const DONE_RE = /(Бой\s*завершен!|Вернуться|вернуться|Вы\s+погибли|Восстановите\s+здоровье)/i;
@@ -4802,7 +4956,8 @@ async function handleIncomingAttackIfAny(page, bodyText = null) {
   }
 
   // If the incoming attack leads to a PvP-like fight UI, do random block+hit turns.
-  await runIncomingAttackPvpLoop(page).catch((e) => { if (isScenarioPausedError(e)) throw e; });
+  // Перед первым ходом -- минута ожидания, свиток мага и отравление (см. runPvpOpeningItems).
+  await runIncomingAttackPvpLoop(page, { openingItems: true }).catch((e) => { if (isScenarioPausedError(e)) throw e; });
 
   // After handling an incoming attack, immediately check HP and recover in the same cycle instead
   // of silently ending the cycle and leaving the character at negative HP for a full random sleep
