@@ -147,9 +147,17 @@ const FARM_HEAL_TARGET = 0.95;
 // порогов точек: пока по силам хоть одна, бьём её, а не лечимся. Если жребий выпал на молега, а HP
 // хватает только на горгулью, раунд молега сам откажется и фарм-сессия тут же пробует вторую точку
 // (запасной вариант в runFarmSession) - доля 70/30 при этом не ломается, номер раунда двигается всегда.
+// Паша, 05.11.2026 19:38: «сделай 100% фарм на молеге на 48 часов». До этого момента горгулью не
+// бьём вовсе: кольцо - только молег, лечимся до его порога, а не уходим на горгулью. Потом само
+// возвращается обычное кольцо 7 горгулий / 3 молега.
+const MOLEG_ONLY_UNTIL = Date.parse('2026-11-07T19:38:00+03:00');
+function molegOnlyNow() {
+  return Date.now() < MOLEG_ONLY_UNTIL;
+}
 function farmFightFloor() {
   if (farmSpot() !== 'moleg') return 0.7;
   const { farmFloorFor } = require('./lib/farm');
+  if (molegOnlyNow()) return farmFloorFor('moleg');
   return Math.min(farmFloorFor('moleg'), farmFloorFor('gargoyle'));
 }
 // До какого HP лечимся, когда ждут квесты с боями (порог входа в них - 70%, берём с запасом).
@@ -405,7 +413,7 @@ async function runFarmSession(page) {
         pick = 'moleg';
         S.farmMolegDebt = Math.max(0, (S.farmMolegDebt || 0) - 1);
         console.log(`Фарм-сессия: отдаю долг по молегу (осталось ${S.farmMolegDebt}), HP хватает.`);
-      } else if (molegAllowed() && pick === 'moleg' && hpFrac < molegFloor) {
+      } else if (!molegOnlyNow() && molegAllowed() && pick === 'moleg' && hpFrac < molegFloor) {
         // Долг копим, но не бесконечно: три круга - уже половина кольца, больше незачем.
         S.farmMolegDebt = Math.min(3, (S.farmMolegDebt || 0) + 1);
         console.log(`Фарм-сессия: молегу нужно ${Math.round(molegFloor * 100)}% HP, сейчас ${Math.round(hpFrac * 100)}% - беру горгулью, молег в долг (${S.farmMolegDebt}).`);
@@ -419,8 +427,11 @@ async function runFarmSession(page) {
       let mo = await round(pick);
       if (!mo) {
         // Если молег запрещён, подменять им горгулью нельзя - ждём горгулью.
-        const other = pick === 'gargoyle' ? (molegAllowed() ? 'moleg' : null) : 'gargoyle';
-        if (!other) {
+        // В режиме «только молег» горгулью подменой не берём - ждём молега.
+        const other = molegOnlyNow() ? null : (pick === 'gargoyle' ? (molegAllowed() ? 'moleg' : null) : 'gargoyle');
+        if (!other && molegOnlyNow()) {
+          console.log('Фарм-сессия: молег недоступен, а до 07.11 19:38 бьём только молега - жду его.');
+        } else if (!other) {
           // БЕЗ скобок здесь была дыра: строка round(other) выполнялась бы и при запрете, а
           // round(null) берёт ветку «не горгулья», то есть пошла бы ровно на молега.
           console.log('Фарм-сессия: горгулья недоступна, а молег запрещён (сложных ботов не бьём) - жду.');
@@ -546,13 +557,18 @@ const HIDE_FARM_ENABLED = process.env.AI_FARM_SPOT === 'hides';
 // его, когда комплект будет надет, и это же мой способ доложить, что фарм вернулся.
 const MOLEG_FROM_LEVEL = 11;
 const MOLEG_GEAR_FLAG = require('path').join(__dirname, 'moleg_on.flag');
+// 05.11.2026, Паша: «возобнови фарм на молеге» - на 10 уровне, без ожидания нового комплекта.
+// Запрет от 27.10 снят его же словом; гейт по HP (molegFloor) и долг остаются защитой от нокаутов.
+const MOLEG_RESUMED_BY_PASHA = true;
 function molegAllowed() {
+  if (MOLEG_RESUMED_BY_PASHA) return true;
   if ((S.charLevel || 0) < MOLEG_FROM_LEVEL) return false;
   try { return require('fs').existsSync(MOLEG_GEAR_FLAG); } catch (e) { return false; }
 }
 // Кольцо пересобирается на каждом круге: уровень берётся в бою, и ждать перезапуска драйвера,
 // чтобы молег вернулся, незачем.
 function farmOrder() {
+  if (molegOnlyNow()) return ['moleg'];
   return molegAllowed()
     ? ['gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'gargoyle', 'moleg', 'gargoyle', 'gargoyle', 'moleg']
     : ['gargoyle'];

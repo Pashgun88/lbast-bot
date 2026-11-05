@@ -46,6 +46,10 @@ const GUIDE_QUESTS = [
     // с пустым резервом идёт медленно (пережидает «Вы устали»), но идёт - это лучше, чем стоять.
     minReserveMinutes: 0,
     allowedInSingleMode: true,
+    // 05.11.2026: по гайду квест требует ВЫПОЛНЕННОЙ «Смерти ростовщика». Он стартовал раньше,
+    // срывался на шаге 8 и занимал слот - а «Смерть ростовщика» из-за этого получала «Вы выполняете
+    // другую миссию». Пока ростовщик виден в меню Q (= не выполнен), этот квест не начинаем.
+    requiresDone: 'Смерть ростовщика',
   },
   {
     // Паша, 19.09.2026: «каждый день, проигрыш не страшен». Бой 2 впритык, и сцена после поражения
@@ -360,6 +364,15 @@ async function runGuideQuestIfDue(page, q) {
   }
 
   if (qs.part === undefined) {
+    // requiresDone: квест-предусловие ещё висит в меню Q, значит не выполнен - этот не начинаем.
+    const { isQuestInMenu } = require('../lib/quest_menu');
+    if (q.requiresDone && isQuestInMenu(stateMod.S.lastListedQuestNames || [], q.requiresDone)) {
+      if (!gearWaitLogged.has(`${q.name}:requires`)) {
+        gearWaitLogged.add(`${q.name}:requires`);
+        console.log(`${q.name}: сначала нужна выполненная «${q.requiresDone}» - не начинаю.`);
+      }
+      return false;
+    }
     // resetAtMidnight: квест обновляется с полуночи (Паша про Штольни, 19.09.2026), а не через сутки.
     const localDay = (t) => new Date(t).toLocaleDateString('ru-RU');
     if (q.resetAtMidnight) {
